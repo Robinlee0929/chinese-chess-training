@@ -137,17 +137,21 @@ aside h3 {
 .help { color: var(--muted); font-size: 12px; line-height: 1.75; }
 .help p { margin-bottom: 4px; }
 
-/* 左下角版權 */
+/* 左下角版權：字體與 .help 說明文字一致 */
 .copyright {
   margin-top: auto;
   padding-top: 10px;
-  border-top: 1px solid var(--line);
   color: var(--muted);
-  font-size: 11px;
-  line-height: 1.7;
+  font-size: 12px;
+  line-height: 1.75;
 }
-.copyright a { color: var(--gold); text-decoration: none; border-bottom: 1px solid transparent; }
-.copyright a:hover { border-bottom-color: var(--gold); }
+.copyright a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--line);
+  text-underline-offset: 2px;
+}
+.copyright a:hover { color: var(--text); text-decoration-color: var(--text); }
 
 #log {
   list-style: none;
