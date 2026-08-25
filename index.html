@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>中國象棋 · Three.js 3D</title>
+<link rel="stylesheet" href="./css/style.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="brand">
+      <h1>中國象棋</h1>
+      <span class="sub">THREE.JS · 3D 互動棋盤 · 雙人对弈</span>
+    </div>
+    <div id="hud">
+      <div id="turn"><span id="turnDot"></span><span id="turnText">紅方先行</span></div>
+      <button id="btnUndo" type="button">悔棋</button>
+      <button id="btnNew" type="button">新對局</button>
+      <button id="btnSound" type="button" aria-pressed="true">音效：開</button>
+      <button id="btnView" type="button">視角</button>
+    </div>
+  </header>
+
+  <main>
+    <aside id="left">
+      <section class="tray">
+        <h3>紅方吃子</h3>
+        <div id="capRed" class="chips"></div>
+      </section>
+      <section class="tray">
+        <h3>黑方吃子</h3>
+        <div id="capBlack" class="chips"></div>
+      </section>
+      <div class="help">
+        <p>拖曳空白處旋轉視角</p>
+        <p>滾輪 / 雙指縮放</p>
+        <p>點擊己方棋子選中（亮起走法提示），再點擊目標交叉點移動；落到敵子上即為吃子。</p>
+        <p>再次點擊該棋子可取消選中。</p>
+      </div>
+    </aside>
+
+    <div id="stage"></div>
+
+    <aside id="right">
+      <h3>棋譜</h3>
+      <ol id="log"></ol>
+      <p id="logEmpty">尚無著法，紅方先行。</p>
+    </aside>
+  </main>
+
+  <div id="checkBanner" class="hidden">將 軍 ！</div>
+
+  <div id="overlay" class="hidden">
+    <div class="card">
+      <h2 id="ovTitle">紅方勝</h2>
+      <p id="ovReason">將死</p>
+      <button id="btnAgain" type="button">再來一局</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="./main.js"></script>
+</body>
+</html>
