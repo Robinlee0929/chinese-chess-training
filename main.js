@@ -27,7 +27,22 @@ scene.background = new THREE.Color(0x171310);
 scene.fog = new THREE.Fog(0x171310, 20, 46);
 
 const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
-const HOME = { pos: new THREE.Vector3(0, 8.6, 12.2), tgt: new THREE.Vector3(0, -0.1, 0.2) };
+
+// 預設機位：以注視點為圓心，向左旋轉 90°（方位角 -90°）、向下翻轉 45°（極角 45°）
+const HOME_DIST = 14.8;
+const HOME_AZIMUTH = -90;
+const HOME_POLAR = 45;
+const HOME_TGT = new THREE.Vector3(0, -0.1, 0.2);
+const HOME = {
+  tgt: HOME_TGT,
+  pos: new THREE.Vector3()
+    .setFromSphericalCoords(
+      HOME_DIST,
+      THREE.MathUtils.degToRad(HOME_POLAR),
+      THREE.MathUtils.degToRad(HOME_AZIMUTH),
+    )
+    .add(HOME_TGT),
+};
 camera.position.copy(HOME.pos);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -682,6 +697,30 @@ document.getElementById('btnView').addEventListener('click', () => {
   });
 });
 document.getElementById('btnAgain').addEventListener('click', newGame);
+
+// 全螢幕（含 Safari webkit 前綴）
+const btnFull = document.getElementById('btnFull');
+const fsElement = () => document.fullscreenElement || document.webkitFullscreenElement || null;
+btnFull.addEventListener('click', async () => {
+  try {
+    if (fsElement()) {
+      await (document.exitFullscreen?.() ?? document.webkitExitFullscreen?.());
+    } else {
+      const root = document.documentElement;
+      await (root.requestFullscreen?.() ?? root.webkitRequestFullscreen?.());
+    }
+  } catch {
+    /* 使用者拒絕或瀏覽器不支援時忽略 */
+  }
+});
+function syncFullBtn() {
+  const on = !!fsElement();
+  btnFull.textContent = on ? '離開全螢幕' : '全螢幕';
+  btnFull.setAttribute('aria-pressed', String(on));
+}
+document.addEventListener('fullscreenchange', syncFullBtn);
+document.addEventListener('webkitfullscreenchange', syncFullBtn);
+syncFullBtn();
 
 // ---------------- resize / loop ----------------
 function resize() {
