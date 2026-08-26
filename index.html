@@ -6,7 +6,7 @@
 <title>中國象棋 · Three.js 3D</title>
 
 <!-- SEO -->
-<meta name="description" content="用 Three.js 打造的 3D 互動中國象棋，支援雙人對弈。完整規則引擎：將軍、將死、困斃、蹩馬腿、塞象眼、炮翻山、白臉將，並以傳統棋譜記法記錄著法。免費線上遊玩，無需安裝。">
+<meta name="description" content="用 Three.js 打造的 3D 互動中國象棋，支援人機對弈（AI 分簡單、中等、困難三級）與雙人對戰。完整規則引擎：將軍、將死、困斃、蹩馬腿、塞象眼、炮翻山、白臉將，並以傳統棋譜記法記錄著法。免費線上遊玩，無需安裝。">
 <meta name="author" content="Will 保哥">
 <meta name="theme-color" content="#171310">
 <link rel="canonical" href="https://chinese-chess.gh.miniasp.com/">
@@ -15,7 +15,7 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="中國象棋 · Three.js 3D">
 <meta property="og:title" content="中國象棋 · Three.js 3D">
-<meta property="og:description" content="用 Three.js 打造的 3D 互動中國象棋，支援雙人對弈。完整規則引擎與傳統棋譜記法，免費線上遊玩。">
+<meta property="og:description" content="用 Three.js 打造的 3D 互動中國象棋，支援人機對弈（三級 AI 難度）與雙人對戰。完整規則引擎與傳統棋譜記法，免費線上遊玩。">
 <meta property="og:url" content="https://chinese-chess.gh.miniasp.com/">
 <meta property="og:locale" content="zh_TW">
 <meta property="og:image" content="https://chinese-chess.gh.miniasp.com/og-image.jpg">
@@ -27,7 +27,7 @@
 <!-- Twitter Card -->
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="中國象棋 · Three.js 3D">
-<meta name="twitter:description" content="用 Three.js 打造的 3D 互動中國象棋，支援雙人對弈。完整規則引擎與傳統棋譜記法，免費線上遊玩。">
+<meta name="twitter:description" content="用 Three.js 打造的 3D 互動中國象棋，支援人機對弈（三級 AI 難度）與雙人對戰。完整規則引擎與傳統棋譜記法，免費線上遊玩。">
 <meta name="twitter:image" content="https://chinese-chess.gh.miniasp.com/og-image.jpg">
 
 <!-- JSON-LD -->
@@ -37,16 +37,16 @@
   "@type": "VideoGame",
   "name": "中國象棋 · Three.js 3D",
   "alternateName": "Chinese Chess (Xiangqi) 3D",
-  "description": "用 Three.js 打造的 3D 互動中國象棋，支援雙人對弈。完整規則引擎：將軍、將死、困斃、蹩馬腿、塞象眼、炮翻山、白臉將，並以傳統棋譜記法記錄著法。",
+  "description": "用 Three.js 打造的 3D 互動中國象棋，支援人機對弈（AI 分簡單、中等、困難三級）與雙人對戰。完整規則引擎：將軍、將死、困斃、蹩馬腿、塞象眼、炮翻山、白臉將，並以傳統棋譜記法記錄著法。",
   "url": "https://chinese-chess.gh.miniasp.com/",
   "image": "https://chinese-chess.gh.miniasp.com/og-image.jpg",
   "inLanguage": "zh-Hant",
   "genre": ["棋類遊戲", "策略遊戲"],
   "gamePlatform": "Web Browser",
-  "playMode": "MultiPlayer",
+  "playMode": ["SinglePlayer", "MultiPlayer"],
   "numberOfPlayers": {
     "@type": "QuantitativeValue",
-    "minValue": 2,
+    "minValue": 1,
     "maxValue": 2
   },
   "applicationCategory": "Game",
@@ -81,10 +81,16 @@
   <header>
     <div class="brand">
       <h1>中國象棋</h1>
-      <span class="sub">THREE.JS · 3D 互動棋盤 · 雙人对弈</span>
+      <span class="sub">THREE.JS · 3D 互動棋盤 · 人機對弈 / 雙人對戰</span>
     </div>
     <div id="hud">
       <div id="turn"><span id="turnDot"></span><span id="turnText">紅方先行</span></div>
+      <select id="modeSel" aria-label="對弈模式" title="選擇對弈模式">
+        <option value="easy">人機・簡單</option>
+        <option value="medium" selected>人機・中等</option>
+        <option value="hard">人機・困難</option>
+        <option value="pvp">雙人對弈</option>
+      </select>
       <button id="btnUndo" type="button">悔棋</button>
       <button id="btnNew" type="button">新對局</button>
       <button id="btnSound" type="button" aria-pressed="true">音效：開</button>
@@ -108,10 +114,10 @@
         <div id="capBlack" class="chips"></div>
       </section>
       <div class="help">
-        <p>拖曳空白處旋轉視角</p>
-        <p>滾輪 / 雙指縮放</p>
+        <p>上方選單可選擇 AI 難度（簡單／中等／困難）或雙人對弈，切換即開新局。</p>
+        <p>人機模式由你執紅先行，悔棋會連 AI 的回應一併退回。</p>
         <p>點擊己方棋子選中（亮起走法提示），再點擊目標交叉點移動；落到敵子上即為吃子。</p>
-        <p>再次點擊該棋子可取消選中。</p>
+        <p>拖曳空白處旋轉視角，滾輪 / 雙指縮放。</p>
       </div>
       <footer class="copyright">
         Copyright © 2026 <a href="https://www.facebook.com/will.fans/" target="_blank" rel="noopener">Will 保哥</a>

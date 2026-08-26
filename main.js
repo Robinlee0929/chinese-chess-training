@@ -142,16 +142,22 @@ function makeBoardTexture() {
     [6, 0], [6, 2], [6, 4], [6, 6], [6, 8],
   ]) star(r, c);
 
-  // 楚河 / 漢界
+  // 楚河 / 漢界 —— 直書：字沿河界縱向排列，且在預設視角下正立
+  // （貼圖相對於畫面旋轉了 90°：畫面上方 = 貼圖 +x，故字需旋轉 90° 並沿 x 排列）
   g.fillStyle = 'rgba(74,51,32,0.8)';
-  g.font = '46px "Kaiti SC","STKaiti","KaiTi","Noto Serif TC",serif';
+  g.font = '56px "Kaiti SC","STKaiti","KaiTi","Noto Serif TC",serif';
   g.textAlign = 'center';
   g.textBaseline = 'middle';
   const ry = (4 + 5) / 2 * cell + pad;
-  g.fillText('楚', 165, ry - 30);
-  g.fillText('河', 165, ry + 34);
-  g.fillText('漢', W - 165, ry - 30);
-  g.fillText('界', W - 165, ry + 34);
+  const vChar = (ch, x) => {
+    g.save();
+    g.translate(x, ry);
+    g.rotate(Math.PI / 2);
+    g.fillText(ch, 0, 3);
+    g.restore();
+  };
+  vChar('楚', 264); vChar('河', 196);          // 畫面下方直書「楚河」
+  vChar('漢', W - 196); vChar('界', W - 264);  // 畫面上方直書「漢界」
 
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -281,6 +287,31 @@ selRing.rotation.x = -Math.PI / 2;
 selRing.visible = false;
 scene.add(selRing);
 
+// 最後一步標記（起點淡、終點深）
+function mkLastMark(opacity) {
+  const m = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.92, 0.92),
+    new THREE.MeshBasicMaterial({ color: 0xf2c14e, transparent: true, opacity, depthWrite: false })
+  );
+  m.rotation.x = -Math.PI / 2;
+  m.position.y = 0.012;
+  m.renderOrder = 3;
+  m.visible = false;
+  scene.add(m);
+  return m;
+}
+const lastFromMark = mkLastMark(0.13);
+const lastToMark = mkLastMark(0.26);
+function syncLastMoveMark() {
+  const h = history[history.length - 1];
+  lastFromMark.visible = lastToMark.visible = !!h;
+  if (!h) return;
+  const a = to3D(h.from.r, h.from.c);
+  const b = to3D(h.to.r, h.to.c);
+  lastFromMark.position.set(a.x, 0.012, a.z);
+  lastToMark.position.set(b.x, 0.012, b.z);
+}
+
 const fx = new THREE.Group();
 scene.add(fx);
 function clearFX() {
@@ -356,6 +387,9 @@ const ease = (k) => (k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
 function tween(dur, fn, done, delay = 0) {
   tweens.push({ t0: performance.now() + delay, dur, fn, done });
 }
+// 分頁隱藏時 rAF 會暫停；用計時器低頻補跑主迴圈，避免棋局卡在動畫中
+setInterval(() => { if (document.hidden) tick(performance.now()); }, 500);
+
 function stepTweens(now) {
   for (let i = tweens.length - 1; i >= 0; i--) {
     const tw = tweens[i];
@@ -380,6 +414,73 @@ let history = [];      // {from,to,captured,nota}
 let capturedBy = { [RED]: [], [BLACK]: [] };
 let over = false, winner = null, busy = false;
 
+// ---------------- 對弈模式 / AI ----------------
+let mode = 'medium';   // 'pvp' | 'easy' | 'medium' | 'hard'
+const AI_SIDE = BLACK; // 人機模式：玩家執紅，AI 執黑
+const isAI = () => mode !== 'pvp';
+let aiThinking = false;
+let aiToken = 0;       // 用於作廢過期的 AI 計算（開新局、悔棋後）
+let aiMoveStart = 0;
+
+let aiWorker = null;
+let aiModule = null;   // Worker 不可用時的主執行緒後備
+try {
+  aiWorker = new Worker(new URL('./ai-worker.js', import.meta.url), { type: 'module' });
+  aiWorker.onmessage = (e) => onAIResult(e.data);
+  aiWorker.onerror = () => {
+    aiWorker = null;
+    if (aiThinking) requestAIMove();
+  };
+} catch {
+  aiWorker = null;
+}
+
+function requestAIMove() {
+  const token = ++aiToken;
+  const payload = {
+    board: board.map((row) => row.map((p) => (p ? { ...p } : null))),
+    side: turn,
+    level: mode,
+    token,
+  };
+  if (aiWorker) {
+    aiWorker.postMessage(payload);
+  } else {
+    (aiModule ??= import('./ai.js')).then(({ findBestMove }) => {
+      setTimeout(() => {
+        if (token !== aiToken) return;
+        onAIResult({ token, result: findBestMove(payload.board, payload.side, payload.level) });
+      }, 30);
+    });
+  }
+}
+
+function maybeAIMove() {
+  if (!isAI() || over || busy || turn !== AI_SIDE || aiThinking) return;
+  aiThinking = true;
+  aiMoveStart = performance.now();
+  requestAIMove();
+  refreshHUD();
+}
+
+function onAIResult({ token, result, error }) {
+  if (token !== aiToken) return;
+  if (error || !result) { aiThinking = false; refreshHUD(); return; }
+  // 至少顯示一小段「思考中」，節奏比較自然
+  const wait = Math.max(0, 500 - (performance.now() - aiMoveStart));
+  setTimeout(() => {
+    if (token !== aiToken) return;
+    aiThinking = false;
+    if (over || busy || turn !== AI_SIDE) { refreshHUD(); return; }
+    const { from, to } = result;
+    const p = board[from.r] && board[from.r][from.c];
+    const ok = p && p.side === turn &&
+      legalMoves(board, from.r, from.c).some((m) => m.r === to.r && m.c === to.c);
+    if (!ok) { refreshHUD(); return; }
+    doMove(from, to);
+  }, wait);
+}
+
 // 除錯／自動測試掛鉤
 window.__chess = {
   get pieces() { return pieces; },
@@ -388,6 +489,9 @@ window.__chess = {
   get selected() { return selected; },
   get history() { return history; },
   get busy() { return busy; },
+  get mode() { return mode; },
+  get aiThinking() { return aiThinking; },
+  setMode(m) { mode = m; const el = document.getElementById('modeSel'); if (el) el.value = m; },
   resetTo,
   newGame,
   undo,
@@ -397,6 +501,7 @@ window.__chess = {
 
 const turnText = document.getElementById('turnText');
 const turnDot = document.getElementById('turnDot');
+const turnBox = document.getElementById('turn');
 const logEl = document.getElementById('log');
 const logEmpty = document.getElementById('logEmpty');
 const capRedEl = document.getElementById('capRed');
@@ -408,13 +513,22 @@ const btnUndo = document.getElementById('btnUndo');
 function refreshHUD() {
   const showSide = over && winner ? winner : turn;
   const isRed = showSide === RED;
-  turnText.textContent = over ? (winner === RED ? '紅方勝' : '黑方勝') : (isRed ? '紅方行棋' : '黑方行棋');
+  if (over) {
+    turnText.textContent = winner === RED ? '紅方勝' : '黑方勝';
+  } else if (aiThinking) {
+    turnText.textContent = 'AI 思考中…';
+  } else if (isAI()) {
+    turnText.textContent = isRed ? '輪到你了' : 'AI 行棋';
+  } else {
+    turnText.textContent = isRed ? '紅方行棋' : '黑方行棋';
+  }
   const col = isRed ? '#c05345' : '#8b93a1';
   turnDot.style.background = col;
   turnDot.style.boxShadow = `0 0 10px ${col}`;
+  turnBox.classList.toggle('thinking', aiThinking && !over);
   capRedEl.innerHTML = capturedBy[RED].map((p) => `<span class="chip ${p.side}">${name(p.side, p.type)}</span>`).join('') || '<em>—</em>';
   capBlackEl.innerHTML = capturedBy[BLACK].map((p) => `<span class="chip ${p.side}">${name(p.side, p.type)}</span>`).join('') || '<em>—</em>';
-  btnUndo.disabled = history.length === 0 || busy;
+  btnUndo.disabled = history.length === 0 || busy || aiThinking;
 }
 
 function addLog(nota, side) {
@@ -478,6 +592,8 @@ function buildScene() {
 
 function newGame() {
   tweens.length = 0;
+  aiToken++;
+  aiThinking = false;
   history = [];
   capturedBy = { [RED]: [], [BLACK]: [] };
   over = false;
@@ -489,6 +605,7 @@ function newGame() {
   banner.classList.add('hidden');
   logEl.innerHTML = '';
   logEmpty.style.display = '';
+  syncLastMoveMark();
   buildScene();
   refreshHUD();
 }
@@ -496,6 +613,8 @@ function newGame() {
 /** 測試用：直接佈局 */
 function resetTo(customBoard, turnSide) {
   tweens.length = 0;
+  aiToken++;
+  aiThinking = false;
   board = customBoard;
   if (turnSide) turn = turnSide;
   history = [];
@@ -507,6 +626,7 @@ function resetTo(customBoard, turnSide) {
   banner.classList.add('hidden');
   logEl.innerHTML = '';
   logEmpty.style.display = '';
+  syncLastMoveMark();
   buildScene();
   refreshHUD();
 }
@@ -531,6 +651,7 @@ function doMove(from, to) {
   p.userData.r = to.r;
   p.userData.c = to.c;
   history.push({ from, to, captured, nota });
+  syncLastMoveMark();
   clearSelection();
   busy = true;
   refreshHUD();
@@ -574,12 +695,16 @@ function finishMove(nota, captured) {
     refreshHUD();
     setTimeout(() => {
       sfx.win();
-      document.getElementById('ovTitle').textContent = winner === RED ? '紅方勝' : '黑方勝';
+      const title = isAI()
+        ? (winner !== AI_SIDE ? '你贏了！' : '你輸了')
+        : (winner === RED ? '紅方勝' : '黑方勝');
+      document.getElementById('ovTitle').textContent = title;
       document.getElementById('ovReason').textContent = checked ? '將死' : '困斃（無子可動）';
       overlay.classList.remove('hidden');
     }, checked ? 900 : 300);
   }
   refreshHUD();
+  maybeAIMove();
 }
 
 function showBanner() {
@@ -588,8 +713,7 @@ function showBanner() {
   showBanner._t = setTimeout(() => banner.classList.add('hidden'), 1500);
 }
 
-function undo() {
-  if (!history.length || busy) return;
+function undoPly() {
   const h = history.pop();
   const p = pieceAt(h.to.r, h.to.c);
   applyMove(board, h.to, h.from);
@@ -603,11 +727,20 @@ function undo() {
     scene.add(cm);
     capturedBy[turn === RED ? BLACK : RED].pop();
   }
-  addLog('悔一着', turn === RED ? BLACK : RED);
+  turn = turn === RED ? BLACK : RED;
+}
+
+function undo() {
+  if (!history.length || busy || aiThinking) return;
+  aiToken++; // 作廢進行中的 AI 計算
+  undoPly();
+  // 人機模式：連 AI 那一步一起退，回到玩家回合
+  if (isAI() && turn === AI_SIDE && history.length) undoPly();
+  addLog('悔棋', turn);
   if (over) { over = false; winner = null; }
   overlay.classList.add('hidden');
-  turn = turn === RED ? BLACK : RED;
   clearSelection();
+  syncLastMoveMark();
   refreshHUD();
 }
 
@@ -653,7 +786,7 @@ renderer.domElement.addEventListener('click', (e) => {
     return;
   }
   downXY = null;
-  if (busy || over) return;
+  if (busy || over || aiThinking || (isAI() && turn === AI_SIDE)) return;
   const hit = pick(e);
   if (!hit) { clearSelection(); refreshHUD(); return; }
 
@@ -681,6 +814,12 @@ renderer.domElement.addEventListener('click', (e) => {
 });
 
 // ---------------- 按鈕 ----------------
+const modeSel = document.getElementById('modeSel');
+mode = modeSel.value;
+modeSel.addEventListener('change', () => {
+  mode = modeSel.value;
+  newGame(); // 換對手就開新局，避免局中切換造成混亂
+});
 document.getElementById('btnNew').addEventListener('click', newGame);
 btnUndo.addEventListener('click', undo);
 document.getElementById('btnSound').addEventListener('click', (e) => {
@@ -733,7 +872,7 @@ function resize() {
 new ResizeObserver(resize).observe(container);
 resize();
 
-renderer.setAnimationLoop((now) => {
+function tick(now) {
   stepTweens(now);
   if (selRing.visible) {
     const s = 1 + Math.sin(now * 0.006) * 0.05;
@@ -741,6 +880,7 @@ renderer.setAnimationLoop((now) => {
   }
   controls.update();
   renderer.render(scene, camera);
-});
+}
+renderer.setAnimationLoop(tick);
 
 newGame();

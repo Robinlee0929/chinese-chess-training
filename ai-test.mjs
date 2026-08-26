@@ -1,0 +1,92 @@
+// AI 引擎自測
+import { initialBoard, applyMove, legalMoves, inCheck, RED, BLACK } from './game.js';
+import { findBestMove, evaluate } from './ai.js';
+
+let failed = 0;
+function ok(cond, msg) {
+  if (cond) { console.log('  ✓', msg); }
+  else { failed++; console.error('  ✗', msg); }
+}
+const emptyBoard = () => Array.from({ length: 10 }, () => Array(9).fill(null));
+const isLegal = (b, mv) =>
+  !!mv && legalMoves(b, mv.from.r, mv.from.c).some((m) => m.r === mv.to.r && m.c === mv.to.c);
+
+// ---------- 初始局面：三種難度都要回傳合法著法 ----------
+for (const lv of ['easy', 'medium', 'hard']) {
+  const b = initialBoard();
+  const t0 = Date.now();
+  const mv = findBestMove(b, RED, lv);
+  const ms = Date.now() - t0;
+  ok(isLegal(b, mv), `${lv}：初始局面回傳合法著法（${ms}ms, depth=${mv?.depth}）`);
+}
+
+// ---------- 黑方也能走 ----------
+{
+  const b = initialBoard();
+  applyMove(b, { r: 2, c: 1 }, { r: 2, c: 4 }); // 紅炮平五
+  const mv = findBestMove(b, BLACK, 'medium');
+  ok(isLegal(b, mv), '黑方（medium）回傳合法著法');
+}
+
+// ---------- 白吃大子：中等以上要吃掉沒人保護的車 ----------
+{
+  const b = emptyBoard();
+  b[0][4] = { type: 'K', side: RED };
+  b[9][3] = { type: 'K', side: BLACK };
+  b[5][0] = { type: 'R', side: RED };  // 紅車在 (5,0)
+  b[5][8] = { type: 'R', side: BLACK }; // 黑車同列，可直取
+  const mv = findBestMove(b, BLACK, 'medium');
+  ok(mv && mv.to.r === 5 && mv.to.c === 0, `medium：白吃無根紅車（實走 ${JSON.stringify(mv?.to)}）`);
+}
+
+// ---------- 解將：被將軍時必須應將 ----------
+{
+  const b = emptyBoard();
+  b[0][4] = { type: 'K', side: RED };
+  b[9][4] = { type: 'K', side: BLACK };
+  b[5][4] = { type: 'N', side: BLACK }; // 擋對臉
+  b[3][4] = { type: 'R', side: BLACK }; // 將軍
+  b[0][0] = { type: 'R', side: RED };
+  for (const lv of ['easy', 'medium', 'hard']) {
+    const mv = findBestMove(b, RED, lv);
+    const nb = b.map((r) => r.slice());
+    applyMove(nb, mv.from, mv.to);
+    ok(!inCheck(nb, RED), `${lv}：被將時應將（實走 ${JSON.stringify(mv)}）`);
+  }
+}
+
+// ---------- 殺棋：困難模式找到一步殺 ----------
+{
+  // 黑將 (9,4)，紅雙俥：一俥 (8,0) 控制第 8 行，另一俥 (7,8) 走到 (9,8)... 改用鐵門栓型
+  const b = emptyBoard();
+  b[9][4] = { type: 'K', side: BLACK };
+  b[0][3] = { type: 'K', side: RED };
+  b[8][0] = { type: 'R', side: RED };  // 控制 row 8（黑將無法下來）
+  b[6][8] = { type: 'R', side: RED };  // 俥進 (9,8) 抽底線將軍
+  b[5][3] = { type: 'P', side: RED };
+  const mv = findBestMove(b, RED, 'hard');
+  const nb = b.map((r) => r.slice());
+  applyMove(nb, mv.from, mv.to);
+  const mated = inCheck(nb, BLACK) &&
+    ![...Array(10).keys()].some((r) => [...Array(9).keys()].some((c) => {
+      const p = nb[r][c];
+      return p && p.side === BLACK && legalMoves(nb, r, c).length > 0;
+    }));
+  ok(mated, `hard：找到一步殺（實走 ${JSON.stringify(mv)}，score=${mv?.score}）`);
+}
+
+// ---------- 評估函數對稱 ----------
+{
+  ok(evaluate(initialBoard()) === 0, '初始局面評估為 0（紅黑對稱）');
+}
+
+// ---------- 效能：hard 在初始局面 3 秒內回覆 ----------
+{
+  const t0 = Date.now();
+  findBestMove(initialBoard(), RED, 'hard');
+  const ms = Date.now() - t0;
+  ok(ms < 3000, `hard 思考時間 ${ms}ms < 3000ms`);
+}
+
+console.log(failed === 0 ? '\n全部通過 ✔' : `\n${failed} 項失敗 ✘`);
+process.exit(failed === 0 ? 0 : 1);

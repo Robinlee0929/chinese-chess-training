@@ -76,6 +76,28 @@ button:hover { background: #33281d; border-color: #4d3c2a; }
 button:active { transform: translateY(1px); }
 button:disabled { opacity: 0.45; cursor: default; }
 
+/* 對弈模式選單：外觀與按鈕一致 */
+#modeSel {
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--text);
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 10px;
+  cursor: pointer;
+  letter-spacing: 1px;
+  transition: background 0.15s, border-color 0.15s;
+}
+#modeSel:hover { background: #33281d; border-color: #4d3c2a; }
+
+/* AI 思考中：回合指示燈呼吸閃爍 */
+#turn.thinking #turnDot { animation: thinkpulse 1.1s ease-in-out infinite; }
+@keyframes thinkpulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.72); }
+}
+
 #repoLink {
   display: inline-flex;
   align-items: center;
