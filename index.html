@@ -138,12 +138,26 @@
   <div id="checkBanner" class="hidden">將 軍 ！</div>
 
   <div id="overlay" class="hidden">
-    <div class="card">
-      <h2 id="ovTitle">紅方勝</h2>
-      <p id="ovReason">將死</p>
-      <button id="btnAgain" type="button">再來一局</button>
+    <canvas id="confettiCv" aria-hidden="true"></canvas>
+    <div class="card" id="ovCard">
+      <div id="ovBadge">人機對弈 ・ 中等</div>
+      <h2 id="ovTitle">你贏了！</h2>
+      <div id="ovStars" aria-hidden="true"></div>
+      <p id="ovSub">精彩對弈！</p>
+      <div id="ovStats">
+        <div class="stat"><b id="stRounds">0</b><span>回合</span></div>
+        <div class="stat"><b id="stTime">0:00</b><span>用時</span></div>
+        <div class="stat"><b id="stCaps">0</b><span>吃子</span></div>
+      </div>
+      <p id="ovReason">以「將死」取勝</p>
+      <div class="ovBtns">
+        <button id="btnShare" type="button" class="primary">分享戰績 🎉</button>
+        <button id="btnAgain" type="button">再來一局</button>
+      </div>
     </div>
   </div>
+
+  <div id="toast" class="hidden" role="status"></div>
 </div>
 
 <script type="module" src="./main.js"></script>

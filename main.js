@@ -379,6 +379,7 @@ const sfx = {
   capture: () => { beep(210, 0.14, 'square', 0.1); setTimeout(() => beep(330, 0.1, 'sine'), 60); },
   check: () => { beep(660, 0.1); setTimeout(() => beep(880, 0.16), 90); },
   win: () => { [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => beep(f, 0.16, 'triangle', 0.12), i * 110)); },
+  lose: () => { [392, 311, 262].forEach((f, i) => setTimeout(() => beep(f, 0.2, 'sine', 0.09), i * 170)); },
 };
 
 // ---------------- tween ----------------
@@ -413,6 +414,7 @@ let pieces = [];       // 所有棋子 mesh
 let history = [];      // {from,to,captured,nota}
 let capturedBy = { [RED]: [], [BLACK]: [] };
 let over = false, winner = null, busy = false;
+let gameStartTime = Date.now();
 
 // ---------------- 對弈模式 / AI ----------------
 let mode = 'medium';   // 'pvp' | 'easy' | 'medium' | 'hard'
@@ -492,6 +494,8 @@ window.__chess = {
   get mode() { return mode; },
   get aiThinking() { return aiThinking; },
   setMode(m) { mode = m; const el = document.getElementById('modeSel'); if (el) el.value = m; },
+  get lastResult() { return lastResult; },
+  buildShareCard: (r) => buildShareCard(r || lastResult),
   resetTo,
   newGame,
   undo,
@@ -601,6 +605,8 @@ function newGame() {
   busy = false;
   board = initialBoard();
   turn = RED;
+  gameStartTime = Date.now();
+  stopConfetti();
   overlay.classList.add('hidden');
   banner.classList.add('hidden');
   logEl.innerHTML = '';
@@ -622,6 +628,8 @@ function resetTo(customBoard, turnSide) {
   over = false;
   winner = null;
   busy = false;
+  gameStartTime = Date.now();
+  stopConfetti();
   overlay.classList.add('hidden');
   banner.classList.add('hidden');
   logEl.innerHTML = '';
@@ -693,15 +701,7 @@ function finishMove(nota, captured) {
     over = true;
     winner = turn === RED ? BLACK : RED;
     refreshHUD();
-    setTimeout(() => {
-      sfx.win();
-      const title = isAI()
-        ? (winner !== AI_SIDE ? '你贏了！' : '你輸了')
-        : (winner === RED ? '紅方勝' : '黑方勝');
-      document.getElementById('ovTitle').textContent = title;
-      document.getElementById('ovReason').textContent = checked ? '將死' : '困斃（無子可動）';
-      overlay.classList.remove('hidden');
-    }, checked ? 900 : 300);
+    setTimeout(() => showGameOver(checked), checked ? 900 : 300);
   }
   refreshHUD();
   maybeAIMove();
@@ -738,6 +738,7 @@ function undo() {
   if (isAI() && turn === AI_SIDE && history.length) undoPly();
   addLog('悔棋', turn);
   if (over) { over = false; winner = null; }
+  stopConfetti();
   overlay.classList.add('hidden');
   clearSelection();
   syncLastMoveMark();
@@ -812,6 +813,303 @@ renderer.domElement.addEventListener('click', (e) => {
   }
   refreshHUD();
 });
+
+// ---------------- 終局畫面 / 彩帶 / 分享 ----------------
+const SITE_URL = 'https://chinese-chess.gh.miniasp.com/';
+const DIFF = {
+  easy:   { label: '簡單', stars: 1, winTitle: '旗開得勝！', winSub: '小試身手就拿下 AI，好的開始！' },
+  medium: { label: '中等', stars: 2, winTitle: '運籌帷幄！', winSub: '攻守有度，中等 AI 也不是你的對手！' },
+  hard:   { label: '困難', stars: 3, winTitle: '棋壇霸主！', winSub: '深算遠謀，最強 AI 也俯首稱臣！' },
+};
+
+const ovCard = document.getElementById('ovCard');
+const ovBadge = document.getElementById('ovBadge');
+const ovTitle = document.getElementById('ovTitle');
+const ovStars = document.getElementById('ovStars');
+const ovSub = document.getElementById('ovSub');
+const ovReason = document.getElementById('ovReason');
+const stRounds = document.getElementById('stRounds');
+const stTime = document.getElementById('stTime');
+const stCaps = document.getElementById('stCaps');
+const btnShare = document.getElementById('btnShare');
+const toastEl = document.getElementById('toast');
+let lastResult = null;
+
+const fmtTime = (secs) => `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+
+let toastTimer = 0;
+function toast(msg) {
+  toastEl.textContent = msg;
+  toastEl.classList.remove('hidden');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.add('hidden'), 3600);
+}
+
+function showGameOver(checked) {
+  const pvp = !isAI();
+  const playerWin = !pvp && winner !== AI_SIDE;
+  const d = pvp ? null : DIFF[mode];
+  const rounds = Math.max(1, Math.ceil(history.length / 2));
+  const secs = Math.max(1, Math.round((Date.now() - gameStartTime) / 1000));
+  const caps = pvp ? capturedBy[winner].length : capturedBy[RED].length;
+  const reasonChars = checked ? '將死' : '困斃';
+  const winLabel = winner === RED ? '紅方' : '黑方';
+  const celebrate = pvp || playerWin;
+
+  let title, sub, badge, cardTitle, cardSub, shareText;
+  if (pvp) {
+    title = `${winLabel}勝`;
+    sub = '棋逢敵手，精彩對弈！';
+    badge = '雙人對弈';
+    cardTitle = `${winLabel}勝出`;
+    cardSub = `雙人對弈 ・ 鏖戰 ${rounds} 回合`;
+    shareText = `我們在 3D 中國象棋鏖戰 ${rounds} 回合，${winLabel}獲勝！來對弈一局：${SITE_URL}`;
+  } else if (playerWin) {
+    title = d.winTitle;
+    sub = d.winSub;
+    badge = `人機對弈 ・ ${d.label}`;
+    cardTitle = d.winTitle.replace('！', '');
+    cardSub = `戰勝「${d.label}」AI ・ ${rounds} 回合`;
+    shareText = `我在 3D 中國象棋以 ${rounds} 回合戰勝了「${d.label}」AI 🏆 不服來戰：${SITE_URL}`;
+  } else {
+    title = '惜敗…';
+    sub = '勝敗乃兵家常事，捲土重來！';
+    badge = `人機對弈 ・ ${d.label}`;
+  }
+
+  lastResult = { pvp, playerWin, d, rounds, secs, caps, reasonChars, cardTitle, cardSub, shareText };
+
+  ovBadge.textContent = badge;
+  ovTitle.textContent = title;
+  ovSub.textContent = sub;
+  if (d) {
+    ovStars.innerHTML = [1, 2, 3].map((i) =>
+      `<span class="${i <= d.stars ? 'on' : ''}" style="animation-delay:${0.2 + i * 0.14}s">★</span>`
+    ).join('');
+    ovStars.style.display = '';
+  } else {
+    ovStars.style.display = 'none';
+  }
+  stRounds.textContent = rounds;
+  stTime.textContent = fmtTime(secs);
+  stCaps.textContent = caps;
+  ovReason.textContent = celebrate ? `以「${reasonChars}」取勝` : `遭「${reasonChars}」落敗`;
+  ovCard.classList.toggle('win', celebrate);
+  ovCard.classList.toggle('lose', !celebrate);
+  btnShare.style.display = celebrate ? '' : 'none';
+  overlay.classList.remove('hidden');
+  if (celebrate) {
+    sfx.win();
+    startConfetti();
+  } else {
+    stopConfetti();
+    sfx.lose();
+  }
+}
+
+// ----- 彩帶 -----
+const confettiCv = document.getElementById('confettiCv');
+const CONF_COLORS = ['#f2c14e', '#e2736a', '#e9decb', '#d9a441', '#c05345', '#9fd68f'];
+let confettiRAF = 0;
+
+// rAF 在分頁進背景時會暫停，不能靠迴圈自己收尾；關閉 overlay 時須主動停止並清空
+function stopConfetti() {
+  cancelAnimationFrame(confettiRAF);
+  confettiCv.getContext('2d').clearRect(0, 0, confettiCv.width, confettiCv.height);
+}
+
+function startConfetti() {
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const w = confettiCv.width = confettiCv.clientWidth * dpr;
+  const h = confettiCv.height = confettiCv.clientHeight * dpr;
+  const g = confettiCv.getContext('2d');
+  const spawn = (initial) => ({
+    x: Math.random() * w,
+    y: initial ? Math.random() * h * 2 - h : -20 * dpr, // 開場一半灑在畫面內、一半自上方落下
+    w: (5 + Math.random() * 6) * dpr,
+    h: (8 + Math.random() * 9) * dpr,
+    vx: (-0.6 + Math.random() * 1.2) * dpr,
+    vy: (1.4 + Math.random() * 2.4) * dpr,
+    rot: Math.random() * Math.PI,
+    vr: -0.12 + Math.random() * 0.24,
+    sway: Math.random() * Math.PI * 2,
+    color: CONF_COLORS[(Math.random() * CONF_COLORS.length) | 0],
+  });
+  const parts = Array.from({ length: 130 }, () => spawn(true));
+  cancelAnimationFrame(confettiRAF);
+  const step = () => {
+    if (overlay.classList.contains('hidden')) { g.clearRect(0, 0, w, h); return; }
+    g.clearRect(0, 0, w, h);
+    for (const p of parts) {
+      p.sway += 0.05;
+      p.x += p.vx + Math.sin(p.sway) * 0.9 * dpr;
+      p.y += p.vy;
+      p.rot += p.vr;
+      if (p.y > h + 24 * dpr) Object.assign(p, spawn(false));
+      g.save();
+      g.translate(p.x, p.y);
+      g.rotate(p.rot);
+      g.fillStyle = p.color;
+      g.globalAlpha = 0.6 + Math.abs(Math.sin(p.sway)) * 0.4; // 翻面時明暗變化
+      g.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+      g.restore();
+    }
+    confettiRAF = requestAnimationFrame(step);
+  };
+  confettiRAF = requestAnimationFrame(step);
+}
+
+// ----- 戰績卡（分享圖）-----
+function roundRectPath(g, x, y, w, h, r) {
+  g.beginPath();
+  g.moveTo(x + r, y);
+  g.arcTo(x + w, y, x + w, y + h, r);
+  g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r);
+  g.arcTo(x, y, x + w, y, r);
+  g.closePath();
+}
+
+async function buildShareCard(res) {
+  const W = 1080, H = 1350;
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const g = cv.getContext('2d');
+  const serif = '"Kaiti SC","STKaiti","KaiTi","Noto Serif TC",serif';
+  const sans = '"PingFang TC","Microsoft JhengHei","Noto Sans TC",sans-serif';
+
+  // 底色 + 雙線描金外框
+  const bg = g.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, '#261c12');
+  bg.addColorStop(1, '#120e09');
+  g.fillStyle = bg;
+  g.fillRect(0, 0, W, H);
+  g.strokeStyle = 'rgba(217,164,65,0.4)';
+  g.lineWidth = 3;
+  g.strokeRect(30, 30, W - 60, H - 60);
+  g.strokeStyle = 'rgba(217,164,65,0.16)';
+  g.lineWidth = 1;
+  g.strokeRect(44, 44, W - 88, H - 88);
+
+  g.textAlign = 'center';
+  g.fillStyle = '#9a8a74';
+  g.font = `600 30px ${sans}`;
+  g.fillText('中 國 象 棋 ・ 3 D 對 弈', W / 2, 118);
+
+  g.fillStyle = '#f2c14e';
+  g.shadowColor = 'rgba(242,193,78,0.45)';
+  g.shadowBlur = 28;
+  g.font = `900 96px ${serif}`;
+  g.fillText(res.cardTitle, W / 2, 236);
+  g.shadowBlur = 0;
+
+  const starStr = res.d ? '★'.repeat(res.d.stars) + '☆'.repeat(3 - res.d.stars) + '　' : '';
+  g.fillStyle = '#d9a441';
+  g.font = `700 40px ${sans}`;
+  g.fillText(`${starStr}${res.cardSub}`, W / 2, 306);
+
+  // 終局棋盤：WebGL 緩衝在 present 後即失效，須重繪後立即 drawImage
+  const bx = 90, by = 344, bw = 900, bh = 656;
+  g.save();
+  roundRectPath(g, bx, by, bw, bh, 22);
+  g.clip();
+  renderer.render(scene, camera);
+  const shot = renderer.domElement;
+  const sc = Math.max(bw / shot.width, bh / shot.height);
+  const sw = bw / sc, sh = bh / sc;
+  g.drawImage(shot, (shot.width - sw) / 2, (shot.height - sh) / 2, sw, sh, bx, by, bw, bh);
+  g.restore();
+  roundRectPath(g, bx, by, bw, bh, 22);
+  g.strokeStyle = 'rgba(217,164,65,0.5)';
+  g.lineWidth = 3;
+  g.stroke();
+
+  // 紅印：將死 / 困斃
+  g.save();
+  g.translate(bx + bw - 92, by + bh - 92);
+  g.rotate(-0.1);
+  const ss = 150;
+  g.fillStyle = 'rgba(179,44,32,0.94)';
+  roundRectPath(g, -ss / 2, -ss / 2, ss, ss, 14);
+  g.fill();
+  g.strokeStyle = 'rgba(245,233,214,0.85)';
+  g.lineWidth = 4;
+  roundRectPath(g, -ss / 2 + 9, -ss / 2 + 9, ss - 18, ss - 18, 8);
+  g.stroke();
+  g.fillStyle = '#f5e9d6';
+  g.font = `900 56px ${serif}`;
+  g.textBaseline = 'middle';
+  g.fillText(res.reasonChars[0], 0, -33);
+  g.fillText(res.reasonChars[1], 0, 35);
+  g.restore();
+  g.textBaseline = 'alphabetic';
+
+  // 戰績統計
+  g.strokeStyle = 'rgba(217,164,65,0.25)';
+  g.lineWidth = 1;
+  g.beginPath();
+  g.moveTo(120, 1052);
+  g.lineTo(W - 120, 1052);
+  g.stroke();
+  const stats = [[String(res.rounds), '回合'], [fmtTime(res.secs), '用時'], [String(res.caps), '吃子']];
+  stats.forEach(([v, l], i) => {
+    const x = W / 2 + (i - 1) * 300;
+    g.fillStyle = '#e9decb';
+    g.font = `800 64px ${sans}`;
+    g.fillText(v, x, 1148);
+    g.fillStyle = '#9a8a74';
+    g.font = `600 26px ${sans}`;
+    g.fillText(l, x, 1194);
+  });
+
+  g.fillStyle = '#d9a441';
+  g.font = `700 34px ${sans}`;
+  g.fillText('不 服 來 戰', W / 2, 1262);
+  g.fillStyle = '#9a8a74';
+  g.font = `500 28px ${sans}`;
+  g.fillText('chinese-chess.gh.miniasp.com', W / 2, 1306);
+
+  return cv;
+}
+
+async function shareResult() {
+  if (!lastResult) return;
+  btnShare.disabled = true;
+  const orig = btnShare.textContent;
+  btnShare.textContent = '產生戰績圖…';
+  try {
+    const cv = await buildShareCard(lastResult);
+    const blob = await new Promise((res) => cv.toBlob(res, 'image/png'));
+    const file = new File([blob], 'chinese-chess-victory.png', { type: 'image/png' });
+    if (navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], text: lastResult.shareText });
+        toast('分享成功，同喜同賀！🎉');
+        return;
+      } catch (err) {
+        if (err && err.name === 'AbortError') return; // 使用者取消分享
+        // 其餘錯誤改走下載後備方案
+      }
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'chinese-chess-victory.png';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    try {
+      await navigator.clipboard.writeText(lastResult.shareText);
+      toast('戰績圖已下載、炫耀文字已複製，貼上即可分享！');
+    } catch {
+      toast('戰績圖已下載，快分享你的勝利！');
+    }
+  } catch {
+    toast('產生分享圖失敗，請再試一次');
+  } finally {
+    btnShare.disabled = false;
+    btnShare.textContent = orig;
+  }
+}
+btnShare.addEventListener('click', shareResult);
 
 // ---------------- 按鈕 ----------------
 const modeSel = document.getElementById('modeSel');
