@@ -8,6 +8,16 @@ import {
   initialBoard, legalMoves, applyMove, inCheck,
   hasAnyLegalMove, name, notation,
 } from './game.js';
+import {
+  PuzzleEditorError,
+  createEditorState,
+  placeEditorPiece,
+  moveEditorPiece,
+  removeEditorPiece,
+  setEditorSideToMove,
+  confirmAuthoredPosition,
+  exportAuthoredPosition,
+} from './puzzle-editor.js';
 
 // ---------------- 常數 ----------------
 const CELL = 1;
@@ -417,6 +427,12 @@ let over = false, winner = null, busy = false;
 let gameStartTime = Date.now();
 let undoCount = 0;     // 本局悔棋次數（人機模式一次連退兩著仍計 1 次）
 
+// ---------------- 殺局局面編輯 ----------------
+let editorActive = false;
+let editorState = null;
+let editorTool = { kind: 'move' };
+let editorResult = null;
+
 // ---------------- 對弈模式 / AI ----------------
 let mode = 'medium';   // 'pvp' | 'easy' | 'medium' | 'hard'
 const AI_SIDE = BLACK; // 人機模式：玩家執紅，AI 執黑
@@ -459,7 +475,7 @@ function requestAIMove() {
 }
 
 function maybeAIMove() {
-  if (!isAI() || over || busy || turn !== AI_SIDE || aiThinking) return;
+  if (editorActive || !isAI() || over || busy || turn !== AI_SIDE || aiThinking) return;
   aiThinking = true;
   aiMoveStart = performance.now();
   requestAIMove();
@@ -474,7 +490,7 @@ function onAIResult({ token, result, error }) {
   setTimeout(() => {
     if (token !== aiToken) return;
     aiThinking = false;
-    if (over || busy || turn !== AI_SIDE) { refreshHUD(); return; }
+    if (editorActive || over || busy || turn !== AI_SIDE) { refreshHUD(); return; }
     const { from, to } = result;
     const p = board[from.r] && board[from.r][from.c];
     const ok = p && p.side === turn &&
@@ -494,6 +510,8 @@ window.__chess = {
   get busy() { return busy; },
   get mode() { return mode; },
   get aiThinking() { return aiThinking; },
+  get editorActive() { return editorActive; },
+  get editorResult() { return cloneEditorResult(); },
   setMode(m) { mode = m; const el = document.getElementById('modeSel'); if (el) el.value = m; },
   get lastResult() { return lastResult; },
   buildShareCard: (r) => buildShareCard(r || lastResult),
@@ -501,9 +519,13 @@ window.__chess = {
   newGame,
   undo,
   doMove,
+  enterEditor,
+  exitEditor,
+  checkEditorMeshInvariant: () => checkBoardMeshInvariant(editorState?.board),
   camera, renderer, scene,
 };
 
+const appEl = document.getElementById('app');
 const turnText = document.getElementById('turnText');
 const turnDot = document.getElementById('turnDot');
 const turnBox = document.getElementById('turn');
@@ -514,11 +536,22 @@ const capBlackEl = document.getElementById('capBlack');
 const banner = document.getElementById('checkBanner');
 const overlay = document.getElementById('overlay');
 const btnUndo = document.getElementById('btnUndo');
+const btnNew = document.getElementById('btnNew');
+const btnEditor = document.getElementById('btnEditor');
+const modeSel = document.getElementById('modeSel');
+const editorPanel = document.getElementById('editorPanel');
+const editorMessage = document.getElementById('editorMessage');
+const editorToolText = document.getElementById('editorToolText');
+const btnEditorMove = document.getElementById('btnEditorMove');
+const btnEditorErase = document.getElementById('btnEditorErase');
+const editorPieceButtons = [...document.querySelectorAll('[data-editor-side][data-editor-type]')];
 
 function refreshHUD() {
-  const showSide = over && winner ? winner : turn;
+  const showSide = editorActive ? editorState.sideToMove : (over && winner ? winner : turn);
   const isRed = showSide === RED;
-  if (over) {
+  if (editorActive) {
+    turnText.textContent = isRed ? '編輯中・紅方先行' : '編輯中・黑方先行';
+  } else if (over) {
     turnText.textContent = winner === RED ? '紅方勝' : '黑方勝';
   } else if (aiThinking) {
     turnText.textContent = 'AI 思考中…';
@@ -530,10 +563,14 @@ function refreshHUD() {
   const col = isRed ? '#c05345' : '#8b93a1';
   turnDot.style.background = col;
   turnDot.style.boxShadow = `0 0 10px ${col}`;
-  turnBox.classList.toggle('thinking', aiThinking && !over);
+  turnBox.classList.toggle('thinking', !editorActive && aiThinking && !over);
   capRedEl.innerHTML = capturedBy[RED].map((p) => `<span class="chip ${p.side}">${name(p.side, p.type)}</span>`).join('') || '<em>—</em>';
   capBlackEl.innerHTML = capturedBy[BLACK].map((p) => `<span class="chip ${p.side}">${name(p.side, p.type)}</span>`).join('') || '<em>—</em>';
-  btnUndo.disabled = history.length === 0 || busy || aiThinking;
+  btnUndo.disabled = editorActive || history.length === 0 || busy || aiThinking;
+  btnNew.disabled = editorActive;
+  modeSel.disabled = editorActive;
+  btnEditor.textContent = editorActive ? '退出編輯' : '建立殺局';
+  btnEditor.setAttribute('aria-pressed', String(editorActive));
 }
 
 function addLog(nota, side) {
@@ -577,22 +614,236 @@ function pieceAt(r, c) {
   return pieces.find((o) => o.userData.r === r && o.userData.c === c);
 }
 
-function buildScene() {
+function rebuildPieceMeshes(sourceBoard, animate = false) {
   clearSelection();
   for (const m of [...pieces]) scene.remove(m);
   pieces = [];
   let i = 0;
   for (let r = 0; r < ROWS; r++)
     for (let c = 0; c < COLS; c++) {
-      const p = board[r][c];
+      const p = sourceBoard[r][c];
       if (!p) continue;
       const m = makePiece(p, r, c);
       pieces.push(m);
       scene.add(m);
-      m.position.y = 3.4;
-      tween(420 + (i % 9) * 26, (k) => { m.position.y = 3.4 + (Y0 - 3.4) * k; }, null, (i >> 3) * 55);
+      if (animate) {
+        m.position.y = 3.4;
+        tween(420 + (i % 9) * 26, (k) => { m.position.y = 3.4 + (Y0 - 3.4) * k; }, null, (i >> 3) * 55);
+      }
       i++;
     }
+}
+
+function buildScene() {
+  rebuildPieceMeshes(board, true);
+}
+
+function checkBoardMeshInvariant(sourceBoard) {
+  if (!sourceBoard) return { ok: false, errors: ['Editor is not active.'] };
+  const errors = [];
+  const seen = new Set();
+  let boardPieceCount = 0;
+
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++) if (sourceBoard[r][c]) boardPieceCount++;
+
+  for (const mesh of pieces) {
+    const { r, c, piece } = mesh.userData;
+    const key = `${r},${c}`;
+    if (seen.has(key)) errors.push(`Duplicate mesh at ${key}.`);
+    seen.add(key);
+    if (mesh.parent !== scene || mesh.visible === false) errors.push(`Mesh at ${key} is not visible in the scene.`);
+    const logical = sourceBoard[r]?.[c];
+    if (!logical) errors.push(`Mesh at ${key} has no logical piece.`);
+    else if (!piece || logical.side !== piece.side || logical.type !== piece.type) {
+      errors.push(`Mesh at ${key} does not match its logical piece.`);
+    }
+  }
+
+  if (pieces.length !== boardPieceCount) {
+    errors.push(`Expected ${boardPieceCount} meshes but found ${pieces.length}.`);
+  }
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++) {
+      if (sourceBoard[r][c] && !seen.has(`${r},${c}`)) errors.push(`Logical piece at ${r},${c} has no mesh.`);
+    }
+  return { ok: errors.length === 0, errors };
+}
+
+function syncEditorScene() {
+  tweens.length = 0;
+  rebuildPieceMeshes(editorState.board, false);
+  const invariant = checkBoardMeshInvariant(editorState.board);
+  if (!invariant.ok) throw new Error(`Editor board/mesh invariant failed: ${invariant.errors.join(' ')}`);
+}
+
+function setEditorMessage(message, kind = '') {
+  editorMessage.textContent = message;
+  editorMessage.classList.toggle('success', kind === 'success');
+  editorMessage.classList.toggle('error', kind === 'error');
+}
+
+function setEditorTool(tool) {
+  editorTool = tool;
+  clearSelection();
+  editorPieceButtons.forEach((button) => {
+    const active = tool.kind === 'piece'
+      && button.dataset.editorSide === tool.piece.side
+      && button.dataset.editorType === tool.piece.type;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  btnEditorMove.classList.toggle('active', tool.kind === 'move');
+  btnEditorMove.setAttribute('aria-pressed', String(tool.kind === 'move'));
+  btnEditorErase.classList.toggle('active', tool.kind === 'erase');
+  btnEditorErase.setAttribute('aria-pressed', String(tool.kind === 'erase'));
+  if (tool.kind === 'piece') {
+    const sideLabel = tool.piece.side === RED ? '紅方' : '黑方';
+    editorToolText.textContent = `目前工具：放置${sideLabel}${name(tool.piece.side, tool.piece.type)}`;
+  } else {
+    editorToolText.textContent = `目前工具：${tool.kind === 'move' ? '移動棋子' : '刪除棋子'}`;
+  }
+}
+
+function selectEditorPiece(r, c) {
+  clearSelection();
+  selected = { r, c };
+  showSelectRingAt(selected);
+  sfx.select();
+}
+
+function applyEditorAction(action, successMessage) {
+  try {
+    editorState = action();
+    syncEditorScene();
+    setEditorMessage(successMessage);
+    refreshHUD();
+    return true;
+  } catch (error) {
+    if (!(error instanceof PuzzleEditorError)) throw error;
+    const messages = {
+      OCCUPIED_SQUARE: '此處已有棋子，請先移動或刪除原棋子。',
+      OCCUPIED_DESTINATION: '目的位置已有棋子，編輯模式不會自動覆蓋。',
+      EMPTY_SOURCE: '來源位置沒有棋子。',
+      EMPTY_SQUARE: '此處沒有可刪除的棋子。',
+    };
+    const message = messages[error.code] || error.message;
+    setEditorMessage(message, 'error');
+    toast(message);
+    return false;
+  }
+}
+
+function handleEditorBoardClick(hit) {
+  if (!hit) {
+    clearSelection();
+    refreshHUD();
+    return;
+  }
+  const coordinate = hit.userData?.piece
+    ? { r: hit.userData.r, c: hit.userData.c }
+    : { r: hit.r, c: hit.c };
+  const occupied = editorState.board[coordinate.r][coordinate.c] !== null;
+
+  if (editorTool.kind === 'piece') {
+    if (occupied) {
+      const message = '此處已有棋子，請先移動或刪除原棋子。';
+      setEditorMessage(message, 'error');
+      toast(message);
+      return;
+    }
+    applyEditorAction(
+      () => placeEditorPiece(editorState, editorTool.piece, coordinate),
+      `已放置${name(editorTool.piece.side, editorTool.piece.type)}。`,
+    );
+    return;
+  }
+
+  if (editorTool.kind === 'erase') {
+    applyEditorAction(
+      () => removeEditorPiece(editorState, coordinate),
+      '已刪除棋子。',
+    );
+    return;
+  }
+
+  if (!selected) {
+    if (!occupied) {
+      setEditorMessage('請先選擇要移動的棋子。', 'error');
+      return;
+    }
+    selectEditorPiece(coordinate.r, coordinate.c);
+    setEditorMessage('已選取棋子，請點擊空交叉點完成移動。');
+    return;
+  }
+
+  if (selected.r === coordinate.r && selected.c === coordinate.c) {
+    clearSelection();
+    setEditorMessage('已取消選取。');
+    refreshHUD();
+    return;
+  }
+  if (occupied) {
+    const message = '目的位置已有棋子，請選擇空交叉點。';
+    setEditorMessage(message, 'error');
+    toast(message);
+    return;
+  }
+  const from = { ...selected };
+  clearSelection();
+  applyEditorAction(
+    () => moveEditorPiece(editorState, from, coordinate),
+    '已移動棋子。',
+  );
+}
+
+function enterEditor() {
+  if (editorActive) return true;
+  if (busy) {
+    toast('請等待目前棋步動畫完成後再進入編輯。');
+    return false;
+  }
+  aiToken++;
+  aiThinking = false;
+  tweens.length = 0;
+  clearSelection();
+  editorState = createEditorState();
+  editorActive = true;
+  appEl.classList.add('editor-active');
+  editorPanel.classList.remove('hidden');
+  lastFromMark.visible = false;
+  lastToMark.visible = false;
+  banner.classList.add('hidden');
+  setEditorTool({ kind: 'move' });
+  document.querySelector(`input[name="editorSide"][value="${RED}"]`).checked = true;
+  setEditorMessage('選擇棋子後點擊空交叉點即可放置。');
+  syncEditorScene();
+  refreshHUD();
+  return true;
+}
+
+function exitEditor() {
+  if (!editorActive) return;
+  aiToken++;
+  aiThinking = false;
+  tweens.length = 0;
+  editorActive = false;
+  editorState = null;
+  clearSelection();
+  appEl.classList.remove('editor-active');
+  editorPanel.classList.add('hidden');
+  syncLastMoveMark();
+  buildScene();
+  refreshHUD();
+  maybeAIMove();
+}
+
+function cloneEditorResult() {
+  if (!editorResult) return null;
+  return exportAuthoredPosition(createEditorState({
+    board: editorResult.initialBoard,
+    sideToMove: editorResult.sideToMove,
+  }));
 }
 
 function newGame() {
@@ -735,7 +986,7 @@ function undoPly() {
 }
 
 function undo() {
-  if (!history.length || busy || aiThinking) return;
+  if (editorActive || !history.length || busy || aiThinking) return;
   undoCount++;
   aiToken++; // 作廢進行中的 AI 計算
   undoPly();
@@ -792,8 +1043,12 @@ renderer.domElement.addEventListener('click', (e) => {
     return;
   }
   downXY = null;
-  if (busy || over || aiThinking || (isAI() && turn === AI_SIDE)) return;
   const hit = pick(e);
+  if (editorActive) {
+    handleEditorBoardClick(hit);
+    return;
+  }
+  if (busy || over || aiThinking || (isAI() && turn === AI_SIDE)) return;
   if (!hit) { clearSelection(); refreshHUD(); return; }
 
   // 點到棋子
@@ -1128,13 +1383,74 @@ async function shareResult() {
 btnShare.addEventListener('click', shareResult);
 
 // ---------------- 按鈕 ----------------
-const modeSel = document.getElementById('modeSel');
 mode = modeSel.value;
 modeSel.addEventListener('change', () => {
   mode = modeSel.value;
   newGame(); // 換對手就開新局，避免局中切換造成混亂
 });
-document.getElementById('btnNew').addEventListener('click', newGame);
+btnEditor.addEventListener('click', () => {
+  if (editorActive) exitEditor();
+  else enterEditor();
+});
+editorPieceButtons.forEach((button) => {
+  button.addEventListener('click', () => {
+    setEditorTool({
+      kind: 'piece',
+      piece: { side: button.dataset.editorSide, type: button.dataset.editorType },
+    });
+    setEditorMessage('請點擊空交叉點放置棋子。');
+  });
+});
+btnEditorMove.addEventListener('click', () => {
+  setEditorTool({ kind: 'move' });
+  setEditorMessage('請先點選要移動的棋子，再點擊空交叉點。');
+});
+btnEditorErase.addEventListener('click', () => {
+  setEditorTool({ kind: 'erase' });
+  setEditorMessage('請點擊要刪除的棋子。');
+});
+document.querySelectorAll('input[name="editorSide"]').forEach((input) => {
+  input.addEventListener('change', () => {
+    if (!input.checked) return;
+    editorState = setEditorSideToMove(editorState, input.value);
+    setEditorMessage(input.value === RED ? '已設定紅方先行。' : '已設定黑方先行。');
+    refreshHUD();
+  });
+});
+document.getElementById('btnEditorClear').addEventListener('click', () => {
+  editorState = createEditorState({ sideToMove: editorState.sideToMove });
+  syncEditorScene();
+  setEditorMessage('棋盤已清空。');
+  refreshHUD();
+});
+document.getElementById('btnEditorStandard').addEventListener('click', () => {
+  editorState = createEditorState({ board: initialBoard(), sideToMove: editorState.sideToMove });
+  syncEditorScene();
+  setEditorMessage('已載入標準開局配置。');
+  refreshHUD();
+});
+document.getElementById('btnEditorConfirm').addEventListener('click', () => {
+  const result = confirmAuthoredPosition(editorState);
+  if (!result.ok) {
+    const messages = {
+      MISSING_RED_KING: '確認失敗：局面需要恰好一枚紅帥。',
+      MISSING_BLACK_KING: '確認失敗：局面需要恰好一枚黑將。',
+      DUPLICATE_RED_KING: '確認失敗：紅帥只能有一枚。',
+      DUPLICATE_BLACK_KING: '確認失敗：黑將只能有一枚。',
+      INVALID_SIDE_TO_MOVE: '確認失敗：請選擇先行方。',
+    };
+    const message = messages[result.error.code] || `確認失敗：${result.error.message}`;
+    setEditorMessage(message, 'error');
+    toast(message);
+    return;
+  }
+  editorResult = result.position;
+  const sideLabel = editorResult.sideToMove === RED ? '紅方' : '黑方';
+  setEditorMessage(`局面確認成功，已保留給後續解法錄製（${sideLabel}先行）。`, 'success');
+  toast('局面確認成功。');
+});
+document.getElementById('btnEditorExit').addEventListener('click', exitEditor);
+btnNew.addEventListener('click', newGame);
 btnUndo.addEventListener('click', undo);
 document.getElementById('btnSound').addEventListener('click', (e) => {
   muted = !muted;

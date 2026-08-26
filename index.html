@@ -93,6 +93,7 @@
         <option value="hard">人機・困難</option>
         <option value="pvp">雙人對弈</option>
       </select>
+      <button id="btnEditor" type="button" aria-pressed="false">建立殺局</button>
       <button id="btnUndo" type="button">悔棋</button>
       <button id="btnNew" type="button">新對局</button>
       <button id="btnSound" type="button" aria-pressed="true">音效：開</button>
@@ -124,6 +125,65 @@
       <footer class="copyright">
         Copyright © 2026 <a href="https://www.facebook.com/will.fans/" target="_blank" rel="noopener">Will 保哥</a>
       </footer>
+    </aside>
+
+    <aside id="editorPanel" class="hidden" aria-label="殺局局面編輯器">
+      <div class="editor-heading">
+        <div>
+          <h2>建立殺局</h2>
+          <p>手動配置棋子與先行方</p>
+        </div>
+        <span class="editor-badge">局面編輯</span>
+      </div>
+
+      <section class="editor-section">
+        <h3>紅方棋子</h3>
+        <div class="piece-palette" aria-label="紅方棋子">
+          <button type="button" class="editor-piece red" data-editor-side="red" data-editor-type="K" title="紅帥 K">帥</button>
+          <button type="button" class="editor-piece red" data-editor-side="red" data-editor-type="A" title="紅仕 A">仕</button>
+          <button type="button" class="editor-piece red" data-editor-side="red" data-editor-type="B" title="紅相 B">相</button>
+          <button type="button" class="editor-piece red" data-editor-side="red" data-editor-type="N" title="紅傌 N">傌</button>
+          <button type="button" class="editor-piece red" data-editor-side="red" data-editor-type="R" title="紅俥 R">俥</button>
+          <button type="button" class="editor-piece red" data-editor-side="red" data-editor-type="C" title="紅炮 C">炮</button>
+          <button type="button" class="editor-piece red" data-editor-side="red" data-editor-type="P" title="紅兵 P">兵</button>
+        </div>
+      </section>
+
+      <section class="editor-section">
+        <h3>黑方棋子</h3>
+        <div class="piece-palette" aria-label="黑方棋子">
+          <button type="button" class="editor-piece black" data-editor-side="black" data-editor-type="K" title="黑將 K">將</button>
+          <button type="button" class="editor-piece black" data-editor-side="black" data-editor-type="A" title="黑士 A">士</button>
+          <button type="button" class="editor-piece black" data-editor-side="black" data-editor-type="B" title="黑象 B">象</button>
+          <button type="button" class="editor-piece black" data-editor-side="black" data-editor-type="N" title="黑馬 N">馬</button>
+          <button type="button" class="editor-piece black" data-editor-side="black" data-editor-type="R" title="黑車 R">車</button>
+          <button type="button" class="editor-piece black" data-editor-side="black" data-editor-type="C" title="黑砲 C">砲</button>
+          <button type="button" class="editor-piece black" data-editor-side="black" data-editor-type="P" title="黑卒 P">卒</button>
+        </div>
+      </section>
+
+      <section class="editor-section">
+        <h3>編輯工具</h3>
+        <div class="editor-tools">
+          <button id="btnEditorMove" type="button" class="active" aria-pressed="true">移動棋子</button>
+          <button id="btnEditorErase" type="button" aria-pressed="false">刪除棋子</button>
+        </div>
+        <p id="editorToolText" class="editor-hint">目前工具：移動棋子</p>
+      </section>
+
+      <fieldset class="editor-section side-choice">
+        <legend>先行方</legend>
+        <label><input type="radio" name="editorSide" value="red" checked> 紅方先行</label>
+        <label><input type="radio" name="editorSide" value="black"> 黑方先行</label>
+      </fieldset>
+
+      <div class="editor-actions">
+        <button id="btnEditorClear" type="button">清空棋盤</button>
+        <button id="btnEditorStandard" type="button">標準開局</button>
+        <button id="btnEditorConfirm" type="button" class="primary">確認局面</button>
+        <button id="btnEditorExit" type="button">退出編輯</button>
+      </div>
+      <p id="editorMessage" class="editor-message" role="status">選擇棋子後點擊空交叉點即可放置。</p>
     </aside>
 
     <div id="stage"></div>

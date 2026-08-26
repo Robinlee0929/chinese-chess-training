@@ -75,6 +75,12 @@ button {
 button:hover { background: #33281d; border-color: #4d3c2a; }
 button:active { transform: translateY(1px); }
 button:disabled { opacity: 0.45; cursor: default; }
+#btnEditor[aria-pressed="true"] {
+  color: #241a0c;
+  background: linear-gradient(180deg, #f0c463, #d9a441);
+  border-color: #b98a2f;
+  font-weight: 700;
+}
 
 /* 對弈模式選單：外觀與按鈕一致 */
 #modeSel {
@@ -133,6 +139,8 @@ aside {
 }
 #left { border-right: 1px solid var(--line); }
 #right { border-left: 1px solid var(--line); }
+#app.editor-active #left,
+#app.editor-active #right { display: none; }
 
 aside h3 {
   font-size: 12px;
@@ -158,6 +166,119 @@ aside h3 {
 
 .help { color: var(--muted); font-size: 12px; line-height: 1.75; }
 .help p { margin-bottom: 4px; }
+
+/* ---------- 殺局局面編輯器 ---------- */
+#editorPanel {
+  width: 284px;
+  border-right: 1px solid var(--line);
+  gap: 12px;
+}
+
+.editor-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.editor-heading h2 { font-size: 18px; letter-spacing: 3px; }
+.editor-heading p { margin-top: 4px; color: var(--muted); font-size: 11.5px; }
+.editor-badge {
+  flex: none;
+  color: var(--gold);
+  border: 1px solid rgba(217, 164, 65, 0.4);
+  border-radius: 999px;
+  background: rgba(217, 164, 65, 0.08);
+  padding: 4px 8px;
+  font-size: 10px;
+  letter-spacing: 1px;
+}
+
+.editor-section {
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+}
+.editor-section h3 { margin-bottom: 8px; }
+.piece-palette {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+}
+.editor-piece {
+  aspect-ratio: 1;
+  min-width: 0;
+  padding: 0;
+  border-radius: 50%;
+  font-family: "Kaiti SC", "STKaiti", "KaiTi", "Noto Serif TC", serif;
+  font-size: 17px;
+  font-weight: 900;
+  letter-spacing: 0;
+  background: radial-gradient(circle at 35% 30%, #eed6a8, #c08f52);
+  border-color: #6f4f2f;
+}
+.editor-piece.red { color: #b32c20; }
+.editor-piece.black { color: #26221d; }
+.editor-piece:hover { background: radial-gradient(circle at 35% 30%, #f6dfb4, #d3a05d); }
+.editor-piece.active {
+  outline: 3px solid var(--gold);
+  outline-offset: 2px;
+  box-shadow: 0 0 16px rgba(217, 164, 65, 0.45);
+}
+
+.editor-tools,
+.editor-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+}
+.editor-tools button,
+.editor-actions button { padding: 7px 8px; font-size: 12.5px; }
+.editor-tools button.active {
+  color: var(--gold);
+  border-color: rgba(217, 164, 65, 0.65);
+  background: rgba(217, 164, 65, 0.09);
+}
+.editor-hint,
+.editor-message {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.side-choice { display: flex; gap: 12px; flex-wrap: wrap; }
+.side-choice legend {
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 2px;
+}
+.side-choice label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.side-choice input { accent-color: var(--gold); }
+
+.editor-actions .primary {
+  color: #241a0c;
+  background: linear-gradient(180deg, #f0c463, #d9a441);
+  border-color: #b98a2f;
+  font-weight: 700;
+}
+.editor-message {
+  min-height: 38px;
+  margin-top: 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--line);
+}
+.editor-message.success { color: #b8dcaa; border-left-color: #77a966; }
+.editor-message.error { color: #e99a8e; border-left-color: var(--red); }
 
 /* 左下角版權：字體與 .help 說明文字一致 */
 .copyright {
@@ -377,8 +498,15 @@ aside h3 {
   main { flex-direction: column; }
   aside { width: 100%; max-height: 190px; }
   /* 棋盤置頂居中，說明面板移到棋盤下方 */
-  #stage { order: 1; flex: 1; }
+  #stage { order: 1; flex: 1; min-height: 0; }
   #left { order: 2; border-right: none; border-top: 1px solid var(--line); }
+  #editorPanel {
+    order: 2;
+    width: 100%;
+    max-height: 270px;
+    border-right: none;
+    border-top: 1px solid var(--line);
+  }
   #right { display: none; }
   h1 { font-size: 16px; }
   #repoLink span { display: none; }
