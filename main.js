@@ -415,6 +415,7 @@ let history = [];      // {from,to,captured,nota}
 let capturedBy = { [RED]: [], [BLACK]: [] };
 let over = false, winner = null, busy = false;
 let gameStartTime = Date.now();
+let undoCount = 0;     // 本局悔棋次數（人機模式一次連退兩著仍計 1 次）
 
 // ---------------- 對弈模式 / AI ----------------
 let mode = 'medium';   // 'pvp' | 'easy' | 'medium' | 'hard'
@@ -606,6 +607,7 @@ function newGame() {
   board = initialBoard();
   turn = RED;
   gameStartTime = Date.now();
+  undoCount = 0;
   stopConfetti();
   overlay.classList.add('hidden');
   banner.classList.add('hidden');
@@ -629,6 +631,7 @@ function resetTo(customBoard, turnSide) {
   winner = null;
   busy = false;
   gameStartTime = Date.now();
+  undoCount = 0;
   stopConfetti();
   overlay.classList.add('hidden');
   banner.classList.add('hidden');
@@ -732,6 +735,7 @@ function undoPly() {
 
 function undo() {
   if (!history.length || busy || aiThinking) return;
+  undoCount++;
   aiToken++; // 作廢進行中的 AI 計算
   undoPly();
   // 人機模式：連 AI 那一步一起退，回到玩家回合
@@ -831,6 +835,7 @@ const ovReason = document.getElementById('ovReason');
 const stRounds = document.getElementById('stRounds');
 const stTime = document.getElementById('stTime');
 const stCaps = document.getElementById('stCaps');
+const stUndo = document.getElementById('stUndo');
 const btnShare = document.getElementById('btnShare');
 const toastEl = document.getElementById('toast');
 let lastResult = null;
@@ -849,9 +854,10 @@ function showGameOver(checked) {
   const pvp = !isAI();
   const playerWin = !pvp && winner !== AI_SIDE;
   const d = pvp ? null : DIFF[mode];
-  const rounds = Math.max(1, Math.ceil(history.length / 2));
+  const plies = Math.max(1, history.length); // 棋譜著法數
   const secs = Math.max(1, Math.round((Date.now() - gameStartTime) / 1000));
   const caps = pvp ? capturedBy[winner].length : capturedBy[RED].length;
+  const pure = undoCount === 0; // 全程零悔棋：純度勳章
   const reasonChars = checked ? '將死' : '困斃';
   const winLabel = winner === RED ? '紅方' : '黑方';
   const celebrate = pvp || playerWin;
@@ -862,22 +868,24 @@ function showGameOver(checked) {
     sub = '棋逢敵手，精彩對弈！';
     badge = '雙人對弈';
     cardTitle = `${winLabel}勝出`;
-    cardSub = `雙人對弈 ・ 鏖戰 ${rounds} 回合`;
-    shareText = `我們在 3D 中國象棋鏖戰 ${rounds} 回合，${winLabel}獲勝！來對弈一局：${SITE_URL}`;
+    cardSub = `雙人對弈 ・ 鏖戰 ${plies} 著${pure ? ' ・ 零悔棋' : ''}`;
+    shareText = `我們在 3D 中國象棋鏖戰 ${plies} 著，${winLabel}獲勝！來對弈一局：${SITE_URL}`;
   } else if (playerWin) {
     title = d.winTitle;
     sub = d.winSub;
     badge = `人機對弈 ・ ${d.label}`;
     cardTitle = d.winTitle.replace('！', '');
-    cardSub = `戰勝「${d.label}」AI ・ ${rounds} 回合`;
-    shareText = `我在 3D 中國象棋以 ${rounds} 回合戰勝了「${d.label}」AI 🏆 不服來戰：${SITE_URL}`;
+    cardSub = `戰勝「${d.label}」AI ・ ${plies} 著${pure ? ' ・ 零悔棋' : ''}`;
+    shareText = pure
+      ? `我在 3D 中國象棋全程零悔棋、${plies} 著戰勝「${d.label}」AI 🏆 不服來戰：${SITE_URL}`
+      : `我在 3D 中國象棋以 ${plies} 著戰勝「${d.label}」AI 🏆 不服來戰：${SITE_URL}`;
   } else {
     title = '惜敗…';
     sub = '勝敗乃兵家常事，捲土重來！';
     badge = `人機對弈 ・ ${d.label}`;
   }
 
-  lastResult = { pvp, playerWin, d, rounds, secs, caps, reasonChars, cardTitle, cardSub, shareText };
+  lastResult = { pvp, playerWin, d, plies, secs, caps, undoCount, pure, reasonChars, cardTitle, cardSub, shareText };
 
   ovBadge.textContent = badge;
   ovTitle.textContent = title;
@@ -890,9 +898,11 @@ function showGameOver(checked) {
   } else {
     ovStars.style.display = 'none';
   }
-  stRounds.textContent = rounds;
+  stRounds.textContent = plies;
   stTime.textContent = fmtTime(secs);
   stCaps.textContent = caps;
+  stUndo.textContent = undoCount;
+  stUndo.classList.toggle('pure', pure);
   ovReason.textContent = celebrate ? `以「${reasonChars}」取勝` : `遭「${reasonChars}」落敗`;
   ovCard.classList.toggle('win', celebrate);
   ovCard.classList.toggle('lose', !celebrate);
@@ -1051,10 +1061,15 @@ async function buildShareCard(res) {
   g.moveTo(120, 1052);
   g.lineTo(W - 120, 1052);
   g.stroke();
-  const stats = [[String(res.rounds), '回合'], [fmtTime(res.secs), '用時'], [String(res.caps), '吃子']];
-  stats.forEach(([v, l], i) => {
-    const x = W / 2 + (i - 1) * 300;
-    g.fillStyle = '#e9decb';
+  const stats = [
+    [String(res.plies), '著法', false],
+    [fmtTime(res.secs), '用時', false],
+    [String(res.caps), '吃子', false],
+    [String(res.undoCount), '悔棋', res.pure], // 零悔棋以金色高亮
+  ];
+  stats.forEach(([v, l, hi], i) => {
+    const x = W / 2 + (i - 1.5) * 236;
+    g.fillStyle = hi ? '#f2c14e' : '#e9decb';
     g.font = `800 64px ${sans}`;
     g.fillText(v, x, 1148);
     g.fillStyle = '#9a8a74';

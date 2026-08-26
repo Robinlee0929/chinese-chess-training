@@ -319,7 +319,7 @@ aside h3 {
 #ovStats {
   display: flex;
   justify-content: center;
-  gap: 34px;
+  gap: 26px;
   padding: 12px 6px;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
@@ -333,6 +333,11 @@ aside h3 {
   font-variant-numeric: tabular-nums;
 }
 #ovStats .stat span { font-size: 11px; letter-spacing: 3px; color: var(--muted); }
+/* 全程零悔棋：純度勳章，金色高亮 */
+#ovStats .stat b.pure {
+  color: var(--gold);
+  text-shadow: 0 0 14px rgba(217, 164, 65, 0.55);
+}
 
 #ovReason { color: var(--muted); font-size: 13px; margin-bottom: 20px; letter-spacing: 2px; }
 
