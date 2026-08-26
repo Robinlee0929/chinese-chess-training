@@ -725,6 +725,7 @@ function undoPly() {
   const pos = to3D(h.from.r, h.from.c);
   p.position.set(pos.x, Y0, pos.z);
   if (h.captured) {
+    board[h.to.r][h.to.c] = h.captured; // 被吃的子也要放回邏輯棋盤，不能只復原 mesh
     const cm = makePiece(h.captured, h.to.r, h.to.c);
     pieces.push(cm);
     scene.add(cm);
