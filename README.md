@@ -5,7 +5,7 @@
 線上試玩：<https://chinese-chess.gh.miniasp.com>
 
 > [!NOTE]
-> 本專案是在 **Qwen 3.8 27B** 模型的 AI 輔助下完成的（AI-assisted）。
+> 本專案是在 **Qwen 3.8 27B** 模型的 AI 輔助下完成。
 
 ## 玩法
 
