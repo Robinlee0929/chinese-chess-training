@@ -239,9 +239,10 @@ aside h3 {
 @media (max-width: 900px) {
   main { flex-direction: column; }
   aside { width: 100%; max-height: 190px; }
-  #left { border-right: none; border-bottom: 1px solid var(--line); }
+  /* 棋盤置頂居中，說明面板移到棋盤下方 */
+  #stage { order: 1; flex: 1; }
+  #left { order: 2; border-right: none; border-top: 1px solid var(--line); }
   #right { display: none; }
-  #stage { flex: 1; }
   h1 { font-size: 16px; }
   #repoLink span { display: none; }
 }
