@@ -255,26 +255,79 @@
       <div class="photo-heading">
         <div>
           <h2>棋盤原始照片</h2>
-          <p>僅供手動擺盤參考</p>
+          <p>本機照片與棋盤幾何校正</p>
         </div>
         <span class="editor-badge">本機預覽</span>
       </div>
-      <div class="photo-frame">
-        <img id="photoPreviewImage" alt="匯入的棋盤參考照片">
+
+      <div id="photoReferenceView" class="photo-view">
+        <div class="photo-frame">
+          <img id="photoPreviewImage" alt="匯入的棋盤參考照片">
+        </div>
+        <p id="photoTransformStatus" class="photo-transform-status">100%・0°</p>
+        <div class="photo-transform-actions" aria-label="照片檢視控制">
+          <button id="btnPhotoRotateLeft" type="button">向左旋轉 90°</button>
+          <button id="btnPhotoRotateRight" type="button">向右旋轉 90°</button>
+          <button id="btnPhotoZoomOut" type="button">縮小</button>
+          <button id="btnPhotoZoomIn" type="button">放大</button>
+          <button id="btnPhotoReset" type="button">重設檢視</button>
+        </div>
+        <button id="btnCalibrationStart" type="button" class="calibration-primary">校正棋盤</button>
+        <p id="calibrationSummary" class="calibration-summary" role="status">尚未校正棋盤幾何。</p>
+        <div class="photo-file-actions">
+          <button id="btnPhotoReplace" type="button">更換照片</button>
+          <button id="btnPhotoRemove" type="button" class="danger">移除照片</button>
+        </div>
+        <p class="photo-privacy-note">影像與校正結果只在此瀏覽器分頁中處理，不會上傳或儲存。</p>
       </div>
-      <p id="photoTransformStatus" class="photo-transform-status">100%・0°</p>
-      <div class="photo-transform-actions" aria-label="照片檢視控制">
-        <button id="btnPhotoRotateLeft" type="button">向左旋轉 90°</button>
-        <button id="btnPhotoRotateRight" type="button">向右旋轉 90°</button>
-        <button id="btnPhotoZoomOut" type="button">縮小</button>
-        <button id="btnPhotoZoomIn" type="button">放大</button>
-        <button id="btnPhotoReset" type="button">重設檢視</button>
-      </div>
-      <div class="photo-file-actions">
-        <button id="btnPhotoReplace" type="button">更換照片</button>
-        <button id="btnPhotoRemove" type="button" class="danger">移除照片</button>
-      </div>
-      <p class="photo-privacy-note">影像只在此瀏覽器分頁中顯示，不會上傳或儲存。</p>
+
+      <section id="calibrationAdjustView" class="photo-view calibration-view hidden" aria-label="調整棋盤四角">
+        <p class="calibration-instruction">拖曳四個角點，使其對準棋盤最外圍四角。</p>
+        <div class="calibration-canvas-shell">
+          <canvas id="calibrationCornerCanvas" aria-label="棋盤照片四角校正畫布"></canvas>
+        </div>
+        <p id="calibrationMessage" class="calibration-message" role="status">四角目前有效，可產生校正預覽。</p>
+        <div class="calibration-corner-select" aria-label="選擇要微調的角點">
+          <button type="button" class="active" data-calibration-corner="topLeft" aria-pressed="true">左上</button>
+          <button type="button" data-calibration-corner="topRight" aria-pressed="false">右上</button>
+          <button type="button" data-calibration-corner="bottomRight" aria-pressed="false">右下</button>
+          <button type="button" data-calibration-corner="bottomLeft" aria-pressed="false">左下</button>
+        </div>
+        <div class="calibration-nudge" aria-label="微調所選角點">
+          <button type="button" data-calibration-nudge="up" aria-label="向上微調">↑</button>
+          <button type="button" data-calibration-nudge="left" aria-label="向左微調">←</button>
+          <button type="button" data-calibration-nudge="down" aria-label="向下微調">↓</button>
+          <button type="button" data-calibration-nudge="right" aria-label="向右微調">→</button>
+        </div>
+        <fieldset class="calibration-orientation">
+          <legend>棋盤方向</legend>
+          <label><input type="radio" name="calibrationOrientation" value="red-bottom" checked> 紅方在下</label>
+          <label><input type="radio" name="calibrationOrientation" value="red-top"> 紅方在上</label>
+        </fieldset>
+        <p class="calibration-coordinate-note">方向只決定照片格點如何對應內部座標，不會改變先行方。</p>
+        <div class="calibration-actions">
+          <button id="btnCalibrationPreview" type="button" class="calibration-primary">產生校正預覽</button>
+          <button id="btnCalibrationReset" type="button">重設四角</button>
+          <button id="btnCalibrationCancel" type="button">返回照片</button>
+        </div>
+      </section>
+
+      <section id="calibrationPreviewView" class="photo-view calibration-view hidden" aria-label="棋盤校正預覽">
+        <div class="calibration-preview-heading">
+          <h3>透視校正與 90 交叉點</h3>
+          <span id="calibrationOrientationBadge">紅方在下</span>
+        </div>
+        <div class="calibration-rectified-shell">
+          <canvas id="calibrationRectifiedCanvas" width="480" height="540" aria-label="透視校正棋盤與九十交叉點"></canvas>
+        </div>
+        <p id="calibrationPreviewStatus" class="calibration-message" role="status">10 橫線 × 9 直線，共 90 個交叉點。</p>
+        <div class="calibration-actions">
+          <button id="btnCalibrationBack" type="button">返回調整四角</button>
+          <button id="btnCalibrationPreviewReset" type="button">重設四角</button>
+          <button id="btnCalibrationConfirm" type="button" class="calibration-primary">確認棋盤校正</button>
+        </div>
+        <p class="photo-privacy-note">校正畫面只在本機記憶體中產生，不會傳送或寫入題目。</p>
+      </section>
     </aside>
 
     <aside id="libraryPanel" class="hidden" aria-label="我的殺局">

@@ -51,6 +51,22 @@ import {
   zoomPhotoIn,
   zoomPhotoOut,
 } from './puzzle-photo.js';
+import {
+  CALIBRATION_CANONICAL_HEIGHT,
+  CALIBRATION_CANONICAL_WIDTH,
+  CALIBRATION_CORNER_NAMES,
+  CALIBRATION_ORIENTATION_RED_BOTTOM,
+  PuzzlePhotoCalibrationError,
+  computeHomography,
+  createCalibrationState,
+  createGridIntersections,
+  exportCalibration,
+  resetCalibration,
+  setCalibrationOrientation,
+  setCorner,
+  transformPoint,
+  validateQuadrilateral,
+} from './puzzle-photo-calibration.js';
 
 // ---------------- 常數 ----------------
 const CELL = 1;
@@ -490,6 +506,11 @@ let photoReferenceState = createPhotoReferenceState();
 let photoObjectUrl = null;
 let pendingPhotoObjectUrl = null;
 let photoLoadToken = 0;
+let calibrationState = null;
+let confirmedCalibration = null;
+let calibrationMode = 'reference';
+let activeCalibrationCorner = 'topLeft';
+let calibrationPointerId = null;
 
 const puzzleFlowActive = () => appState !== APP_STATE.NORMAL_GAME;
 const authoringActive = () => appState === APP_STATE.PUZZLE_EDITOR
@@ -589,6 +610,16 @@ window.__chess = {
   get editorResult() { return cloneConfirmedPosition(); },
   get recordedPuzzleResult() { return cloneRecordedPuzzleResult(); },
   get practiceState() { return practiceState ? exportPracticeSnapshot(practiceState) : null; },
+  get calibrationState() {
+    return calibrationState ? {
+      corners: Object.fromEntries(CALIBRATION_CORNER_NAMES.map((key) => [key, { ...calibrationState.corners[key] }])),
+      orientation: calibrationState.orientation,
+      sideToMove: calibrationState.sideToMove,
+    } : null;
+  },
+  get confirmedCalibration() {
+    return confirmedCalibration ? structuredClone(confirmedCalibration) : null;
+  },
   setMode(m) { mode = m; const el = document.getElementById('modeSel'); if (el) el.value = m; },
   get lastResult() { return lastResult; },
   buildShareCard: (r) => buildShareCard(r || lastResult),
@@ -675,6 +706,20 @@ const btnPhotoRotateRight = document.getElementById('btnPhotoRotateRight');
 const btnPhotoZoomOut = document.getElementById('btnPhotoZoomOut');
 const btnPhotoZoomIn = document.getElementById('btnPhotoZoomIn');
 const btnPhotoReset = document.getElementById('btnPhotoReset');
+const photoReferenceView = document.getElementById('photoReferenceView');
+const btnCalibrationStart = document.getElementById('btnCalibrationStart');
+const calibrationSummary = document.getElementById('calibrationSummary');
+const calibrationAdjustView = document.getElementById('calibrationAdjustView');
+const calibrationPreviewView = document.getElementById('calibrationPreviewView');
+const calibrationCornerCanvas = document.getElementById('calibrationCornerCanvas');
+const calibrationRectifiedCanvas = document.getElementById('calibrationRectifiedCanvas');
+const calibrationMessage = document.getElementById('calibrationMessage');
+const calibrationPreviewStatus = document.getElementById('calibrationPreviewStatus');
+const calibrationOrientationBadge = document.getElementById('calibrationOrientationBadge');
+const calibrationCornerButtons = [...document.querySelectorAll('[data-calibration-corner]')];
+const calibrationNudgeButtons = [...document.querySelectorAll('[data-calibration-nudge]')];
+const calibrationOrientationInputs = [...document.querySelectorAll('input[name="calibrationOrientation"]')];
+const btnCalibrationPreview = document.getElementById('btnCalibrationPreview');
 
 function refreshHUD() {
   const showSide = practiceActive()
@@ -859,12 +904,16 @@ function syncPhotoUI() {
   const visible = !!photoObjectUrl && !!photoReferenceState.photo && authoringActive();
   photoPanel.classList.toggle('hidden', !visible);
   appEl.classList.toggle('photo-active', visible);
-  if (!visible) return;
+  if (!visible) {
+    syncCalibrationUI();
+    return;
+  }
   const { rotation, zoom, photo } = photoReferenceState;
   photoPreviewImage.style.transform = `rotate(${rotation}deg) scale(${zoom})`;
   photoTransformStatus.textContent = `${photo.name}・${Math.round(zoom * 100)}%・${rotation}°`;
   btnPhotoZoomOut.disabled = zoom <= PHOTO_MIN_ZOOM;
   btnPhotoZoomIn.disabled = zoom >= PHOTO_MAX_ZOOM;
+  syncCalibrationUI();
 }
 
 function releasePhotoReference() {
@@ -874,6 +923,7 @@ function releasePhotoReference() {
   photoObjectUrl = null;
   pendingPhotoObjectUrl = null;
   photoReferenceState = clearPhotoReference(photoReferenceState);
+  invalidateCalibration();
   photoPreviewImage.removeAttribute('src');
   photoPreviewImage.style.transform = '';
   photoFileInput.value = '';
@@ -924,6 +974,7 @@ async function loadSelectedPhoto(file) {
     }
     if (!decoded.naturalWidth || !decoded.naturalHeight) throw new Error('Image has no decoded dimensions.');
     const previousObjectUrl = photoObjectUrl;
+    invalidateCalibration();
     photoReferenceState = setPhotoReference(photoReferenceState, metadata);
     photoObjectUrl = nextObjectUrl;
     pendingPhotoObjectUrl = null;
@@ -946,11 +997,366 @@ async function loadSelectedPhoto(file) {
 
 function applyPhotoState(action) {
   try {
-    photoReferenceState = action(photoReferenceState);
+    const previousRotation = photoReferenceState.rotation;
+    const nextState = action(photoReferenceState);
+    if (nextState.rotation !== previousRotation) invalidateCalibration();
+    photoReferenceState = nextState;
     syncPhotoUI();
   } catch (error) {
     const message = photoErrorMessage(error);
     setPhotoImportMessage(message, 'error');
+    toast(message);
+  }
+}
+
+function calibrationErrorMessage(error) {
+  if (!(error instanceof PuzzlePhotoCalibrationError)) return '無法產生棋盤校正，請重新調整四角。';
+  const messages = {
+    OVERLAPPING_CORNERS: '四個角點不可重疊。',
+    DEGENERATE_QUADRILATERAL: '校正範圍過窄或過小，請拉開四個角點。',
+    SELF_INTERSECTION: '角點連線不可交叉，請維持左上、右上、右下、左下順序。',
+    INVALID_CORNER_ORDER: '角點順序已翻轉，請重新對齊棋盤四角。',
+    OUT_OF_BOUNDS: '角點必須保持在照片範圍內。',
+    SINGULAR_TRANSFORM: '目前四角無法建立透視校正，請重新調整。',
+  };
+  return messages[error.code] || `棋盤校正失敗：${error.message}`;
+}
+
+function invalidateCalibration() {
+  calibrationState = null;
+  confirmedCalibration = null;
+  calibrationMode = 'reference';
+  activeCalibrationCorner = 'topLeft';
+  calibrationPointerId = null;
+}
+
+function syncCalibrationUI() {
+  const photoAvailable = !!photoObjectUrl && !!photoReferenceState.photo && authoringActive();
+  const adjusting = photoAvailable && calibrationMode === 'adjust';
+  const previewing = photoAvailable && calibrationMode === 'preview';
+  photoReferenceView.classList.toggle('hidden', !photoAvailable || adjusting || previewing);
+  calibrationAdjustView.classList.toggle('hidden', !adjusting);
+  calibrationPreviewView.classList.toggle('hidden', !previewing);
+  photoPanel.classList.toggle('calibration-active', adjusting || previewing);
+  if (!photoAvailable) return;
+
+  calibrationSummary.textContent = confirmedCalibration
+    ? `棋盤校正已確認：${confirmedCalibration.gridIntersections.length} 個交叉點，${orientationLabel(confirmedCalibration.orientation)}。`
+    : (calibrationState ? '四角調整尚未確認，可隨時繼續校正。' : '尚未校正棋盤幾何。');
+  calibrationSummary.classList.toggle('confirmed', !!confirmedCalibration);
+  btnCalibrationStart.textContent = calibrationState ? '繼續校正棋盤' : '校正棋盤';
+
+  if (calibrationState) {
+    calibrationCornerButtons.forEach((button) => {
+      const active = button.dataset.calibrationCorner === activeCalibrationCorner;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+    calibrationOrientationInputs.forEach((input) => {
+      input.checked = input.value === calibrationState.orientation;
+    });
+  }
+  if (adjusting) requestAnimationFrame(renderCalibrationAdjustment);
+  if (previewing) requestAnimationFrame(renderRectifiedPreview);
+}
+
+function orientationLabel(orientation) {
+  return orientation === CALIBRATION_ORIENTATION_RED_BOTTOM ? '紅方在下' : '紅方在上';
+}
+
+function beginCalibration() {
+  if (!photoObjectUrl || !photoReferenceState.photo || !authoringActive()) return;
+  if (!calibrationState) {
+    calibrationState = createCalibrationState({
+      orientation: CALIBRATION_ORIENTATION_RED_BOTTOM,
+      sideToMove: editorState?.sideToMove ?? null,
+    });
+  }
+  calibrationMode = 'adjust';
+  syncPhotoUI();
+}
+
+function createOrientedPhotoCanvas(maxDimension = 900) {
+  if (!photoPreviewImage.complete || !photoPreviewImage.naturalWidth || !photoPreviewImage.naturalHeight) {
+    throw new PuzzlePhotoCalibrationError('PHOTO_NOT_READY', 'The photo is not ready for calibration.');
+  }
+  const rotation = photoReferenceState.rotation;
+  const quarterTurn = rotation === 90 || rotation === 270;
+  const orientedWidth = quarterTurn ? photoPreviewImage.naturalHeight : photoPreviewImage.naturalWidth;
+  const orientedHeight = quarterTurn ? photoPreviewImage.naturalWidth : photoPreviewImage.naturalHeight;
+  const scale = Math.min(1, maxDimension / Math.max(orientedWidth, orientedHeight));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(orientedWidth * scale));
+  canvas.height = Math.max(1, Math.round(orientedHeight * scale));
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  context.save();
+  context.translate(canvas.width / 2, canvas.height / 2);
+  context.rotate(rotation * Math.PI / 180);
+  context.drawImage(
+    photoPreviewImage,
+    -photoPreviewImage.naturalWidth * scale / 2,
+    -photoPreviewImage.naturalHeight * scale / 2,
+    photoPreviewImage.naturalWidth * scale,
+    photoPreviewImage.naturalHeight * scale,
+  );
+  context.restore();
+  return canvas;
+}
+
+function setCalibrationMessage(message, kind = '') {
+  calibrationMessage.textContent = message;
+  calibrationMessage.classList.toggle('success', kind === 'success');
+  calibrationMessage.classList.toggle('error', kind === 'error');
+}
+
+function calibrationValidation() {
+  try {
+    return { ok: true, result: validateQuadrilateral(calibrationState) };
+  } catch (error) {
+    if (!(error instanceof PuzzlePhotoCalibrationError)) throw error;
+    return { ok: false, error };
+  }
+}
+
+function renderCalibrationAdjustment() {
+  if (calibrationMode !== 'adjust' || !calibrationState) return;
+  try {
+    const sourceCanvas = createOrientedPhotoCanvas();
+    calibrationCornerCanvas.width = sourceCanvas.width;
+    calibrationCornerCanvas.height = sourceCanvas.height;
+    const context = calibrationCornerCanvas.getContext('2d');
+    context.drawImage(sourceCanvas, 0, 0);
+    const points = CALIBRATION_CORNER_NAMES.map((name) => ({
+      name,
+      x: calibrationState.corners[name].x * calibrationCornerCanvas.width,
+      y: calibrationState.corners[name].y * calibrationCornerCanvas.height,
+    }));
+
+    context.save();
+    context.lineJoin = 'round';
+    context.lineWidth = Math.max(3, calibrationCornerCanvas.width / 180);
+    context.strokeStyle = 'rgba(14, 10, 7, 0.9)';
+    context.beginPath();
+    points.forEach((point, index) => (index ? context.lineTo(point.x, point.y) : context.moveTo(point.x, point.y)));
+    context.closePath();
+    context.stroke();
+    context.lineWidth = Math.max(1.5, calibrationCornerCanvas.width / 360);
+    context.strokeStyle = '#f0c463';
+    context.stroke();
+
+    const labels = { topLeft: '左上', topRight: '右上', bottomRight: '右下', bottomLeft: '左下' };
+    const radius = Math.max(13, calibrationCornerCanvas.width / 38);
+    context.font = `700 ${Math.max(12, calibrationCornerCanvas.width / 55)}px sans-serif`;
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    for (const point of points) {
+      context.beginPath();
+      context.arc(point.x, point.y, radius, 0, Math.PI * 2);
+      context.fillStyle = point.name === activeCalibrationCorner ? '#f0c463' : '#2a2117';
+      context.fill();
+      context.lineWidth = Math.max(2, calibrationCornerCanvas.width / 300);
+      context.strokeStyle = point.name === activeCalibrationCorner ? '#fff0c7' : '#f0c463';
+      context.stroke();
+      context.fillStyle = point.name === activeCalibrationCorner ? '#241a0c' : '#f4ead6';
+      context.fillText(labels[point.name], point.x, point.y);
+    }
+    context.restore();
+
+    const validation = calibrationValidation();
+    btnCalibrationPreview.disabled = !validation.ok;
+    if (validation.ok) setCalibrationMessage('四角目前有效，可產生校正預覽。', 'success');
+    else setCalibrationMessage(calibrationErrorMessage(validation.error), 'error');
+  } catch (error) {
+    btnCalibrationPreview.disabled = true;
+    setCalibrationMessage(calibrationErrorMessage(error), 'error');
+  }
+}
+
+function canvasNormalizedPointer(event) {
+  const rect = calibrationCornerCanvas.getBoundingClientRect();
+  return {
+    x: (event.clientX - rect.left) / rect.width,
+    y: (event.clientY - rect.top) / rect.height,
+  };
+}
+
+function nearestCalibrationCorner(point) {
+  let nearest = null;
+  let nearestDistance = Infinity;
+  for (const name of CALIBRATION_CORNER_NAMES) {
+    const corner = calibrationState.corners[name];
+    const distance = Math.hypot(point.x - corner.x, point.y - corner.y);
+    if (distance < nearestDistance) {
+      nearest = name;
+      nearestDistance = distance;
+    }
+  }
+  return nearestDistance <= 0.11 ? nearest : null;
+}
+
+function selectCalibrationCorner(name) {
+  if (!CALIBRATION_CORNER_NAMES.includes(name)) return;
+  activeCalibrationCorner = name;
+  syncCalibrationUI();
+}
+
+function moveCalibrationCorner(name, point) {
+  try {
+    calibrationState = setCorner(calibrationState, name, point);
+    confirmedCalibration = null;
+    renderCalibrationAdjustment();
+  } catch (error) {
+    setCalibrationMessage(calibrationErrorMessage(error), 'error');
+  }
+}
+
+function nudgeCalibrationCorner(direction) {
+  if (!calibrationState) return;
+  const deltas = {
+    up: { x: 0, y: -0.005 },
+    down: { x: 0, y: 0.005 },
+    left: { x: -0.005, y: 0 },
+    right: { x: 0.005, y: 0 },
+  };
+  const delta = deltas[direction];
+  if (!delta) return;
+  const source = calibrationState.corners[activeCalibrationCorner];
+  moveCalibrationCorner(activeCalibrationCorner, {
+    x: source.x + delta.x,
+    y: source.y + delta.y,
+  });
+}
+
+function showCalibrationPreview() {
+  if (!calibrationState) return;
+  const validation = calibrationValidation();
+  if (!validation.ok) {
+    const message = calibrationErrorMessage(validation.error);
+    setCalibrationMessage(message, 'error');
+    toast(message);
+    return;
+  }
+  calibrationMode = 'preview';
+  syncPhotoUI();
+}
+
+function renderRectifiedPreview() {
+  if (calibrationMode !== 'preview' || !calibrationState) return;
+  try {
+    validateQuadrilateral(calibrationState);
+    const sourceCanvas = createOrientedPhotoCanvas();
+    const sourceContext = sourceCanvas.getContext('2d', { willReadFrequently: true });
+    const sourcePixels = sourceContext.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height);
+    const width = CALIBRATION_CANONICAL_WIDTH;
+    const height = CALIBRATION_CANONICAL_HEIGHT;
+    calibrationRectifiedCanvas.width = width;
+    calibrationRectifiedCanvas.height = height;
+    const context = calibrationRectifiedCanvas.getContext('2d');
+    const output = context.createImageData(width, height);
+    const destinationCorners = [
+      { x: 0, y: 0 },
+      { x: width - 1, y: 0 },
+      { x: width - 1, y: height - 1 },
+      { x: 0, y: height - 1 },
+    ];
+    const sourceCorners = CALIBRATION_CORNER_NAMES.map((name) => calibrationState.corners[name]);
+    const inverse = computeHomography(destinationCorners, sourceCorners);
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const normalized = transformPoint(inverse, { x, y });
+        const sx = Math.round(normalized.x * (sourceCanvas.width - 1));
+        const sy = Math.round(normalized.y * (sourceCanvas.height - 1));
+        const targetIndex = (y * width + x) * 4;
+        if (sx < 0 || sx >= sourceCanvas.width || sy < 0 || sy >= sourceCanvas.height) {
+          output.data[targetIndex + 3] = 255;
+          continue;
+        }
+        const sourceIndex = (sy * sourceCanvas.width + sx) * 4;
+        output.data[targetIndex] = sourcePixels.data[sourceIndex];
+        output.data[targetIndex + 1] = sourcePixels.data[sourceIndex + 1];
+        output.data[targetIndex + 2] = sourcePixels.data[sourceIndex + 2];
+        output.data[targetIndex + 3] = 255;
+      }
+    }
+    context.putImageData(output, 0, 0);
+    drawCalibrationGrid(context, width, height, calibrationState.orientation);
+
+    const grid = createGridIntersections(calibrationState.orientation, width, height);
+    const first = grid[0];
+    const last = grid.at(-1);
+    calibrationOrientationBadge.textContent = orientationLabel(calibrationState.orientation);
+    calibrationPreviewStatus.textContent = `10 橫線 × 9 直線，共 ${grid.length} 個交叉點；左上對應 (${first.r},${first.c})，右下對應 (${last.r},${last.c})。`;
+  } catch (error) {
+    const message = calibrationErrorMessage(error);
+    calibrationPreviewStatus.textContent = message;
+    toast(message);
+  }
+}
+
+function drawCalibrationGrid(context, width, height, orientation) {
+  const xAt = (column) => (column / 8) * (width - 1);
+  const yAt = (row) => (row / 9) * (height - 1);
+  context.save();
+  context.lineCap = 'round';
+  for (const [strokeStyle, lineWidth] of [['rgba(18, 10, 5, 0.82)', 4], ['rgba(240, 196, 99, 0.92)', 1.35]]) {
+    context.strokeStyle = strokeStyle;
+    context.lineWidth = lineWidth;
+    context.beginPath();
+    for (let column = 0; column < 9; column++) {
+      context.moveTo(xAt(column), 0);
+      context.lineTo(xAt(column), height - 1);
+    }
+    for (let row = 0; row < 10; row++) {
+      context.moveTo(0, yAt(row));
+      context.lineTo(width - 1, yAt(row));
+    }
+    context.stroke();
+  }
+  context.fillStyle = '#fff0c7';
+  context.strokeStyle = 'rgba(20, 12, 6, 0.9)';
+  context.lineWidth = 2;
+  for (let row = 0; row < 10; row++) {
+    for (let column = 0; column < 9; column++) {
+      context.beginPath();
+      context.arc(xAt(column), yAt(row), 3.1, 0, Math.PI * 2);
+      context.stroke();
+      context.fill();
+    }
+  }
+  const railY = orientation === CALIBRATION_ORIENTATION_RED_BOTTOM ? height - 5 : 5;
+  context.strokeStyle = '#c05345';
+  context.lineWidth = 6;
+  context.beginPath();
+  context.moveTo(5, railY);
+  context.lineTo(width - 5, railY);
+  context.stroke();
+  context.restore();
+}
+
+function resetCalibrationCorners() {
+  if (!calibrationState) return;
+  calibrationState = resetCalibration(calibrationState);
+  confirmedCalibration = null;
+  calibrationMode = 'adjust';
+  syncPhotoUI();
+}
+
+function confirmCalibrationResult() {
+  if (!calibrationState) return;
+  try {
+    confirmedCalibration = exportCalibration(
+      calibrationState,
+      CALIBRATION_CANONICAL_WIDTH,
+      CALIBRATION_CANONICAL_HEIGHT,
+    );
+    calibrationMode = 'reference';
+    syncPhotoUI();
+    setPhotoImportMessage(`棋盤校正已確認：${confirmedCalibration.gridIntersections.length} 個交叉點，未修改局面。`, 'success');
+    toast('棋盤校正已確認，接下來仍由你手動擺盤。');
+  } catch (error) {
+    const message = calibrationErrorMessage(error);
+    calibrationPreviewStatus.textContent = message;
     toast(message);
   }
 }
@@ -2484,6 +2890,60 @@ btnPhotoRotateRight.addEventListener('click', () => applyPhotoState(rotatePhotoR
 btnPhotoZoomOut.addEventListener('click', () => applyPhotoState(zoomPhotoOut));
 btnPhotoZoomIn.addEventListener('click', () => applyPhotoState(zoomPhotoIn));
 btnPhotoReset.addEventListener('click', () => applyPhotoState(resetPhotoTransform));
+btnCalibrationStart.addEventListener('click', beginCalibration);
+btnCalibrationPreview.addEventListener('click', showCalibrationPreview);
+document.getElementById('btnCalibrationBack').addEventListener('click', () => {
+  calibrationMode = 'adjust';
+  syncPhotoUI();
+});
+document.getElementById('btnCalibrationReset').addEventListener('click', resetCalibrationCorners);
+document.getElementById('btnCalibrationPreviewReset').addEventListener('click', resetCalibrationCorners);
+document.getElementById('btnCalibrationCancel').addEventListener('click', () => {
+  calibrationMode = 'reference';
+  syncPhotoUI();
+});
+document.getElementById('btnCalibrationConfirm').addEventListener('click', confirmCalibrationResult);
+calibrationCornerButtons.forEach((button) => {
+  button.addEventListener('click', () => selectCalibrationCorner(button.dataset.calibrationCorner));
+});
+calibrationNudgeButtons.forEach((button) => {
+  button.addEventListener('click', () => nudgeCalibrationCorner(button.dataset.calibrationNudge));
+});
+calibrationOrientationInputs.forEach((input) => {
+  input.addEventListener('change', () => {
+    if (!input.checked || !calibrationState) return;
+    calibrationState = setCalibrationOrientation(calibrationState, input.value);
+    confirmedCalibration = null;
+    if (calibrationMode === 'preview') renderRectifiedPreview();
+    else renderCalibrationAdjustment();
+  });
+});
+calibrationCornerCanvas.addEventListener('pointerdown', (event) => {
+  if (!calibrationState || calibrationMode !== 'adjust') return;
+  const point = canvasNormalizedPointer(event);
+  const corner = nearestCalibrationCorner(point);
+  if (!corner) return;
+  event.preventDefault();
+  calibrationPointerId = event.pointerId;
+  activeCalibrationCorner = corner;
+  calibrationCornerCanvas.setPointerCapture(event.pointerId);
+  selectCalibrationCorner(corner);
+  moveCalibrationCorner(corner, point);
+});
+calibrationCornerCanvas.addEventListener('pointermove', (event) => {
+  if (event.pointerId !== calibrationPointerId || !calibrationState) return;
+  event.preventDefault();
+  moveCalibrationCorner(activeCalibrationCorner, canvasNormalizedPointer(event));
+});
+const finishCalibrationPointer = (event) => {
+  if (event.pointerId !== calibrationPointerId) return;
+  if (calibrationCornerCanvas.hasPointerCapture(event.pointerId)) {
+    calibrationCornerCanvas.releasePointerCapture(event.pointerId);
+  }
+  calibrationPointerId = null;
+};
+calibrationCornerCanvas.addEventListener('pointerup', finishCalibrationPointer);
+calibrationCornerCanvas.addEventListener('pointercancel', finishCalibrationPointer);
 btnLibrary.addEventListener('click', () => {
   if (libraryActive()) exitEditor();
   else enterLibrary();
