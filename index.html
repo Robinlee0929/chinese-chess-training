@@ -141,7 +141,7 @@
         <h3>棋盤照片參考</h3>
         <input id="photoFileInput" class="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" tabindex="-1" aria-hidden="true">
         <button id="btnPhotoImport" type="button" class="photo-import-button">匯入棋盤照片</button>
-        <p class="editor-hint">照片僅供擺盤參考，目前不會自動辨識棋子。</p>
+        <p class="editor-hint">照片可在本機校正並掃描候選位置，棋子種類仍由你逐點確認。</p>
         <p id="photoImportMessage" class="photo-import-message" role="status">支援 JPEG、PNG、WebP，檔案上限 10 MB。</p>
       </section>
 
@@ -274,6 +274,7 @@
         </div>
         <button id="btnCalibrationStart" type="button" class="calibration-primary">校正棋盤</button>
         <p id="calibrationSummary" class="calibration-summary" role="status">尚未校正棋盤幾何。</p>
+        <button id="btnRecognitionScan" type="button" class="calibration-primary hidden">掃描棋子</button>
         <div class="photo-file-actions">
           <button id="btnPhotoReplace" type="button">更換照片</button>
           <button id="btnPhotoRemove" type="button" class="danger">移除照片</button>
@@ -327,6 +328,59 @@
           <button id="btnCalibrationConfirm" type="button" class="calibration-primary">確認棋盤校正</button>
         </div>
         <p class="photo-privacy-note">校正畫面只在本機記憶體中產生，不會傳送或寫入題目。</p>
+      </section>
+
+      <section id="recognitionReviewView" class="photo-view recognition-view hidden" aria-label="棋子候選辨識與人工確認">
+        <div class="calibration-preview-heading">
+          <h3>棋子候選與人工確認</h3>
+          <span id="recognitionCountBadge">90 點</span>
+        </div>
+        <p class="recognition-instruction">辨識只提供空／有子／不確定與紅黑傾向。點選每個交叉點，指定確切內容後才可套用。</p>
+        <div class="recognition-board-shell">
+          <canvas id="recognitionCanvas" width="480" height="540" aria-label="透視校正棋盤照片"></canvas>
+          <div id="recognitionMarkers" class="recognition-markers" aria-label="九十個可編輯候選交叉點"></div>
+        </div>
+        <div class="recognition-stats" aria-label="候選摘要">
+          <span id="recognitionOccupiedCount">有子 0</span>
+          <span id="recognitionUncertainCount">不確定 0</span>
+          <span id="recognitionReviewedCount">已確認 0/90</span>
+        </div>
+        <label class="recognition-filter"><input id="recognitionUncertainOnly" type="checkbox"> 只顯示不確定候選</label>
+        <section class="recognition-picker" aria-label="所選交叉點的確切內容">
+          <div class="recognition-picker-heading">
+            <strong id="recognitionSelectedCoordinate">尚未選取交叉點</strong>
+            <span id="recognitionSuggestion">請在棋盤上選一點</span>
+          </div>
+          <button id="btnRecognitionEmpty" type="button" class="recognition-empty-choice">空</button>
+          <div class="recognition-palette red" aria-label="指定紅方棋子">
+            <span>紅方</span>
+            <button type="button" data-recognition-side="red" data-recognition-type="K">帥</button>
+            <button type="button" data-recognition-side="red" data-recognition-type="A">仕</button>
+            <button type="button" data-recognition-side="red" data-recognition-type="B">相</button>
+            <button type="button" data-recognition-side="red" data-recognition-type="N">傌</button>
+            <button type="button" data-recognition-side="red" data-recognition-type="R">俥</button>
+            <button type="button" data-recognition-side="red" data-recognition-type="C">炮</button>
+            <button type="button" data-recognition-side="red" data-recognition-type="P">兵</button>
+          </div>
+          <div class="recognition-palette black" aria-label="指定黑方棋子">
+            <span>黑方</span>
+            <button type="button" data-recognition-side="black" data-recognition-type="K">將</button>
+            <button type="button" data-recognition-side="black" data-recognition-type="A">士</button>
+            <button type="button" data-recognition-side="black" data-recognition-type="B">象</button>
+            <button type="button" data-recognition-side="black" data-recognition-type="N">馬</button>
+            <button type="button" data-recognition-side="black" data-recognition-type="R">車</button>
+            <button type="button" data-recognition-side="black" data-recognition-type="C">砲</button>
+            <button type="button" data-recognition-side="black" data-recognition-type="P">卒</button>
+          </div>
+        </section>
+        <p id="recognitionMessage" class="calibration-message" role="status">請逐點確認，或先將全部標記為空白再放置棋子。</p>
+        <div class="recognition-bulk-actions">
+          <button id="btnRecognitionAllEmpty" type="button">全部標記為空白</button>
+          <button id="btnRecognitionRescan" type="button">重新掃描</button>
+          <button id="btnRecognitionBack" type="button">返回照片</button>
+          <button id="btnRecognitionApply" type="button" class="calibration-primary" disabled>套用到編輯棋盤</button>
+        </div>
+        <p class="photo-privacy-note">掃描在此分頁的記憶體中完成；照片、像素、裁切區與候選結果都不會上傳或儲存。</p>
       </section>
     </aside>
 

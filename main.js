@@ -67,6 +67,18 @@ import {
   transformPoint,
   validateQuadrilateral,
 } from './puzzle-photo-calibration.js';
+import {
+  PuzzlePhotoRecognitionError,
+  RECOGNITION_OCCUPANCY_EMPTY,
+  RECOGNITION_OCCUPANCY_OCCUPIED,
+  RECOGNITION_OCCUPANCY_UNCERTAIN,
+  RECOGNITION_SIDE_UNKNOWN,
+  candidatesToEditorBoard,
+  createRecognitionToken,
+  isRecognitionTokenCurrent,
+  recognizeIntersections,
+  selectionKey,
+} from './puzzle-photo-recognition.js';
 
 // ---------------- 常數 ----------------
 const CELL = 1;
@@ -511,6 +523,12 @@ let confirmedCalibration = null;
 let calibrationMode = 'reference';
 let activeCalibrationCorner = 'topLeft';
 let calibrationPointerId = null;
+let photoRecognitionVersion = 0;
+let calibrationRecognitionVersion = 0;
+let rectifiedPhotoPixels = null;
+let recognitionSession = null;
+let selectedRecognitionKey = null;
+let recognitionUncertainOnly = false;
 
 const puzzleFlowActive = () => appState !== APP_STATE.NORMAL_GAME;
 const authoringActive = () => appState === APP_STATE.PUZZLE_EDITOR
@@ -620,6 +638,12 @@ window.__chess = {
   get confirmedCalibration() {
     return confirmedCalibration ? structuredClone(confirmedCalibration) : null;
   },
+  get recognitionCandidates() {
+    return recognitionSession ? recognitionSession.candidates.map((candidate) => ({ ...candidate })) : null;
+  },
+  get recognitionReviewedCount() {
+    return recognitionSession ? Object.keys(recognitionSession.selections).length : 0;
+  },
   setMode(m) { mode = m; const el = document.getElementById('modeSel'); if (el) el.value = m; },
   get lastResult() { return lastResult; },
   buildShareCard: (r) => buildShareCard(r || lastResult),
@@ -720,6 +744,21 @@ const calibrationCornerButtons = [...document.querySelectorAll('[data-calibratio
 const calibrationNudgeButtons = [...document.querySelectorAll('[data-calibration-nudge]')];
 const calibrationOrientationInputs = [...document.querySelectorAll('input[name="calibrationOrientation"]')];
 const btnCalibrationPreview = document.getElementById('btnCalibrationPreview');
+const btnRecognitionScan = document.getElementById('btnRecognitionScan');
+const recognitionReviewView = document.getElementById('recognitionReviewView');
+const recognitionCanvas = document.getElementById('recognitionCanvas');
+const recognitionMarkers = document.getElementById('recognitionMarkers');
+const recognitionOccupiedCount = document.getElementById('recognitionOccupiedCount');
+const recognitionUncertainCount = document.getElementById('recognitionUncertainCount');
+const recognitionReviewedCount = document.getElementById('recognitionReviewedCount');
+const recognitionUncertainOnlyInput = document.getElementById('recognitionUncertainOnly');
+const recognitionSelectedCoordinate = document.getElementById('recognitionSelectedCoordinate');
+const recognitionSuggestion = document.getElementById('recognitionSuggestion');
+const recognitionMessage = document.getElementById('recognitionMessage');
+const btnRecognitionEmpty = document.getElementById('btnRecognitionEmpty');
+const recognitionPieceButtons = [...document.querySelectorAll('[data-recognition-side][data-recognition-type]')];
+const recognitionPalettes = [...document.querySelectorAll('.recognition-palette')];
+const btnRecognitionApply = document.getElementById('btnRecognitionApply');
 
 function refreshHUD() {
   const showSide = practiceActive()
@@ -980,9 +1019,9 @@ async function loadSelectedPhoto(file) {
     pendingPhotoObjectUrl = null;
     photoPreviewImage.src = nextObjectUrl;
     if (previousObjectUrl) URL.revokeObjectURL(previousObjectUrl);
-    setPhotoImportMessage(`已載入「${metadata.name}」，請依照片手動擺盤。`, 'success');
+    setPhotoImportMessage(`已載入「${metadata.name}」，可先校正並掃描候選，再由你確認棋子。`, 'success');
     syncPhotoUI();
-    toast('照片已載入，僅供手動擺盤參考。');
+    toast('照片已載入，可校正後在本機掃描候選。');
   } catch {
     URL.revokeObjectURL(nextObjectUrl);
     if (pendingPhotoObjectUrl === nextObjectUrl) pendingPhotoObjectUrl = null;
@@ -1022,7 +1061,22 @@ function calibrationErrorMessage(error) {
   return messages[error.code] || `棋盤校正失敗：${error.message}`;
 }
 
+function invalidateRecognition() {
+  rectifiedPhotoPixels = null;
+  recognitionSession = null;
+  selectedRecognitionKey = null;
+  recognitionUncertainOnly = false;
+}
+
+function invalidateRecognitionForCalibrationChange() {
+  calibrationRecognitionVersion++;
+  invalidateRecognition();
+}
+
 function invalidateCalibration() {
+  photoRecognitionVersion++;
+  calibrationRecognitionVersion++;
+  invalidateRecognition();
   calibrationState = null;
   confirmedCalibration = null;
   calibrationMode = 'reference';
@@ -1034,17 +1088,23 @@ function syncCalibrationUI() {
   const photoAvailable = !!photoObjectUrl && !!photoReferenceState.photo && authoringActive();
   const adjusting = photoAvailable && calibrationMode === 'adjust';
   const previewing = photoAvailable && calibrationMode === 'preview';
-  photoReferenceView.classList.toggle('hidden', !photoAvailable || adjusting || previewing);
+  const recognizing = photoAvailable && calibrationMode === 'recognition';
+  photoReferenceView.classList.toggle('hidden', !photoAvailable || adjusting || previewing || recognizing);
   calibrationAdjustView.classList.toggle('hidden', !adjusting);
   calibrationPreviewView.classList.toggle('hidden', !previewing);
+  recognitionReviewView.classList.toggle('hidden', !recognizing);
   photoPanel.classList.toggle('calibration-active', adjusting || previewing);
+  photoPanel.classList.toggle('recognition-active', recognizing);
   if (!photoAvailable) return;
 
   calibrationSummary.textContent = confirmedCalibration
     ? `棋盤校正已確認：${confirmedCalibration.gridIntersections.length} 個交叉點，${orientationLabel(confirmedCalibration.orientation)}。`
     : (calibrationState ? '四角調整尚未確認，可隨時繼續校正。' : '尚未校正棋盤幾何。');
   calibrationSummary.classList.toggle('confirmed', !!confirmedCalibration);
-  btnCalibrationStart.textContent = calibrationState ? '繼續校正棋盤' : '校正棋盤';
+  btnCalibrationStart.textContent = confirmedCalibration
+    ? '重新校正棋盤'
+    : (calibrationState ? '繼續校正棋盤' : '校正棋盤');
+  btnRecognitionScan.classList.toggle('hidden', !confirmedCalibration);
 
   if (calibrationState) {
     calibrationCornerButtons.forEach((button) => {
@@ -1058,6 +1118,7 @@ function syncCalibrationUI() {
   }
   if (adjusting) requestAnimationFrame(renderCalibrationAdjustment);
   if (previewing) requestAnimationFrame(renderRectifiedPreview);
+  if (recognizing) requestAnimationFrame(syncRecognitionUI);
 }
 
 function orientationLabel(orientation) {
@@ -1204,6 +1265,7 @@ function moveCalibrationCorner(name, point) {
   try {
     calibrationState = setCorner(calibrationState, name, point);
     confirmedCalibration = null;
+    invalidateRecognitionForCalibrationChange();
     renderCalibrationAdjustment();
   } catch (error) {
     setCalibrationMessage(calibrationErrorMessage(error), 'error');
@@ -1240,46 +1302,56 @@ function showCalibrationPreview() {
   syncPhotoUI();
 }
 
+function createRectifiedPhotoPixels() {
+  if (!calibrationState) {
+    throw new PuzzlePhotoCalibrationError('INVALID_STATE', 'Calibration is not available.');
+  }
+  validateQuadrilateral(calibrationState);
+  const sourceCanvas = createOrientedPhotoCanvas();
+  const sourceContext = sourceCanvas.getContext('2d', { willReadFrequently: true });
+  const sourcePixels = sourceContext.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height);
+  const width = CALIBRATION_CANONICAL_WIDTH;
+  const height = CALIBRATION_CANONICAL_HEIGHT;
+  const output = new ImageData(width, height);
+  const destinationCorners = [
+    { x: 0, y: 0 },
+    { x: width - 1, y: 0 },
+    { x: width - 1, y: height - 1 },
+    { x: 0, y: height - 1 },
+  ];
+  const sourceCorners = CALIBRATION_CORNER_NAMES.map((name) => calibrationState.corners[name]);
+  const inverse = computeHomography(destinationCorners, sourceCorners);
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const normalized = transformPoint(inverse, { x, y });
+      const sx = Math.round(normalized.x * (sourceCanvas.width - 1));
+      const sy = Math.round(normalized.y * (sourceCanvas.height - 1));
+      const targetIndex = (y * width + x) * 4;
+      if (sx < 0 || sx >= sourceCanvas.width || sy < 0 || sy >= sourceCanvas.height) {
+        output.data[targetIndex + 3] = 255;
+        continue;
+      }
+      const sourceIndex = (sy * sourceCanvas.width + sx) * 4;
+      output.data[targetIndex] = sourcePixels.data[sourceIndex];
+      output.data[targetIndex + 1] = sourcePixels.data[sourceIndex + 1];
+      output.data[targetIndex + 2] = sourcePixels.data[sourceIndex + 2];
+      output.data[targetIndex + 3] = 255;
+    }
+  }
+  return output;
+}
+
 function renderRectifiedPreview() {
   if (calibrationMode !== 'preview' || !calibrationState) return;
   try {
-    validateQuadrilateral(calibrationState);
-    const sourceCanvas = createOrientedPhotoCanvas();
-    const sourceContext = sourceCanvas.getContext('2d', { willReadFrequently: true });
-    const sourcePixels = sourceContext.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height);
-    const width = CALIBRATION_CANONICAL_WIDTH;
-    const height = CALIBRATION_CANONICAL_HEIGHT;
+    rectifiedPhotoPixels = createRectifiedPhotoPixels();
+    const width = rectifiedPhotoPixels.width;
+    const height = rectifiedPhotoPixels.height;
     calibrationRectifiedCanvas.width = width;
     calibrationRectifiedCanvas.height = height;
     const context = calibrationRectifiedCanvas.getContext('2d');
-    const output = context.createImageData(width, height);
-    const destinationCorners = [
-      { x: 0, y: 0 },
-      { x: width - 1, y: 0 },
-      { x: width - 1, y: height - 1 },
-      { x: 0, y: height - 1 },
-    ];
-    const sourceCorners = CALIBRATION_CORNER_NAMES.map((name) => calibrationState.corners[name]);
-    const inverse = computeHomography(destinationCorners, sourceCorners);
-
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const normalized = transformPoint(inverse, { x, y });
-        const sx = Math.round(normalized.x * (sourceCanvas.width - 1));
-        const sy = Math.round(normalized.y * (sourceCanvas.height - 1));
-        const targetIndex = (y * width + x) * 4;
-        if (sx < 0 || sx >= sourceCanvas.width || sy < 0 || sy >= sourceCanvas.height) {
-          output.data[targetIndex + 3] = 255;
-          continue;
-        }
-        const sourceIndex = (sy * sourceCanvas.width + sx) * 4;
-        output.data[targetIndex] = sourcePixels.data[sourceIndex];
-        output.data[targetIndex + 1] = sourcePixels.data[sourceIndex + 1];
-        output.data[targetIndex + 2] = sourcePixels.data[sourceIndex + 2];
-        output.data[targetIndex + 3] = 255;
-      }
-    }
-    context.putImageData(output, 0, 0);
+    context.putImageData(rectifiedPhotoPixels, 0, 0);
     drawCalibrationGrid(context, width, height, calibrationState.orientation);
 
     const grid = createGridIntersections(calibrationState.orientation, width, height);
@@ -1338,6 +1410,7 @@ function resetCalibrationCorners() {
   if (!calibrationState) return;
   calibrationState = resetCalibration(calibrationState);
   confirmedCalibration = null;
+  invalidateRecognitionForCalibrationChange();
   calibrationMode = 'adjust';
   syncPhotoUI();
 }
@@ -1353,10 +1426,204 @@ function confirmCalibrationResult() {
     calibrationMode = 'reference';
     syncPhotoUI();
     setPhotoImportMessage(`棋盤校正已確認：${confirmedCalibration.gridIntersections.length} 個交叉點，未修改局面。`, 'success');
-    toast('棋盤校正已確認，接下來仍由你手動擺盤。');
+    toast('棋盤校正已確認，可掃描棋子候選。');
   } catch (error) {
     const message = calibrationErrorMessage(error);
     calibrationPreviewStatus.textContent = message;
+    toast(message);
+  }
+}
+
+function recognitionErrorMessage(error) {
+  if (!(error instanceof PuzzlePhotoRecognitionError)) return '無法掃描棋子候選，請重新校正後再試。';
+  if (error.code === 'UNREVIEWED_INTERSECTION') return `尚有交叉點未確認：(${error.r},${error.c})。`;
+  return `棋子候選掃描失敗：${error.message}`;
+}
+
+function setRecognitionMessage(message, kind = '') {
+  recognitionMessage.textContent = message;
+  recognitionMessage.classList.toggle('success', kind === 'success');
+  recognitionMessage.classList.toggle('error', kind === 'error');
+}
+
+function recognitionVersions() {
+  return {
+    photoVersion: photoRecognitionVersion,
+    calibrationVersion: calibrationRecognitionVersion,
+  };
+}
+
+function recognitionCandidateLabel(candidate) {
+  const occupancy = {
+    [RECOGNITION_OCCUPANCY_EMPTY]: '空',
+    [RECOGNITION_OCCUPANCY_OCCUPIED]: '有子',
+    [RECOGNITION_OCCUPANCY_UNCERTAIN]: '不確定',
+  }[candidate.occupancy];
+  const side = candidate.suggestedSide === RED
+    ? `，偏紅方 ${Math.round(candidate.sideConfidence * 100)}%`
+    : (candidate.suggestedSide === BLACK
+      ? `，偏黑方 ${Math.round(candidate.sideConfidence * 100)}%`
+      : '，紅黑不明');
+  return `候選：${occupancy} ${Math.round(candidate.occupancyConfidence * 100)}%${candidate.occupancy === RECOGNITION_OCCUPANCY_EMPTY ? '' : side}`;
+}
+
+function recognitionMarkerText(candidate, reviewed, selection) {
+  if (reviewed) return selection === null ? '空' : name(selection.side, selection.type);
+  if (candidate.occupancy === RECOGNITION_OCCUPANCY_UNCERTAIN) return '?';
+  if (candidate.occupancy === RECOGNITION_OCCUPANCY_EMPTY) return '○';
+  if (candidate.suggestedSide === RED) return '紅';
+  if (candidate.suggestedSide === BLACK) return '黑';
+  return '●';
+}
+
+function syncRecognitionUI() {
+  if (!recognitionSession || calibrationMode !== 'recognition') return;
+  const { candidates, selections } = recognitionSession;
+  const reviewedCount = Object.keys(selections).length;
+  const occupiedCount = candidates.filter((candidate) => candidate.occupancy === RECOGNITION_OCCUPANCY_OCCUPIED).length;
+  const uncertainCount = candidates.filter((candidate) => candidate.occupancy === RECOGNITION_OCCUPANCY_UNCERTAIN).length;
+  recognitionOccupiedCount.textContent = `有子 ${occupiedCount}`;
+  recognitionUncertainCount.textContent = `不確定 ${uncertainCount}`;
+  recognitionReviewedCount.textContent = `已確認 ${reviewedCount}/90`;
+  recognitionUncertainOnlyInput.checked = recognitionUncertainOnly;
+  btnRecognitionApply.disabled = reviewedCount !== candidates.length;
+
+  recognitionMarkers.replaceChildren();
+  for (const candidate of candidates) {
+    const key = selectionKey(candidate.r, candidate.c);
+    const reviewed = Object.prototype.hasOwnProperty.call(selections, key);
+    const selection = selections[key];
+    const marker = document.createElement('button');
+    marker.type = 'button';
+    marker.className = `recognition-marker candidate-${candidate.occupancy}`;
+    if (candidate.suggestedSide !== RECOGNITION_SIDE_UNKNOWN) marker.classList.add(`suggested-${candidate.suggestedSide}`);
+    if (reviewed) marker.classList.add('reviewed', selection === null ? 'reviewed-empty' : `reviewed-${selection.side}`);
+    if (key === selectedRecognitionKey) marker.classList.add('selected');
+    if (recognitionUncertainOnly && candidate.occupancy !== RECOGNITION_OCCUPANCY_UNCERTAIN) marker.classList.add('filtered');
+    marker.style.left = `${(candidate.displayCol / 8) * 100}%`;
+    marker.style.top = `${(candidate.displayRow / 9) * 100}%`;
+    marker.textContent = recognitionMarkerText(candidate, reviewed, selection);
+    marker.setAttribute('aria-label', `交叉點 (${candidate.r},${candidate.c})，${recognitionCandidateLabel(candidate)}${reviewed ? `，已指定${selection === null ? '空' : name(selection.side, selection.type)}` : '，尚未確認'}`);
+    marker.title = marker.getAttribute('aria-label');
+    marker.addEventListener('click', () => {
+      selectedRecognitionKey = key;
+      syncRecognitionUI();
+    });
+    recognitionMarkers.append(marker);
+  }
+
+  const selectedCandidate = candidates.find((candidate) => selectionKey(candidate.r, candidate.c) === selectedRecognitionKey);
+  const hasSelected = !!selectedCandidate;
+  recognitionSelectedCoordinate.textContent = hasSelected
+    ? `交叉點 (${selectedCandidate.r},${selectedCandidate.c})`
+    : '尚未選取交叉點';
+  recognitionSuggestion.textContent = hasSelected ? recognitionCandidateLabel(selectedCandidate) : '請在棋盤上選一點';
+  btnRecognitionEmpty.disabled = !hasSelected;
+  recognitionPieceButtons.forEach((button) => { button.disabled = !hasSelected; });
+  recognitionPalettes.forEach((palette) => {
+    palette.classList.toggle('suggested', hasSelected && palette.classList.contains(selectedCandidate.suggestedSide));
+  });
+
+  const selectedReviewed = hasSelected && Object.prototype.hasOwnProperty.call(selections, selectedRecognitionKey);
+  const selectedValue = selectedReviewed ? selections[selectedRecognitionKey] : undefined;
+  btnRecognitionEmpty.classList.toggle('active', selectedValue === null);
+  recognitionPieceButtons.forEach((button) => {
+    const active = selectedValue
+      && selectedValue.side === button.dataset.recognitionSide
+      && selectedValue.type === button.dataset.recognitionType;
+    button.classList.toggle('active', !!active);
+  });
+
+  if (reviewedCount === candidates.length) {
+    setRecognitionMessage('90 個交叉點都已由你明確確認，可以套用到編輯棋盤。', 'success');
+  } else {
+    setRecognitionMessage(`尚有 ${candidates.length - reviewedCount} 個交叉點未確認；候選不會自動成為棋子。`);
+  }
+}
+
+function scanRecognitionCandidates() {
+  if (!confirmedCalibration || !calibrationState) {
+    const message = '請先完成並確認棋盤校正。';
+    setPhotoImportMessage(message, 'error');
+    toast(message);
+    return;
+  }
+  try {
+    rectifiedPhotoPixels = createRectifiedPhotoPixels();
+    recognitionCanvas.width = rectifiedPhotoPixels.width;
+    recognitionCanvas.height = rectifiedPhotoPixels.height;
+    recognitionCanvas.getContext('2d').putImageData(rectifiedPhotoPixels, 0, 0);
+    const candidates = recognizeIntersections(
+      { data: rectifiedPhotoPixels.data, width: rectifiedPhotoPixels.width, height: rectifiedPhotoPixels.height },
+      confirmedCalibration.gridIntersections,
+    );
+    recognitionSession = {
+      candidates,
+      selections: {},
+      token: createRecognitionToken(recognitionVersions()),
+    };
+    const firstCandidate = candidates.find((candidate) => candidate.occupancy === RECOGNITION_OCCUPANCY_UNCERTAIN)
+      || candidates.find((candidate) => candidate.occupancy === RECOGNITION_OCCUPANCY_OCCUPIED)
+      || candidates[0];
+    selectedRecognitionKey = selectionKey(firstCandidate.r, firstCandidate.c);
+    recognitionUncertainOnly = false;
+    calibrationMode = 'recognition';
+    syncPhotoUI();
+    toast(`已掃描 ${candidates.length} 個交叉點，請人工確認。`);
+  } catch (error) {
+    const message = recognitionErrorMessage(error);
+    setPhotoImportMessage(message, 'error');
+    toast(message);
+  }
+}
+
+function setRecognitionSelection(selection) {
+  if (!recognitionSession || !selectedRecognitionKey) return;
+  recognitionSession.selections[selectedRecognitionKey] = selection === null ? null : { ...selection };
+  syncRecognitionUI();
+}
+
+function markAllRecognitionEmpty() {
+  if (!recognitionSession) return;
+  recognitionSession.selections = Object.fromEntries(
+    recognitionSession.candidates.map((candidate) => [selectionKey(candidate.r, candidate.c), null]),
+  );
+  syncRecognitionUI();
+  toast('已由你將 90 個交叉點標記為空白，可再指定棋子。');
+}
+
+function applyRecognitionToEditor() {
+  if (!recognitionSession) return;
+  if (!isRecognitionTokenCurrent(recognitionSession.token, recognitionVersions())) {
+    invalidateRecognition();
+    calibrationMode = 'reference';
+    syncPhotoUI();
+    const message = '照片或校正已變更，舊候選已作廢，請重新掃描。';
+    setPhotoImportMessage(message, 'error');
+    toast(message);
+    return;
+  }
+  try {
+    const nextBoard = candidatesToEditorBoard(recognitionSession.candidates, recognitionSession.selections);
+    const nextSide = editorState?.sideToMove ?? RED;
+    editorState = createEditorState({ board: nextBoard, sideToMove: nextSide });
+    appState = APP_STATE.PUZZLE_EDITOR;
+    confirmedPosition = null;
+    recorderState = null;
+    recordedPuzzleResult = null;
+    editorPanel.classList.remove('recorder-active');
+    recorderPanel.classList.add('hidden');
+    document.querySelector(`input[name="editorSide"][value="${nextSide}"]`).checked = true;
+    setEditorTool({ kind: 'move' });
+    syncEditorScene();
+    syncRecorderUI();
+    calibrationMode = 'reference';
+    syncPhotoUI();
+    setEditorMessage('已套用 90 個人工確認結果；請在編輯棋盤繼續修正並確認局面。', 'success');
+    toast('人工確認結果已套用到既有編輯棋盤。');
+  } catch (error) {
+    const message = recognitionErrorMessage(error);
+    setRecognitionMessage(message, 'error');
     toast(message);
   }
 }
@@ -2891,6 +3158,7 @@ btnPhotoZoomOut.addEventListener('click', () => applyPhotoState(zoomPhotoOut));
 btnPhotoZoomIn.addEventListener('click', () => applyPhotoState(zoomPhotoIn));
 btnPhotoReset.addEventListener('click', () => applyPhotoState(resetPhotoTransform));
 btnCalibrationStart.addEventListener('click', beginCalibration);
+btnRecognitionScan.addEventListener('click', scanRecognitionCandidates);
 btnCalibrationPreview.addEventListener('click', showCalibrationPreview);
 document.getElementById('btnCalibrationBack').addEventListener('click', () => {
   calibrationMode = 'adjust';
@@ -2903,6 +3171,24 @@ document.getElementById('btnCalibrationCancel').addEventListener('click', () => 
   syncPhotoUI();
 });
 document.getElementById('btnCalibrationConfirm').addEventListener('click', confirmCalibrationResult);
+document.getElementById('btnRecognitionRescan').addEventListener('click', scanRecognitionCandidates);
+document.getElementById('btnRecognitionBack').addEventListener('click', () => {
+  calibrationMode = 'reference';
+  syncPhotoUI();
+});
+document.getElementById('btnRecognitionAllEmpty').addEventListener('click', markAllRecognitionEmpty);
+btnRecognitionApply.addEventListener('click', applyRecognitionToEditor);
+btnRecognitionEmpty.addEventListener('click', () => setRecognitionSelection(null));
+recognitionPieceButtons.forEach((button) => {
+  button.addEventListener('click', () => setRecognitionSelection({
+    side: button.dataset.recognitionSide,
+    type: button.dataset.recognitionType,
+  }));
+});
+recognitionUncertainOnlyInput.addEventListener('change', () => {
+  recognitionUncertainOnly = recognitionUncertainOnlyInput.checked;
+  syncRecognitionUI();
+});
 calibrationCornerButtons.forEach((button) => {
   button.addEventListener('click', () => selectCalibrationCorner(button.dataset.calibrationCorner));
 });
@@ -2914,6 +3200,7 @@ calibrationOrientationInputs.forEach((input) => {
     if (!input.checked || !calibrationState) return;
     calibrationState = setCalibrationOrientation(calibrationState, input.value);
     confirmedCalibration = null;
+    invalidateRecognitionForCalibrationChange();
     if (calibrationMode === 'preview') renderRectifiedPreview();
     else renderCalibrationAdjustment();
   });
