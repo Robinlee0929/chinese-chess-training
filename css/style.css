@@ -183,6 +183,82 @@ aside h3 {
   gap: 12px;
 }
 
+.photo-import-entry { display: flex; flex-direction: column; gap: 7px; }
+.photo-import-button {
+  color: #241a0c;
+  background: linear-gradient(180deg, #f0c463, #d9a441);
+  border-color: #b98a2f;
+  font-weight: 700;
+}
+.photo-import-message {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.photo-import-message.success { color: #b8dcaa; }
+.photo-import-message.error { color: #e99a8e; }
+
+#photoPanel {
+  width: 320px;
+  border-right: 1px solid var(--line);
+  gap: 11px;
+}
+.photo-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.photo-heading h2 { font-size: 18px; letter-spacing: 3px; }
+.photo-heading p { margin-top: 4px; color: var(--muted); font-size: 11.5px; }
+.photo-frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.025) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255, 255, 255, 0.025) 25%, transparent 25%),
+    var(--panel2);
+  background-size: 18px 18px;
+  background-position: 0 0, 0 9px;
+}
+#photoPreviewImage {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  transform-origin: center;
+  transition: transform 160ms ease;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.photo-transform-status {
+  color: var(--muted);
+  font-size: 11.5px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.photo-transform-actions,
+.photo-file-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+}
+.photo-transform-actions button,
+.photo-file-actions button { padding: 7px 6px; font-size: 11.5px; }
+.photo-transform-actions #btnPhotoReset { grid-column: 1 / -1; }
+.photo-privacy-note {
+  color: var(--muted);
+  border-left: 3px solid rgba(217, 164, 65, 0.45);
+  padding: 7px 9px;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
 .editor-heading {
   display: flex;
   align-items: flex-start;
@@ -664,6 +740,17 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
 }
 
 .hidden { display: none !important; }
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
 
 /* ---------- 小螢幕 ---------- */
 @media (max-width: 900px) {
@@ -678,6 +765,32 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
     max-height: 270px;
     border-right: none;
     border-top: 1px solid var(--line);
+  }
+  #photoPanel {
+    order: 1;
+    width: 100%;
+    max-height: none;
+    flex: none;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+  #app.photo-active main {
+    display: flex;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+  #app.photo-active #stage {
+    order: 2;
+    flex: none;
+    width: 100%;
+    height: 390px;
+    min-height: 390px;
+  }
+  #app.photo-active #editorPanel {
+    order: 3;
+    flex: none;
+    max-height: none;
+    overflow: visible;
   }
   #libraryPanel {
     order: 2;

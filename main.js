@@ -37,6 +37,20 @@ import {
   exportPracticeSnapshot,
 } from './puzzle-practice.js';
 import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js';
+import {
+  PHOTO_MAX_ZOOM,
+  PHOTO_MIN_ZOOM,
+  PuzzlePhotoError,
+  clearPhotoReference,
+  createPhotoReferenceState,
+  resetPhotoTransform,
+  rotatePhotoLeft,
+  rotatePhotoRight,
+  setPhotoReference,
+  validatePhotoMetadata,
+  zoomPhotoIn,
+  zoomPhotoOut,
+} from './puzzle-photo.js';
 
 // ---------------- 常數 ----------------
 const CELL = 1;
@@ -472,6 +486,10 @@ let activeSavedPuzzleId = null;
 let savedCurrentPuzzleId = null;
 let practiceReturnState = 'recorded';
 let practiceCompletionRecorded = false;
+let photoReferenceState = createPhotoReferenceState();
+let photoObjectUrl = null;
+let pendingPhotoObjectUrl = null;
+let photoLoadToken = 0;
 
 const puzzleFlowActive = () => appState !== APP_STATE.NORMAL_GAME;
 const authoringActive = () => appState === APP_STATE.PUZZLE_EDITOR
@@ -646,6 +664,17 @@ const libraryDetailNotes = document.getElementById('libraryDetailNotes');
 const libraryDetailSolution = document.getElementById('libraryDetailSolution');
 const btnLibraryDetailPractice = document.getElementById('btnLibraryDetailPractice');
 const btnLibraryDetailDelete = document.getElementById('btnLibraryDetailDelete');
+const photoFileInput = document.getElementById('photoFileInput');
+const btnPhotoImport = document.getElementById('btnPhotoImport');
+const photoImportMessage = document.getElementById('photoImportMessage');
+const photoPanel = document.getElementById('photoPanel');
+const photoPreviewImage = document.getElementById('photoPreviewImage');
+const photoTransformStatus = document.getElementById('photoTransformStatus');
+const btnPhotoRotateLeft = document.getElementById('btnPhotoRotateLeft');
+const btnPhotoRotateRight = document.getElementById('btnPhotoRotateRight');
+const btnPhotoZoomOut = document.getElementById('btnPhotoZoomOut');
+const btnPhotoZoomIn = document.getElementById('btnPhotoZoomIn');
+const btnPhotoReset = document.getElementById('btnPhotoReset');
 
 function refreshHUD() {
   const showSide = practiceActive()
@@ -812,6 +841,120 @@ function setEditorMessage(message, kind = '') {
   editorMessage.classList.toggle('error', kind === 'error');
 }
 
+function setPhotoImportMessage(message, kind = '') {
+  photoImportMessage.textContent = message;
+  photoImportMessage.classList.toggle('success', kind === 'success');
+  photoImportMessage.classList.toggle('error', kind === 'error');
+}
+
+function photoErrorMessage(error) {
+  if (!(error instanceof PuzzlePhotoError)) return '無法讀取這張照片，請改用 JPEG、PNG 或 WebP。';
+  if (error.code === 'UNSUPPORTED_TYPE') return '不支援此檔案格式，請選擇 JPEG、PNG 或 WebP。';
+  if (error.code === 'EMPTY_FILE') return '所選檔案是空檔案，請選擇另一張照片。';
+  if (error.code === 'FILE_TOO_LARGE') return '照片超過 10 MB 上限，請選擇較小的檔案。';
+  return `照片無法載入：${error.message}`;
+}
+
+function syncPhotoUI() {
+  const visible = !!photoObjectUrl && !!photoReferenceState.photo && authoringActive();
+  photoPanel.classList.toggle('hidden', !visible);
+  appEl.classList.toggle('photo-active', visible);
+  if (!visible) return;
+  const { rotation, zoom, photo } = photoReferenceState;
+  photoPreviewImage.style.transform = `rotate(${rotation}deg) scale(${zoom})`;
+  photoTransformStatus.textContent = `${photo.name}・${Math.round(zoom * 100)}%・${rotation}°`;
+  btnPhotoZoomOut.disabled = zoom <= PHOTO_MIN_ZOOM;
+  btnPhotoZoomIn.disabled = zoom >= PHOTO_MAX_ZOOM;
+}
+
+function releasePhotoReference() {
+  photoLoadToken++;
+  if (photoObjectUrl) URL.revokeObjectURL(photoObjectUrl);
+  if (pendingPhotoObjectUrl) URL.revokeObjectURL(pendingPhotoObjectUrl);
+  photoObjectUrl = null;
+  pendingPhotoObjectUrl = null;
+  photoReferenceState = clearPhotoReference(photoReferenceState);
+  photoPreviewImage.removeAttribute('src');
+  photoPreviewImage.style.transform = '';
+  photoFileInput.value = '';
+  syncPhotoUI();
+}
+
+function openPhotoPicker() {
+  if (!authoringActive()) return;
+  photoFileInput.value = '';
+  photoFileInput.click();
+}
+
+function decodePhotoObjectUrl(objectUrl) {
+  const probe = new Image();
+  probe.decoding = 'async';
+  probe.src = objectUrl;
+  if (typeof probe.decode === 'function') {
+    return probe.decode().then(() => probe);
+  }
+  return new Promise((resolve, reject) => {
+    probe.onload = () => resolve(probe);
+    probe.onerror = () => reject(new Error('Image decode failed.'));
+  });
+}
+
+async function loadSelectedPhoto(file) {
+  if (!file) return;
+  let metadata;
+  try {
+    metadata = validatePhotoMetadata({ name: file.name, type: file.type, size: file.size });
+  } catch (error) {
+    const message = photoErrorMessage(error);
+    setPhotoImportMessage(message, 'error');
+    toast(message);
+    return;
+  }
+
+  const token = ++photoLoadToken;
+  if (pendingPhotoObjectUrl) URL.revokeObjectURL(pendingPhotoObjectUrl);
+  const nextObjectUrl = URL.createObjectURL(file);
+  pendingPhotoObjectUrl = nextObjectUrl;
+  setPhotoImportMessage('正在載入照片…');
+  try {
+    const decoded = await decodePhotoObjectUrl(nextObjectUrl);
+    if (token !== photoLoadToken) {
+      URL.revokeObjectURL(nextObjectUrl);
+      return;
+    }
+    if (!decoded.naturalWidth || !decoded.naturalHeight) throw new Error('Image has no decoded dimensions.');
+    const previousObjectUrl = photoObjectUrl;
+    photoReferenceState = setPhotoReference(photoReferenceState, metadata);
+    photoObjectUrl = nextObjectUrl;
+    pendingPhotoObjectUrl = null;
+    photoPreviewImage.src = nextObjectUrl;
+    if (previousObjectUrl) URL.revokeObjectURL(previousObjectUrl);
+    setPhotoImportMessage(`已載入「${metadata.name}」，請依照片手動擺盤。`, 'success');
+    syncPhotoUI();
+    toast('照片已載入，僅供手動擺盤參考。');
+  } catch {
+    URL.revokeObjectURL(nextObjectUrl);
+    if (pendingPhotoObjectUrl === nextObjectUrl) pendingPhotoObjectUrl = null;
+    if (token !== photoLoadToken) return;
+    const message = '照片解碼失敗，請改用有效的 JPEG、PNG 或 WebP。';
+    setPhotoImportMessage(message, 'error');
+    toast(message);
+  } finally {
+    photoFileInput.value = '';
+  }
+}
+
+function applyPhotoState(action) {
+  try {
+    photoReferenceState = action(photoReferenceState);
+    syncPhotoUI();
+  } catch (error) {
+    const message = photoErrorMessage(error);
+    setPhotoImportMessage(message, 'error');
+    toast(message);
+  }
+}
+
 function setEditorTool(tool) {
   editorTool = tool;
   clearSelection();
@@ -943,6 +1086,7 @@ function enterEditor() {
   aiToken++;
   aiThinking = false;
   tweens.length = 0;
+  releasePhotoReference();
   clearSelection();
   editorState = createEditorState();
   appState = APP_STATE.PUZZLE_EDITOR;
@@ -956,6 +1100,7 @@ function enterEditor() {
   setEditorTool({ kind: 'move' });
   document.querySelector(`input[name="editorSide"][value="${RED}"]`).checked = true;
   setEditorMessage('選擇棋子後點擊空交叉點即可放置。');
+  setPhotoImportMessage('支援 JPEG、PNG、WebP，檔案上限 10 MB。');
   syncEditorScene();
   syncRecorderUI();
   refreshHUD();
@@ -968,6 +1113,7 @@ function exitEditor() {
   practiceToken++;
   aiThinking = false;
   tweens.length = 0;
+  releasePhotoReference();
   appState = APP_STATE.NORMAL_GAME;
   editorState = null;
   confirmedPosition = null;
@@ -1049,6 +1195,7 @@ function syncRecorderUI() {
   recorderMessage.classList.toggle('hidden', inPractice);
   btnPracticeStart.classList.toggle('hidden', appState !== APP_STATE.PUZZLE_RECORDED);
   savePuzzlePanel.classList.toggle('hidden', appState !== APP_STATE.PUZZLE_RECORDED);
+  syncPhotoUI();
   if (!visible) return;
 
   if (inPractice) {
@@ -1348,6 +1495,7 @@ function enterLibrary(preferredId = null) {
   practiceToken++;
   aiThinking = false;
   tweens.length = 0;
+  releasePhotoReference();
   clearSelection();
   appState = APP_STATE.PUZZLE_LIBRARY;
   appEl.classList.remove('editor-active');
@@ -2322,6 +2470,20 @@ btnEditor.addEventListener('click', () => {
   if (puzzleFlowActive()) exitEditor();
   else enterEditor();
 });
+btnPhotoImport.addEventListener('click', openPhotoPicker);
+document.getElementById('btnPhotoReplace').addEventListener('click', openPhotoPicker);
+photoFileInput.addEventListener('change', () => loadSelectedPhoto(photoFileInput.files?.[0]));
+document.getElementById('btnPhotoRemove').addEventListener('click', () => {
+  if (!photoReferenceState.photo) return;
+  releasePhotoReference();
+  setPhotoImportMessage('照片已移除，棋盤配置保持不變。');
+  toast('照片已移除，棋盤配置未變更。');
+});
+btnPhotoRotateLeft.addEventListener('click', () => applyPhotoState(rotatePhotoLeft));
+btnPhotoRotateRight.addEventListener('click', () => applyPhotoState(rotatePhotoRight));
+btnPhotoZoomOut.addEventListener('click', () => applyPhotoState(zoomPhotoOut));
+btnPhotoZoomIn.addEventListener('click', () => applyPhotoState(zoomPhotoIn));
+btnPhotoReset.addEventListener('click', () => applyPhotoState(resetPhotoTransform));
 btnLibrary.addEventListener('click', () => {
   if (libraryActive()) exitEditor();
   else enterLibrary();

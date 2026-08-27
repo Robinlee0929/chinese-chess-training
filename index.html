@@ -137,6 +137,14 @@
         <span class="editor-badge">局面編輯</span>
       </div>
 
+      <section class="editor-section photo-import-entry">
+        <h3>棋盤照片參考</h3>
+        <input id="photoFileInput" class="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" tabindex="-1" aria-hidden="true">
+        <button id="btnPhotoImport" type="button" class="photo-import-button">匯入棋盤照片</button>
+        <p class="editor-hint">照片僅供擺盤參考，目前不會自動辨識棋子。</p>
+        <p id="photoImportMessage" class="photo-import-message" role="status">支援 JPEG、PNG、WebP，檔案上限 10 MB。</p>
+      </section>
+
       <section class="editor-section">
         <h3>紅方棋子</h3>
         <div class="piece-palette" aria-label="紅方棋子">
@@ -241,6 +249,32 @@
         </div>
         <p id="recorderMessage" class="editor-message" role="status">局面已確認，可以開始錄製答案。</p>
       </section>
+    </aside>
+
+    <aside id="photoPanel" class="hidden" aria-label="棋盤原始照片">
+      <div class="photo-heading">
+        <div>
+          <h2>棋盤原始照片</h2>
+          <p>僅供手動擺盤參考</p>
+        </div>
+        <span class="editor-badge">本機預覽</span>
+      </div>
+      <div class="photo-frame">
+        <img id="photoPreviewImage" alt="匯入的棋盤參考照片">
+      </div>
+      <p id="photoTransformStatus" class="photo-transform-status">100%・0°</p>
+      <div class="photo-transform-actions" aria-label="照片檢視控制">
+        <button id="btnPhotoRotateLeft" type="button">向左旋轉 90°</button>
+        <button id="btnPhotoRotateRight" type="button">向右旋轉 90°</button>
+        <button id="btnPhotoZoomOut" type="button">縮小</button>
+        <button id="btnPhotoZoomIn" type="button">放大</button>
+        <button id="btnPhotoReset" type="button">重設檢視</button>
+      </div>
+      <div class="photo-file-actions">
+        <button id="btnPhotoReplace" type="button">更換照片</button>
+        <button id="btnPhotoRemove" type="button" class="danger">移除照片</button>
+      </div>
+      <p class="photo-privacy-note">影像只在此瀏覽器分頁中顯示，不會上傳或儲存。</p>
     </aside>
 
     <aside id="libraryPanel" class="hidden" aria-label="我的殺局">
