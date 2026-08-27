@@ -351,8 +351,26 @@ aside h3 {
   gap: 7px;
 }
 .recorder-actions button { padding: 7px 8px; font-size: 12.5px; }
+.recorder-actions #btnPracticeStart { grid-column: 1 / -1; }
 .recorder-actions #btnRecorderExit { grid-column: 1 / -1; }
 .recorder-panel > .editor-message { margin-top: 0; }
+
+.practice-workspace { display: flex; flex-direction: column; gap: 11px; }
+.practice-stats {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.practice-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.practice-actions button { padding: 8px; font-size: 12.5px; }
+.practice-actions #btnPracticePuzzleExit { grid-column: 1 / -1; }
 
 /* 左下角版權：字體與 .help 說明文字一致 */
 .copyright {

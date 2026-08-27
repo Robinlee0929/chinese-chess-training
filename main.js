@@ -28,6 +28,14 @@ import {
   exportRecorderBoard,
   exportRecordedResult,
 } from './puzzle-recorder.js';
+import {
+  PuzzlePracticeError,
+  createPractice,
+  attemptPracticeMove,
+  applyOpponentReply,
+  restartPractice,
+  exportPracticeSnapshot,
+} from './puzzle-practice.js';
 
 // ---------------- 常數 ----------------
 const CELL = 1;
@@ -444,6 +452,8 @@ const APP_STATE = Object.freeze({
   PUZZLE_CONFIRMED: 'PUZZLE_CONFIRMED',
   PUZZLE_RECORDING: 'PUZZLE_RECORDING',
   PUZZLE_RECORDED: 'PUZZLE_RECORDED',
+  PUZZLE_PRACTICING: 'PUZZLE_PRACTICING',
+  PUZZLE_PRACTICE_COMPLETE: 'PUZZLE_PRACTICE_COMPLETE',
 });
 let appState = APP_STATE.NORMAL_GAME;
 let editorState = null;
@@ -451,15 +461,22 @@ let editorTool = { kind: 'move' };
 let confirmedPosition = null;
 let recorderState = null;
 let recordedPuzzleResult = null;
+let practiceState = null;
+let practiceToken = 0;
 
 const puzzleFlowActive = () => appState !== APP_STATE.NORMAL_GAME;
 const authoringActive = () => appState === APP_STATE.PUZZLE_EDITOR
   || appState === APP_STATE.PUZZLE_CONFIRMED;
 const recorderVisible = () => appState === APP_STATE.PUZZLE_CONFIRMED
   || appState === APP_STATE.PUZZLE_RECORDING
-  || appState === APP_STATE.PUZZLE_RECORDED;
+  || appState === APP_STATE.PUZZLE_RECORDED
+  || appState === APP_STATE.PUZZLE_PRACTICING
+  || appState === APP_STATE.PUZZLE_PRACTICE_COMPLETE;
 const recorderBoardActive = () => appState === APP_STATE.PUZZLE_RECORDING
   || appState === APP_STATE.PUZZLE_RECORDED;
+const practiceActive = () => appState === APP_STATE.PUZZLE_PRACTICING
+  || appState === APP_STATE.PUZZLE_PRACTICE_COMPLETE;
+const puzzleBoardActive = () => recorderBoardActive() || practiceActive();
 
 // ---------------- 對弈模式 / AI ----------------
 let mode = 'medium';   // 'pvp' | 'easy' | 'medium' | 'hard'
@@ -542,6 +559,7 @@ window.__chess = {
   get puzzleState() { return appState; },
   get editorResult() { return cloneConfirmedPosition(); },
   get recordedPuzzleResult() { return cloneRecordedPuzzleResult(); },
+  get practiceState() { return practiceState ? exportPracticeSnapshot(practiceState) : null; },
   setMode(m) { mode = m; const el = document.getElementById('modeSel'); if (el) el.value = m; },
   get lastResult() { return lastResult; },
   buildShareCard: (r) => buildShareCard(r || lastResult),
@@ -590,11 +608,21 @@ const recorderMessage = document.getElementById('recorderMessage');
 const btnRecorderUndo = document.getElementById('btnRecorderUndo');
 const btnRecorderReset = document.getElementById('btnRecorderReset');
 const btnRecorderFinish = document.getElementById('btnRecorderFinish');
+const btnPracticeStart = document.getElementById('btnPracticeStart');
+const practiceWorkspace = document.getElementById('practiceWorkspace');
+const practiceTurnText = document.getElementById('practiceTurnText');
+const practiceTurnDot = document.getElementById('practiceTurnDot');
+const practiceProgress = document.getElementById('practiceProgress');
+const practiceMistakes = document.getElementById('practiceMistakes');
+const practiceMessage = document.getElementById('practiceMessage');
+const btnPracticeRestart = document.getElementById('btnPracticeRestart');
 
 function refreshHUD() {
-  const showSide = recorderBoardActive()
-    ? recorderState.currentSide
-    : (authoringActive() ? editorState.sideToMove : (over && winner ? winner : turn));
+  const showSide = practiceActive()
+    ? practiceState.currentSide
+    : (recorderBoardActive()
+      ? recorderState.currentSide
+      : (authoringActive() ? editorState.sideToMove : (over && winner ? winner : turn)));
   const isRed = showSide === RED;
   if (appState === APP_STATE.PUZZLE_EDITOR) {
     turnText.textContent = isRed ? '編輯中・紅方先行' : '編輯中・黑方先行';
@@ -604,6 +632,12 @@ function refreshHUD() {
     turnText.textContent = isRed ? '答案錄製・紅方行棋' : '答案錄製・黑方行棋';
   } else if (appState === APP_STATE.PUZZLE_RECORDED) {
     turnText.textContent = '答案已完成';
+  } else if (appState === APP_STATE.PUZZLE_PRACTICING) {
+    turnText.textContent = practiceState.currentSide === practiceState.practiceSide
+      ? `殺局練習・${isRed ? '紅方' : '黑方'}請走`
+      : '殺局練習・對手回應';
+  } else if (appState === APP_STATE.PUZZLE_PRACTICE_COMPLETE) {
+    turnText.textContent = '殺局練習完成';
   } else if (over) {
     turnText.textContent = winner === RED ? '紅方勝' : '黑方勝';
   } else if (aiThinking) {
@@ -889,12 +923,15 @@ function enterEditor() {
 function exitEditor() {
   if (!puzzleFlowActive()) return;
   aiToken++;
+  practiceToken++;
   aiThinking = false;
   tweens.length = 0;
   appState = APP_STATE.NORMAL_GAME;
   editorState = null;
   confirmedPosition = null;
   recorderState = null;
+  practiceState = null;
+  busy = false;
   clearSelection();
   appEl.classList.remove('editor-active');
   editorPanel.classList.add('hidden');
@@ -919,6 +956,7 @@ function cloneRecordedPuzzleResult() {
 }
 
 function activePuzzleBoard() {
+  if (practiceActive()) return practiceState?.currentBoard || null;
   if (recorderBoardActive()) return recorderState?.board || null;
   if (authoringActive()) return editorState?.board || null;
   return null;
@@ -947,11 +985,20 @@ function renderRecorderLog() {
 
 function syncRecorderUI() {
   const visible = recorderVisible();
+  const inPractice = practiceActive();
   recorderPanel.classList.toggle('hidden', !visible);
-  editorPanel.classList.toggle('recorder-active', recorderBoardActive());
+  editorPanel.classList.toggle('recorder-active', puzzleBoardActive());
   recorderReady.classList.toggle('hidden', appState !== APP_STATE.PUZZLE_CONFIRMED);
   recorderWorkspace.classList.toggle('hidden', !recorderBoardActive());
+  practiceWorkspace.classList.toggle('hidden', !inPractice);
+  recorderMessage.classList.toggle('hidden', inPractice);
+  btnPracticeStart.classList.toggle('hidden', appState !== APP_STATE.PUZZLE_RECORDED);
   if (!visible) return;
+
+  if (inPractice) {
+    syncPracticeUI();
+    return;
+  }
 
   if (appState === APP_STATE.PUZZLE_CONFIRMED) {
     recorderTitle.textContent = '答案錄製';
@@ -974,6 +1021,36 @@ function syncRecorderUI() {
   btnRecorderReset.disabled = busy;
   btnRecorderFinish.disabled = busy || recorded;
   renderRecorderLog();
+}
+
+function setPracticeMessage(message, kind = '') {
+  practiceMessage.textContent = message;
+  practiceMessage.classList.toggle('success', kind === 'success');
+  practiceMessage.classList.toggle('error', kind === 'error');
+}
+
+function syncPracticeUI() {
+  if (!practiceState) return;
+  const complete = appState === APP_STATE.PUZZLE_PRACTICE_COMPLETE;
+  const playerTurn = practiceState.currentSide === practiceState.practiceSide;
+  recorderTitle.textContent = complete ? '練習完成' : '殺局練習';
+  recorderSubtitle.textContent = complete
+    ? '已成功走出完整的錄製殺局。'
+    : '依照已錄製答案走棋，對手會自動回應。';
+  recorderBadge.textContent = complete ? '完成' : `第 ${practiceState.currentPly + 1} 手`;
+  practiceTurnText.textContent = complete
+    ? '練習完成'
+    : (playerTurn
+      ? `${practiceState.practiceSide === RED ? '紅方' : '黑方'}請走`
+      : '對手回應中…');
+  const color = practiceState.currentSide === RED ? '#c05345' : '#8b93a1';
+  practiceTurnDot.style.background = color;
+  practiceTurnDot.style.boxShadow = `0 0 8px ${color}`;
+  practiceProgress.textContent = complete
+    ? `共 ${practiceState.solution.length} 著`
+    : `進度 ${practiceState.currentPly} / ${practiceState.solution.length}`;
+  practiceMistakes.textContent = `錯誤 ${practiceState.mistakes} 次`;
+  btnPracticeRestart.disabled = busy;
 }
 
 function syncRecorderScene() {
@@ -1146,6 +1223,219 @@ function handleRecorderBoardClick(hit) {
   if (selected) {
     const message = '此著不合法，棋盤未變更。';
     setRecorderMessage(message, 'error');
+    toast(message);
+  }
+  clearSelection();
+  refreshHUD();
+}
+
+function syncPracticeScene() {
+  tweens.length = 0;
+  rebuildPieceMeshes(practiceState.currentBoard, false);
+  const invariant = checkBoardMeshInvariant(practiceState.currentBoard);
+  if (!invariant.ok) throw new Error(`Practice board/mesh invariant failed: ${invariant.errors.join(' ')}`);
+}
+
+function startPractice() {
+  if (appState !== APP_STATE.PUZZLE_RECORDED || !recordedPuzzleResult || busy) return;
+  try {
+    practiceState = createPractice(recordedPuzzleResult);
+  } catch (error) {
+    if (!(error instanceof PuzzlePracticeError)) throw error;
+    const message = `無法開始練習：${error.message}`;
+    setRecorderMessage(message, 'error');
+    toast(message);
+    return;
+  }
+  practiceToken++;
+  appState = APP_STATE.PUZZLE_PRACTICING;
+  clearSelection();
+  setPracticeMessage('請走出本題的第一步。');
+  syncPracticeScene();
+  syncRecorderUI();
+  refreshHUD();
+}
+
+function restartCurrentPractice() {
+  if (!practiceState) return;
+  practiceToken++;
+  tweens.length = 0;
+  busy = false;
+  practiceState = restartPractice(practiceState);
+  appState = APP_STATE.PUZZLE_PRACTICING;
+  clearSelection();
+  syncPracticeScene();
+  setPracticeMessage('已回到原始局面，請重新開始。');
+  syncRecorderUI();
+  refreshHUD();
+}
+
+function exitPractice() {
+  if (!practiceActive() || !recorderState) return;
+  practiceToken++;
+  tweens.length = 0;
+  busy = false;
+  practiceState = null;
+  appState = APP_STATE.PUZZLE_RECORDED;
+  clearSelection();
+  syncRecorderScene();
+  const invariant = checkBoardMeshInvariant(recorderState.board);
+  if (!invariant.ok) throw new Error(`Recorder board/mesh invariant failed: ${invariant.errors.join(' ')}`);
+  setRecorderMessage('答案有效：已形成將死', 'success');
+  syncRecorderUI();
+  refreshHUD();
+}
+
+function selectPracticePiece(r, c) {
+  clearSelection();
+  selected = { r, c };
+  legal = legalMoves(practiceState.currentBoard, r, c);
+  showSelectRingAt(selected);
+  if (legal.length) showMoveDots(legal, practiceState.currentBoard);
+  sfx.select();
+  refreshHUD();
+}
+
+function completePractice() {
+  appState = APP_STATE.PUZZLE_PRACTICE_COMPLETE;
+  busy = false;
+  clearSelection();
+  const invariant = checkBoardMeshInvariant(practiceState.currentBoard);
+  if (!invariant.ok) throw new Error(`Practice board/mesh invariant failed: ${invariant.errors.join(' ')}`);
+  setPracticeMessage('完成！成功走出本題殺局', 'success');
+  syncRecorderUI();
+  refreshHUD();
+  toast('完成！成功走出本題殺局');
+}
+
+function afterPracticeMove() {
+  const invariant = checkBoardMeshInvariant(practiceState.currentBoard);
+  if (!invariant.ok) throw new Error(`Practice board/mesh invariant failed: ${invariant.errors.join(' ')}`);
+  if (practiceState.status === 'complete') {
+    completePractice();
+    return;
+  }
+  if (practiceState.currentSide !== practiceState.practiceSide) {
+    queueOpponentReply();
+    return;
+  }
+  busy = false;
+  setPracticeMessage('回答正確，請走下一步。', 'success');
+  syncRecorderUI();
+  refreshHUD();
+}
+
+function animatePracticeMove(result) {
+  const { from, to } = result.move;
+  const moving = pieceAt(from.r, from.c);
+  const capturedMesh = pieceAt(to.r, to.c);
+  if (!moving) throw new Error(`Practice move has no mesh at ${from.r},${from.c}.`);
+  clearSelection();
+  busy = true;
+  moving.userData.r = to.r;
+  moving.userData.c = to.c;
+  moving.userData.piece = practiceState.currentBoard[to.r][to.c];
+  const start = moving.position.clone();
+  const end = to3D(to.r, to.c);
+  tween(260, (k) => {
+    moving.position.x = start.x + (end.x - start.x) * k;
+    moving.position.z = start.z + (end.z - start.z) * k;
+    moving.position.y = Y0 + Math.sin(Math.PI * k) * 0.65;
+  }, () => {
+    moving.position.y = Y0;
+    if (capturedMesh) {
+      scene.remove(capturedMesh);
+      pieces = pieces.filter((piece) => piece !== capturedMesh);
+    }
+    if (result.captured) sfx.capture(); else sfx.move();
+    afterPracticeMove();
+  });
+  syncRecorderUI();
+  refreshHUD();
+}
+
+function queueOpponentReply() {
+  const token = practiceToken;
+  busy = true;
+  setPracticeMessage('對手依照錄製答案回應中…');
+  syncRecorderUI();
+  refreshHUD();
+  setTimeout(() => {
+    if (token !== practiceToken || appState !== APP_STATE.PUZZLE_PRACTICING) return;
+    try {
+      const result = applyOpponentReply(practiceState);
+      practiceState = result.practice;
+      animatePracticeMove(result);
+    } catch (error) {
+      if (!(error instanceof PuzzlePracticeError)) throw error;
+      busy = false;
+      const message = '題目資料不一致，已停止自動回應。';
+      setPracticeMessage(message, 'error');
+      syncRecorderUI();
+      refreshHUD();
+      toast(message);
+    }
+  }, 420);
+}
+
+function doPracticeMove(from, to) {
+  const result = attemptPracticeMove(practiceState, from, to);
+  practiceState = result.practice;
+  if (!result.ok) {
+    const messages = {
+      WRONG_MOVE: '這一步不是本題答案，再試一次。',
+      WRONG_SIDE: '練習時只能操作指定一方。',
+      ILLEGAL_MOVE: '此著不合法，棋盤未變更。',
+      EMPTY_SOURCE: '請選擇自己的棋子。',
+      NOT_USER_TURN: '請等待對手回應完成。',
+    };
+    const message = messages[result.error.code] || result.error.message;
+    clearSelection();
+    setPracticeMessage(message, 'error');
+    syncRecorderUI();
+    refreshHUD();
+    toast(message);
+    return;
+  }
+  setPracticeMessage('回答正確。', 'success');
+  animatePracticeMove(result);
+}
+
+function handlePracticeBoardClick(hit) {
+  if (!hit) {
+    if (selected) setPracticeMessage('此著不合法，棋盤未變更。', 'error');
+    clearSelection();
+    refreshHUD();
+    return;
+  }
+  const coordinate = hit.userData?.piece
+    ? { r: hit.userData.r, c: hit.userData.c }
+    : { r: hit.r, c: hit.c };
+  const piece = practiceState.currentBoard[coordinate.r][coordinate.c];
+
+  if (selected && legal.some((move) => move.r === coordinate.r && move.c === coordinate.c)) {
+    doPracticeMove(selected, coordinate);
+    return;
+  }
+  if (piece) {
+    if (piece.side !== practiceState.practiceSide) {
+      const message = '練習時只能操作指定一方。';
+      setPracticeMessage(message, 'error');
+      toast(message);
+      return;
+    }
+    if (selected && selected.r === coordinate.r && selected.c === coordinate.c) {
+      clearSelection();
+      refreshHUD();
+      return;
+    }
+    selectPracticePiece(coordinate.r, coordinate.c);
+    setPracticeMessage('已選取棋子，請走出本題答案。');
+    return;
+  }
+  if (selected) {
+    const message = '此著不合法，棋盤未變更。';
+    setPracticeMessage(message, 'error');
     toast(message);
   }
   clearSelection();
@@ -1350,6 +1640,11 @@ renderer.domElement.addEventListener('click', (e) => {
   }
   downXY = null;
   const hit = pick(e);
+  if (appState === APP_STATE.PUZZLE_PRACTICING) {
+    if (!busy && practiceState.currentSide === practiceState.practiceSide) handlePracticeBoardClick(hit);
+    return;
+  }
+  if (appState === APP_STATE.PUZZLE_PRACTICE_COMPLETE) return;
   if (appState === APP_STATE.PUZZLE_RECORDING) {
     if (!busy) handleRecorderBoardClick(hit);
     return;
@@ -1774,6 +2069,10 @@ btnRecorderReset.addEventListener('click', resetRecorder);
 btnRecorderFinish.addEventListener('click', finishRecorder);
 document.getElementById('btnRecorderCancel').addEventListener('click', cancelRecording);
 document.getElementById('btnRecorderExit').addEventListener('click', exitEditor);
+btnPracticeStart.addEventListener('click', startPractice);
+btnPracticeRestart.addEventListener('click', restartCurrentPractice);
+document.getElementById('btnPracticeExit').addEventListener('click', exitPractice);
+document.getElementById('btnPracticePuzzleExit').addEventListener('click', exitEditor);
 btnNew.addEventListener('click', newGame);
 btnUndo.addEventListener('click', undo);
 document.getElementById('btnSound').addEventListener('click', (e) => {

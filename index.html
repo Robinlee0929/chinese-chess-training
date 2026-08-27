@@ -208,8 +208,23 @@
             <button id="btnRecorderUndo" type="button">退一步</button>
             <button id="btnRecorderReset" type="button">重新錄製</button>
             <button id="btnRecorderFinish" type="button" class="recorder-primary">完成答案</button>
+            <button id="btnPracticeStart" type="button" class="recorder-primary hidden">開始練習</button>
             <button id="btnRecorderCancel" type="button">返回局面</button>
             <button id="btnRecorderExit" type="button">退出殺局</button>
+          </div>
+        </div>
+
+        <div id="practiceWorkspace" class="practice-workspace hidden">
+          <div class="recorder-turn"><span id="practiceTurnDot"></span><span id="practiceTurnText">紅方請走</span></div>
+          <div class="practice-stats">
+            <span id="practiceProgress">第 1 手</span>
+            <span id="practiceMistakes">錯誤 0 次</span>
+          </div>
+          <p id="practiceMessage" class="editor-message" role="status">請走出本題的第一步。</p>
+          <div class="practice-actions">
+            <button id="btnPracticeRestart" type="button">重新練習</button>
+            <button id="btnPracticeExit" type="button">返回答案</button>
+            <button id="btnPracticePuzzleExit" type="button">退出殺局</button>
           </div>
         </div>
         <p id="recorderMessage" class="editor-message" role="status">局面已確認，可以開始錄製答案。</p>
