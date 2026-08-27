@@ -415,6 +415,11 @@ aside h3 {
   outline-offset: 2px;
   z-index: 2;
 }
+.recognition-marker.type-suggested {
+  color: #241a0c;
+  border-color: #f0c463;
+  background: rgba(240, 196, 99, 0.88);
+}
 .recognition-marker.filtered { display: none; }
 .recognition-stats {
   display: grid;
@@ -452,6 +457,31 @@ aside h3 {
 }
 .recognition-picker-heading strong { color: var(--text); font-size: 12px; }
 .recognition-picker-heading span { color: var(--muted); font-size: 10.5px; text-align: right; }
+.piece-type-suggestion {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 9px;
+  border: 1px solid rgba(217, 164, 65, 0.35);
+  border-radius: 7px;
+  background: rgba(217, 164, 65, 0.08);
+}
+.piece-type-suggestion-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.piece-type-suggestion-heading strong { color: var(--gold); font-size: 12px; }
+.piece-type-suggestion-heading span,
+.piece-type-suggestion > span { color: var(--text); font-size: 10.5px; }
+.piece-type-suggestion small { color: var(--muted); font-size: 10px; line-height: 1.45; }
+.recognition-choice-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
+.recognition-choice-actions button { min-width: 0; padding: 7px 4px; font-size: 10.5px; }
 .recognition-empty-choice { padding: 7px; font-size: 11.5px; }
 .recognition-palette {
   display: grid;
@@ -484,6 +514,7 @@ aside h3 {
   gap: 7px;
 }
 .recognition-bulk-actions button { padding: 8px 6px; font-size: 11.5px; }
+.recognition-bulk-actions #btnRecognitionRematch { grid-column: 1 / -1; }
 .recognition-bulk-actions #btnRecognitionApply { grid-column: 1 / -1; }
 .photo-privacy-note {
   color: var(--muted);
@@ -1032,6 +1063,8 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
   .recognition-markers { inset: 17px; }
   .recognition-marker { width: 30px; height: 30px; font-size: 10.5px; }
   .recognition-palette { grid-template-columns: 36px repeat(7, minmax(27px, 1fr)); gap: 3px; }
+  .piece-type-suggestion-heading { align-items: flex-start; }
+  .recognition-choice-actions button { min-height: 36px; }
   #libraryPanel {
     order: 2;
     width: 100%;

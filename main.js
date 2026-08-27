@@ -75,10 +75,21 @@ import {
   RECOGNITION_SIDE_UNKNOWN,
   candidatesToEditorBoard,
   createRecognitionToken,
+  derivePatchRadius,
   isRecognitionTokenCurrent,
   recognizeIntersections,
   selectionKey,
 } from './puzzle-photo-recognition.js';
+import {
+  addTemplate,
+  createPieceTypeSessionToken,
+  createTemplateLibrary,
+  isPieceTypeSessionCurrent,
+  listTemplates,
+  normalizePiecePatch,
+  removeTemplatesForSource,
+  suggestUnresolvedPieceTypes,
+} from './puzzle-photo-piece-types.js';
 
 // ---------------- 常數 ----------------
 const CELL = 1;
@@ -527,6 +538,7 @@ let photoRecognitionVersion = 0;
 let calibrationRecognitionVersion = 0;
 let rectifiedPhotoPixels = null;
 let recognitionSession = null;
+let pieceTypeRecognitionVersion = 0;
 let selectedRecognitionKey = null;
 let recognitionUncertainOnly = false;
 
@@ -644,6 +656,12 @@ window.__chess = {
   get recognitionReviewedCount() {
     return recognitionSession ? Object.keys(recognitionSession.selections).length : 0;
   },
+  get pieceTypeTemplateCount() {
+    return recognitionSession ? listTemplates(recognitionSession.typeLibrary).length : 0;
+  },
+  get pieceTypeSuggestions() {
+    return recognitionSession ? structuredClone(recognitionSession.typeSuggestions) : null;
+  },
   setMode(m) { mode = m; const el = document.getElementById('modeSel'); if (el) el.value = m; },
   get lastResult() { return lastResult; },
   buildShareCard: (r) => buildShareCard(r || lastResult),
@@ -754,8 +772,15 @@ const recognitionReviewedCount = document.getElementById('recognitionReviewedCou
 const recognitionUncertainOnlyInput = document.getElementById('recognitionUncertainOnly');
 const recognitionSelectedCoordinate = document.getElementById('recognitionSelectedCoordinate');
 const recognitionSuggestion = document.getElementById('recognitionSuggestion');
+const recognitionTypeSuggestion = document.getElementById('recognitionTypeSuggestion');
+const recognitionTypeConfidence = document.getElementById('recognitionTypeConfidence');
+const recognitionTypeAlternatives = document.getElementById('recognitionTypeAlternatives');
+const recognitionTemplateCount = document.getElementById('recognitionTemplateCount');
 const recognitionMessage = document.getElementById('recognitionMessage');
 const btnRecognitionEmpty = document.getElementById('btnRecognitionEmpty');
+const btnRecognitionAdopt = document.getElementById('btnRecognitionAdopt');
+const btnRecognitionManual = document.getElementById('btnRecognitionManual');
+const btnRecognitionRematch = document.getElementById('btnRecognitionRematch');
 const recognitionPieceButtons = [...document.querySelectorAll('[data-recognition-side][data-recognition-type]')];
 const recognitionPalettes = [...document.querySelectorAll('.recognition-palette')];
 const btnRecognitionApply = document.getElementById('btnRecognitionApply');
@@ -1062,6 +1087,7 @@ function calibrationErrorMessage(error) {
 }
 
 function invalidateRecognition() {
+  pieceTypeRecognitionVersion++;
   rectifiedPhotoPixels = null;
   recognitionSession = null;
   selectedRecognitionKey = null;
@@ -1453,6 +1479,13 @@ function recognitionVersions() {
   };
 }
 
+function pieceTypeVersions() {
+  return {
+    ...recognitionVersions(),
+    recognitionVersion: pieceTypeRecognitionVersion,
+  };
+}
+
 function recognitionCandidateLabel(candidate) {
   const occupancy = {
     [RECOGNITION_OCCUPANCY_EMPTY]: '空',
@@ -1469,6 +1502,9 @@ function recognitionCandidateLabel(candidate) {
 
 function recognitionMarkerText(candidate, reviewed, selection) {
   if (reviewed) return selection === null ? '空' : name(selection.side, selection.type);
+  const key = selectionKey(candidate.r, candidate.c);
+  const suggestion = recognitionSession?.typeSuggestions[key];
+  if (suggestion?.status === 'suggested' && suggestion.type) return name(suggestion.side, suggestion.type);
   if (candidate.occupancy === RECOGNITION_OCCUPANCY_UNCERTAIN) return '?';
   if (candidate.occupancy === RECOGNITION_OCCUPANCY_EMPTY) return '○';
   if (candidate.suggestedSide === RED) return '紅';
@@ -1498,6 +1534,7 @@ function syncRecognitionUI() {
     marker.className = `recognition-marker candidate-${candidate.occupancy}`;
     if (candidate.suggestedSide !== RECOGNITION_SIDE_UNKNOWN) marker.classList.add(`suggested-${candidate.suggestedSide}`);
     if (reviewed) marker.classList.add('reviewed', selection === null ? 'reviewed-empty' : `reviewed-${selection.side}`);
+    if (!reviewed && recognitionSession.typeSuggestions[key]?.status === 'suggested') marker.classList.add('type-suggested');
     if (key === selectedRecognitionKey) marker.classList.add('selected');
     if (recognitionUncertainOnly && candidate.occupancy !== RECOGNITION_OCCUPANCY_UNCERTAIN) marker.classList.add('filtered');
     marker.style.left = `${(candidate.displayCol / 8) * 100}%`;
@@ -1518,13 +1555,31 @@ function syncRecognitionUI() {
     ? `交叉點 (${selectedCandidate.r},${selectedCandidate.c})`
     : '尚未選取交叉點';
   recognitionSuggestion.textContent = hasSelected ? recognitionCandidateLabel(selectedCandidate) : '請在棋盤上選一點';
+  const selectedReviewed = hasSelected && Object.prototype.hasOwnProperty.call(selections, selectedRecognitionKey);
+  const typeSuggestion = hasSelected ? recognitionSession.typeSuggestions[selectedRecognitionKey] : null;
+  const suggestionPiece = typeSuggestion?.type && typeSuggestion.side
+    ? name(typeSuggestion.side, typeSuggestion.type)
+    : null;
+  const confidenceLabel = typeSuggestion?.status === 'suggested'
+    ? (typeSuggestion.confidence >= 0.82 ? '高' : '中')
+    : (typeSuggestion?.status === 'uncertain' ? '不確定' : '資料不足');
+  recognitionTypeSuggestion.textContent = suggestionPiece
+    ? `系統建議：${suggestionPiece}`
+    : '系統建議：尚無可靠結果';
+  recognitionTypeConfidence.textContent = typeSuggestion
+    ? `${confidenceLabel}・${Math.round(typeSuggestion.confidence * 100)}%`
+    : '請先用人工確認建立本次照片的參考';
+  recognitionTypeAlternatives.textContent = typeSuggestion?.alternatives?.length
+    ? `其他可能：${typeSuggestion.alternatives.map((alternative) => `${name(alternative.side, alternative.type)} ${Math.round(alternative.score * 100)}%`).join('、')}`
+    : '其他可能：無';
+  recognitionTemplateCount.textContent = `本次參考 ${listTemplates(recognitionSession.typeLibrary).length}`;
+  btnRecognitionAdopt.disabled = selectedReviewed || typeSuggestion?.status !== 'suggested' || !suggestionPiece;
   btnRecognitionEmpty.disabled = !hasSelected;
   recognitionPieceButtons.forEach((button) => { button.disabled = !hasSelected; });
   recognitionPalettes.forEach((palette) => {
     palette.classList.toggle('suggested', hasSelected && palette.classList.contains(selectedCandidate.suggestedSide));
   });
 
-  const selectedReviewed = hasSelected && Object.prototype.hasOwnProperty.call(selections, selectedRecognitionKey);
   const selectedValue = selectedReviewed ? selections[selectedRecognitionKey] : undefined;
   btnRecognitionEmpty.classList.toggle('active', selectedValue === null);
   recognitionPieceButtons.forEach((button) => {
@@ -1549,6 +1604,7 @@ function scanRecognitionCandidates() {
     return;
   }
   try {
+    pieceTypeRecognitionVersion++;
     rectifiedPhotoPixels = createRectifiedPhotoPixels();
     recognitionCanvas.width = rectifiedPhotoPixels.width;
     recognitionCanvas.height = rectifiedPhotoPixels.height;
@@ -1561,6 +1617,10 @@ function scanRecognitionCandidates() {
       candidates,
       selections: {},
       token: createRecognitionToken(recognitionVersions()),
+      typeLibrary: createTemplateLibrary(),
+      typeSuggestions: {},
+      typePatches: {},
+      typeToken: createPieceTypeSessionToken(pieceTypeVersions()),
     };
     const firstCandidate = candidates.find((candidate) => candidate.occupancy === RECOGNITION_OCCUPANCY_UNCERTAIN)
       || candidates.find((candidate) => candidate.occupancy === RECOGNITION_OCCUPANCY_OCCUPIED)
@@ -1577,10 +1637,70 @@ function scanRecognitionCandidates() {
   }
 }
 
-function setRecognitionSelection(selection) {
+function pieceTypePatchForCandidate(candidate) {
+  if (!recognitionSession || !rectifiedPhotoPixels || !confirmedCalibration) return null;
+  const key = selectionKey(candidate.r, candidate.c);
+  if (recognitionSession.typePatches[key]) return recognitionSession.typePatches[key];
+  const point = confirmedCalibration.gridIntersections.find((entry) => entry.r === candidate.r && entry.c === candidate.c);
+  if (!point) return null;
+  const patch = normalizePiecePatch(
+    { data: rectifiedPhotoPixels.data, width: rectifiedPhotoPixels.width, height: rectifiedPhotoPixels.height },
+    point,
+    { radius: derivePatchRadius(rectifiedPhotoPixels.width, rectifiedPhotoPixels.height) },
+  );
+  recognitionSession.typePatches[key] = patch;
+  return patch;
+}
+
+function setRecognitionSelection(selection, { announceTemplate = true } = {}) {
   if (!recognitionSession || !selectedRecognitionKey) return;
+  const candidate = recognitionSession.candidates.find((entry) => selectionKey(entry.r, entry.c) === selectedRecognitionKey);
   recognitionSession.selections[selectedRecognitionKey] = selection === null ? null : { ...selection };
+  recognitionSession.typeLibrary = removeTemplatesForSource(recognitionSession.typeLibrary, selectedRecognitionKey);
+  if (selection && candidate) {
+    const patch = pieceTypePatchForCandidate(candidate);
+    if (patch) {
+      recognitionSession.typeLibrary = addTemplate(recognitionSession.typeLibrary, {
+        side: selection.side,
+        type: selection.type,
+        patch,
+        sourceKey: selectedRecognitionKey,
+        confirmedByHuman: true,
+      });
+      if (announceTemplate) toast('已將此棋子作為本次照片的辨識參考。');
+    }
+  }
   syncRecognitionUI();
+}
+
+function rematchUnresolvedPieceTypes() {
+  if (!recognitionSession) return;
+  if (!isPieceTypeSessionCurrent(recognitionSession.typeToken, pieceTypeVersions())) {
+    invalidateRecognition();
+    calibrationMode = 'reference';
+    syncPhotoUI();
+    toast('照片、校正或掃描已變更，舊辨識參考已清除。');
+    return;
+  }
+  const patches = {};
+  for (const candidate of recognitionSession.candidates) {
+    const key = selectionKey(candidate.r, candidate.c);
+    if (candidate.occupancy !== RECOGNITION_OCCUPANCY_OCCUPIED
+      || Object.prototype.hasOwnProperty.call(recognitionSession.selections, key)) continue;
+    const patch = pieceTypePatchForCandidate(candidate);
+    if (patch) patches[key] = patch;
+  }
+  recognitionSession.typeSuggestions = suggestUnresolvedPieceTypes({
+    candidates: recognitionSession.candidates,
+    selections: recognitionSession.selections,
+    patches,
+    library: recognitionSession.typeLibrary,
+  });
+  const suggestions = Object.values(recognitionSession.typeSuggestions);
+  const reliable = suggestions.filter((suggestion) => suggestion.status === 'suggested').length;
+  const uncertain = suggestions.filter((suggestion) => suggestion.status !== 'suggested').length;
+  syncRecognitionUI();
+  toast(`已重新比對未確認棋子：可靠 ${reliable}，不確定 ${uncertain}。`);
 }
 
 function markAllRecognitionEmpty() {
@@ -1588,6 +1708,8 @@ function markAllRecognitionEmpty() {
   recognitionSession.selections = Object.fromEntries(
     recognitionSession.candidates.map((candidate) => [selectionKey(candidate.r, candidate.c), null]),
   );
+  recognitionSession.typeLibrary = createTemplateLibrary();
+  recognitionSession.typeSuggestions = {};
   syncRecognitionUI();
   toast('已由你將 90 個交叉點標記為空白，可再指定棋子。');
 }
@@ -3177,8 +3299,20 @@ document.getElementById('btnRecognitionBack').addEventListener('click', () => {
   syncPhotoUI();
 });
 document.getElementById('btnRecognitionAllEmpty').addEventListener('click', markAllRecognitionEmpty);
+btnRecognitionRematch.addEventListener('click', rematchUnresolvedPieceTypes);
 btnRecognitionApply.addEventListener('click', applyRecognitionToEditor);
 btnRecognitionEmpty.addEventListener('click', () => setRecognitionSelection(null));
+btnRecognitionAdopt.addEventListener('click', () => {
+  if (!recognitionSession || !selectedRecognitionKey) return;
+  const suggestion = recognitionSession.typeSuggestions[selectedRecognitionKey];
+  if (suggestion?.status !== 'suggested' || !suggestion.side || !suggestion.type) return;
+  setRecognitionSelection({ side: suggestion.side, type: suggestion.type });
+});
+btnRecognitionManual.addEventListener('click', () => {
+  const firstEnabled = recognitionPieceButtons.find((button) => !button.disabled);
+  firstEnabled?.focus({ preventScroll: true });
+  firstEnabled?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+});
 recognitionPieceButtons.forEach((button) => {
   button.addEventListener('click', () => setRecognitionSelection({
     side: button.dataset.recognitionSide,
