@@ -36,6 +36,7 @@ import {
   restartPractice,
   exportPracticeSnapshot,
 } from './puzzle-practice.js';
+import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js';
 
 // ---------------- 常數 ----------------
 const CELL = 1;
@@ -454,6 +455,8 @@ const APP_STATE = Object.freeze({
   PUZZLE_RECORDED: 'PUZZLE_RECORDED',
   PUZZLE_PRACTICING: 'PUZZLE_PRACTICING',
   PUZZLE_PRACTICE_COMPLETE: 'PUZZLE_PRACTICE_COMPLETE',
+  PUZZLE_LIBRARY: 'PUZZLE_LIBRARY',
+  PUZZLE_VIEW: 'PUZZLE_VIEW',
 });
 let appState = APP_STATE.NORMAL_GAME;
 let editorState = null;
@@ -463,6 +466,12 @@ let recorderState = null;
 let recordedPuzzleResult = null;
 let practiceState = null;
 let practiceToken = 0;
+const puzzleStore = createPuzzleStore({ storage: window.localStorage });
+let libraryViewPuzzle = null;
+let activeSavedPuzzleId = null;
+let savedCurrentPuzzleId = null;
+let practiceReturnState = 'recorded';
+let practiceCompletionRecorded = false;
 
 const puzzleFlowActive = () => appState !== APP_STATE.NORMAL_GAME;
 const authoringActive = () => appState === APP_STATE.PUZZLE_EDITOR
@@ -476,6 +485,8 @@ const recorderBoardActive = () => appState === APP_STATE.PUZZLE_RECORDING
   || appState === APP_STATE.PUZZLE_RECORDED;
 const practiceActive = () => appState === APP_STATE.PUZZLE_PRACTICING
   || appState === APP_STATE.PUZZLE_PRACTICE_COMPLETE;
+const libraryActive = () => appState === APP_STATE.PUZZLE_LIBRARY
+  || appState === APP_STATE.PUZZLE_VIEW;
 const puzzleBoardActive = () => recorderBoardActive() || practiceActive();
 
 // ---------------- 對弈模式 / AI ----------------
@@ -587,6 +598,7 @@ const overlay = document.getElementById('overlay');
 const btnUndo = document.getElementById('btnUndo');
 const btnNew = document.getElementById('btnNew');
 const btnEditor = document.getElementById('btnEditor');
+const btnLibrary = document.getElementById('btnLibrary');
 const modeSel = document.getElementById('modeSel');
 const editorPanel = document.getElementById('editorPanel');
 const editorMessage = document.getElementById('editorMessage');
@@ -616,13 +628,35 @@ const practiceProgress = document.getElementById('practiceProgress');
 const practiceMistakes = document.getElementById('practiceMistakes');
 const practiceMessage = document.getElementById('practiceMessage');
 const btnPracticeRestart = document.getElementById('btnPracticeRestart');
+const btnPracticeExit = document.getElementById('btnPracticeExit');
+const savePuzzlePanel = document.getElementById('savePuzzlePanel');
+const puzzleTitleInput = document.getElementById('puzzleTitleInput');
+const puzzleNotesInput = document.getElementById('puzzleNotesInput');
+const btnSavePuzzle = document.getElementById('btnSavePuzzle');
+const savePuzzleMessage = document.getElementById('savePuzzleMessage');
+const libraryPanel = document.getElementById('libraryPanel');
+const libraryCount = document.getElementById('libraryCount');
+const libraryIssues = document.getElementById('libraryIssues');
+const libraryList = document.getElementById('libraryList');
+const libraryEmpty = document.getElementById('libraryEmpty');
+const libraryDetail = document.getElementById('libraryDetail');
+const libraryDetailTitle = document.getElementById('libraryDetailTitle');
+const libraryDetailMeta = document.getElementById('libraryDetailMeta');
+const libraryDetailNotes = document.getElementById('libraryDetailNotes');
+const libraryDetailSolution = document.getElementById('libraryDetailSolution');
+const btnLibraryDetailPractice = document.getElementById('btnLibraryDetailPractice');
+const btnLibraryDetailDelete = document.getElementById('btnLibraryDetailDelete');
 
 function refreshHUD() {
   const showSide = practiceActive()
     ? practiceState.currentSide
     : (recorderBoardActive()
       ? recorderState.currentSide
-      : (authoringActive() ? editorState.sideToMove : (over && winner ? winner : turn)));
+      : (authoringActive()
+        ? editorState.sideToMove
+        : (appState === APP_STATE.PUZZLE_VIEW
+          ? libraryViewPuzzle.sideToMove
+          : (over && winner ? winner : turn))));
   const isRed = showSide === RED;
   if (appState === APP_STATE.PUZZLE_EDITOR) {
     turnText.textContent = isRed ? '編輯中・紅方先行' : '編輯中・黑方先行';
@@ -638,6 +672,10 @@ function refreshHUD() {
       : '殺局練習・對手回應';
   } else if (appState === APP_STATE.PUZZLE_PRACTICE_COMPLETE) {
     turnText.textContent = '殺局練習完成';
+  } else if (appState === APP_STATE.PUZZLE_LIBRARY) {
+    turnText.textContent = '我的殺局';
+  } else if (appState === APP_STATE.PUZZLE_VIEW) {
+    turnText.textContent = `檢視・${libraryViewPuzzle.title}`;
   } else if (over) {
     turnText.textContent = winner === RED ? '紅方勝' : '黑方勝';
   } else if (aiThinking) {
@@ -656,8 +694,12 @@ function refreshHUD() {
   btnUndo.disabled = puzzleFlowActive() || history.length === 0 || busy || aiThinking;
   btnNew.disabled = puzzleFlowActive();
   modeSel.disabled = puzzleFlowActive();
-  btnEditor.textContent = puzzleFlowActive() ? '退出殺局' : '建立殺局';
-  btnEditor.setAttribute('aria-pressed', String(puzzleFlowActive()));
+  btnEditor.textContent = libraryActive() ? '建立殺局' : (puzzleFlowActive() ? '退出殺局' : '建立殺局');
+  btnEditor.disabled = libraryActive();
+  btnEditor.setAttribute('aria-pressed', String(puzzleFlowActive() && !libraryActive()));
+  btnLibrary.textContent = libraryActive() ? '返回棋局' : '我的殺局';
+  btnLibrary.disabled = puzzleFlowActive() && !libraryActive();
+  btnLibrary.setAttribute('aria-pressed', String(libraryActive()));
 }
 
 function addLog(nota, side) {
@@ -930,13 +972,19 @@ function exitEditor() {
   editorState = null;
   confirmedPosition = null;
   recorderState = null;
+  recordedPuzzleResult = null;
   practiceState = null;
+  libraryViewPuzzle = null;
+  activeSavedPuzzleId = null;
+  savedCurrentPuzzleId = null;
   busy = false;
   clearSelection();
   appEl.classList.remove('editor-active');
+  appEl.classList.remove('library-active');
   editorPanel.classList.add('hidden');
   editorPanel.classList.remove('recorder-active');
   recorderPanel.classList.add('hidden');
+  libraryPanel.classList.add('hidden');
   syncLastMoveMark();
   buildScene();
   refreshHUD();
@@ -959,6 +1007,7 @@ function activePuzzleBoard() {
   if (practiceActive()) return practiceState?.currentBoard || null;
   if (recorderBoardActive()) return recorderState?.board || null;
   if (authoringActive()) return editorState?.board || null;
+  if (appState === APP_STATE.PUZZLE_VIEW) return libraryViewPuzzle?.initialBoard || null;
   return null;
 }
 
@@ -966,6 +1015,12 @@ function setRecorderMessage(message, kind = '') {
   recorderMessage.textContent = message;
   recorderMessage.classList.toggle('success', kind === 'success');
   recorderMessage.classList.toggle('error', kind === 'error');
+}
+
+function setSavePuzzleMessage(message, kind = '') {
+  savePuzzleMessage.textContent = message;
+  savePuzzleMessage.classList.toggle('success', kind === 'success');
+  savePuzzleMessage.classList.toggle('error', kind === 'error');
 }
 
 function renderRecorderLog() {
@@ -993,6 +1048,7 @@ function syncRecorderUI() {
   practiceWorkspace.classList.toggle('hidden', !inPractice);
   recorderMessage.classList.toggle('hidden', inPractice);
   btnPracticeStart.classList.toggle('hidden', appState !== APP_STATE.PUZZLE_RECORDED);
+  savePuzzlePanel.classList.toggle('hidden', appState !== APP_STATE.PUZZLE_RECORDED);
   if (!visible) return;
 
   if (inPractice) {
@@ -1020,6 +1076,7 @@ function syncRecorderUI() {
   btnRecorderUndo.disabled = busy || recorded || recorderState.solution.length === 0;
   btnRecorderReset.disabled = busy;
   btnRecorderFinish.disabled = busy || recorded;
+  if (recorded && !puzzleTitleInput.placeholder) puzzleTitleInput.placeholder = '例如：殺局 001';
   renderRecorderLog();
 }
 
@@ -1051,6 +1108,7 @@ function syncPracticeUI() {
     : `進度 ${practiceState.currentPly} / ${practiceState.solution.length}`;
   practiceMistakes.textContent = `錯誤 ${practiceState.mistakes} 次`;
   btnPracticeRestart.disabled = busy;
+  btnPracticeExit.textContent = practiceReturnState === 'library' ? '返回題庫' : '返回答案';
 }
 
 function syncRecorderScene() {
@@ -1065,6 +1123,7 @@ function startRecording() {
   recorderState = createRecorder(confirmedPosition);
   appState = APP_STATE.PUZZLE_RECORDING;
   recordedPuzzleResult = null;
+  savedCurrentPuzzleId = null;
   clearSelection();
   setRecorderMessage('請在棋盤上走出第一著。');
   syncRecorderScene();
@@ -1090,6 +1149,7 @@ function resetRecorder() {
   if (!recorderState || busy) return;
   recorderState = resetRecording(recorderState);
   recordedPuzzleResult = null;
+  savedCurrentPuzzleId = null;
   appState = APP_STATE.PUZZLE_RECORDING;
   clearSelection();
   syncRecorderScene();
@@ -1126,6 +1186,11 @@ function finishRecorder() {
   }
   recorderState = result.recorder;
   recordedPuzzleResult = exportRecordedResult(result.result);
+  savedCurrentPuzzleId = null;
+  puzzleTitleInput.value = '';
+  puzzleNotesInput.value = '';
+  btnSavePuzzle.disabled = false;
+  setSavePuzzleMessage('輸入名稱後即可儲存到此瀏覽器。');
   appState = APP_STATE.PUZZLE_RECORDED;
   clearSelection();
   const invariant = checkBoardMeshInvariant(recorderState.board);
@@ -1134,6 +1199,210 @@ function finishRecorder() {
   syncRecorderUI();
   refreshHUD();
   toast('答案有效：已形成將死');
+}
+
+function storeErrorMessage(error) {
+  if (!(error instanceof PuzzleStoreError)) return '儲存空間發生未知錯誤。';
+  if (error.code === 'EMPTY_TITLE') return '請輸入題目名稱。';
+  if (error.code === 'STORAGE_CORRUPT') return '題庫含有損壞資料，為避免覆寫，這次操作已取消。';
+  if (error.code === 'STORE_WRITE_FAILED') return '無法寫入瀏覽器儲存空間，請確認空間或隱私設定。';
+  return `題庫操作失敗：${error.message}`;
+}
+
+function saveCurrentPuzzle() {
+  if (appState !== APP_STATE.PUZZLE_RECORDED || !recordedPuzzleResult || savedCurrentPuzzleId) return;
+  if (!puzzleTitleInput.value.trim()) {
+    setSavePuzzleMessage('請輸入題目名稱。', 'error');
+    puzzleTitleInput.focus();
+    return;
+  }
+  try {
+    const saved = puzzleStore.savePuzzle({
+      ...recordedPuzzleResult,
+      title: puzzleTitleInput.value,
+      notes: puzzleNotesInput.value,
+    });
+    savedCurrentPuzzleId = saved.id;
+    activeSavedPuzzleId = saved.id;
+    btnSavePuzzle.disabled = true;
+    setSavePuzzleMessage(`已儲存「${saved.title}」。`, 'success');
+    toast('題目已儲存到我的殺局。');
+  } catch (error) {
+    const message = storeErrorMessage(error);
+    setSavePuzzleMessage(message, 'error');
+    toast(message);
+  }
+}
+
+function formatStoredDate(timestamp) {
+  try {
+    return new Intl.DateTimeFormat('zh-TW', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(timestamp));
+  } catch {
+    return timestamp;
+  }
+}
+
+function appendDetailTerm(label, value) {
+  const term = document.createElement('dt');
+  term.textContent = label;
+  const description = document.createElement('dd');
+  description.textContent = value;
+  libraryDetailMeta.append(term, description);
+}
+
+function renderLibraryDetail(puzzle) {
+  libraryDetailTitle.textContent = puzzle.title;
+  libraryDetailMeta.replaceChildren();
+  appendDetailTerm('先行方', puzzle.sideToMove === RED ? '紅方' : '黑方');
+  appendDetailTerm('答案長度', `${puzzle.solution.length} 著`);
+  appendDetailTerm('練習次數', `${puzzle.practiceCount} 次`);
+  appendDetailTerm('完成次數', `${puzzle.completedCount} 次`);
+  appendDetailTerm('建立時間', formatStoredDate(puzzle.createdAt));
+  appendDetailTerm('最近練習', puzzle.lastPracticedAt ? formatStoredDate(puzzle.lastPracticedAt) : '尚未練習');
+  libraryDetailNotes.textContent = puzzle.notes || '沒有筆記。';
+  libraryDetailSolution.replaceChildren();
+  const replayBoard = puzzle.initialBoard.map((row) => row.map((piece) => (piece ? { ...piece } : null)));
+  puzzle.solution.forEach((move) => {
+    const item = document.createElement('li');
+    item.textContent = notation(replayBoard, move.from, move.to);
+    libraryDetailSolution.appendChild(item);
+    applyMove(replayBoard, move.from, move.to);
+  });
+}
+
+function createLibraryCard(puzzle) {
+  const card = document.createElement('article');
+  card.className = 'library-card';
+  card.dataset.puzzleId = puzzle.id;
+  const title = document.createElement('h3');
+  title.textContent = puzzle.title;
+  const meta = document.createElement('p');
+  meta.className = 'library-card-meta';
+  meta.textContent = `${puzzle.sideToMove === RED ? '紅方' : '黑方'}先行・${puzzle.solution.length} 著・練習 ${puzzle.practiceCount}・完成 ${puzzle.completedCount}`;
+  const actions = document.createElement('div');
+  actions.className = 'library-card-actions';
+  for (const [action, label, className] of [
+    ['view', '檢視', ''],
+    ['practice', '練習', 'recorder-primary'],
+    ['delete', '刪除', 'danger'],
+  ]) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.libraryAction = action;
+    button.textContent = label;
+    if (className) button.className = className;
+    actions.appendChild(button);
+  }
+  card.append(title, meta, actions);
+  return card;
+}
+
+function renderLibraryList() {
+  const loaded = puzzleStore.loadAll();
+  libraryCount.textContent = `${loaded.puzzles.length} 題`;
+  libraryIssues.classList.toggle('hidden', loaded.issues.length === 0);
+  libraryIssues.textContent = loaded.issues.length
+    ? `有 ${loaded.issues.length} 筆資料無法讀取；有效題目仍可檢視，但題庫不會被覆寫。`
+    : '';
+  libraryList.replaceChildren(...loaded.puzzles.map(createLibraryCard));
+  libraryList.classList.remove('hidden');
+  libraryEmpty.classList.toggle('hidden', loaded.puzzles.length > 0);
+  libraryDetail.classList.add('hidden');
+  return loaded;
+}
+
+function showLibraryList() {
+  appState = APP_STATE.PUZZLE_LIBRARY;
+  libraryViewPuzzle = null;
+  activeSavedPuzzleId = null;
+  clearSelection();
+  buildScene();
+  renderLibraryList();
+  refreshHUD();
+}
+
+function openLibraryPuzzle(id) {
+  const puzzle = puzzleStore.getPuzzle(id);
+  if (!puzzle) {
+    toast('找不到這道題目，可能已被刪除。');
+    showLibraryList();
+    return;
+  }
+  appState = APP_STATE.PUZZLE_VIEW;
+  libraryViewPuzzle = puzzle;
+  activeSavedPuzzleId = puzzle.id;
+  libraryList.classList.add('hidden');
+  libraryEmpty.classList.add('hidden');
+  libraryDetail.classList.remove('hidden');
+  renderLibraryDetail(puzzle);
+  clearSelection();
+  rebuildPieceMeshes(puzzle.initialBoard, false);
+  const invariant = checkBoardMeshInvariant(puzzle.initialBoard);
+  if (!invariant.ok) throw new Error(`Library board/mesh invariant failed: ${invariant.errors.join(' ')}`);
+  refreshHUD();
+}
+
+function enterLibrary(preferredId = null) {
+  if (busy || (puzzleFlowActive() && appState !== APP_STATE.PUZZLE_RECORDED)) return;
+  aiToken++;
+  practiceToken++;
+  aiThinking = false;
+  tweens.length = 0;
+  clearSelection();
+  appState = APP_STATE.PUZZLE_LIBRARY;
+  appEl.classList.remove('editor-active');
+  appEl.classList.add('library-active');
+  editorPanel.classList.add('hidden');
+  recorderPanel.classList.add('hidden');
+  libraryPanel.classList.remove('hidden');
+  banner.classList.add('hidden');
+  renderLibraryList();
+  const id = preferredId || savedCurrentPuzzleId;
+  if (id) openLibraryPuzzle(id);
+  else {
+    buildScene();
+    refreshHUD();
+  }
+}
+
+function deleteStoredPuzzle(id) {
+  const puzzle = puzzleStore.getPuzzle(id);
+  if (!puzzle) {
+    showLibraryList();
+    return;
+  }
+  if (!window.confirm(`確定要刪除「${puzzle.title}」嗎？此操作無法復原。`)) return;
+  try {
+    if (!puzzleStore.deletePuzzle(id)) return;
+    if (savedCurrentPuzzleId === id) savedCurrentPuzzleId = null;
+    toast('題目已刪除。');
+    showLibraryList();
+  } catch (error) {
+    const message = storeErrorMessage(error);
+    libraryIssues.textContent = message;
+    libraryIssues.classList.remove('hidden');
+    toast(message);
+  }
+}
+
+function markPracticeStarted(id) {
+  if (!id) return true;
+  try {
+    return !!puzzleStore.markPracticeStarted(id);
+  } catch (error) {
+    toast(storeErrorMessage(error));
+    return false;
+  }
+}
+
+function markPracticeCompleted(id) {
+  if (!id || practiceCompletionRecorded) return;
+  try {
+    puzzleStore.markPracticeCompleted(id);
+    practiceCompletionRecorded = true;
+  } catch (error) {
+    toast(storeErrorMessage(error));
+  }
 }
 
 function selectRecorderPiece(r, c) {
@@ -1247,6 +1516,11 @@ function startPractice() {
     toast(message);
     return;
   }
+  const savedId = savedCurrentPuzzleId;
+  if (savedId && !markPracticeStarted(savedId)) return;
+  activeSavedPuzzleId = savedId;
+  practiceReturnState = 'recorded';
+  practiceCompletionRecorded = false;
   practiceToken++;
   appState = APP_STATE.PUZZLE_PRACTICING;
   clearSelection();
@@ -1256,12 +1530,47 @@ function startPractice() {
   refreshHUD();
 }
 
+function startSavedPractice(id) {
+  const puzzle = puzzleStore.getPuzzle(id);
+  if (!puzzle || busy) {
+    if (!puzzle) toast('找不到這道題目，可能已被刪除。');
+    return;
+  }
+  let nextPractice;
+  try {
+    nextPractice = createPractice(puzzle);
+  } catch (error) {
+    if (!(error instanceof PuzzlePracticeError)) throw error;
+    toast(`無法開始練習：${error.message}`);
+    return;
+  }
+  if (!markPracticeStarted(id)) return;
+  practiceState = nextPractice;
+  practiceToken++;
+  practiceReturnState = 'library';
+  practiceCompletionRecorded = false;
+  activeSavedPuzzleId = id;
+  libraryViewPuzzle = puzzle;
+  appState = APP_STATE.PUZZLE_PRACTICING;
+  appEl.classList.remove('library-active');
+  appEl.classList.add('editor-active');
+  libraryPanel.classList.add('hidden');
+  editorPanel.classList.remove('hidden');
+  clearSelection();
+  setPracticeMessage('請走出本題的第一步。');
+  syncPracticeScene();
+  syncRecorderUI();
+  refreshHUD();
+}
+
 function restartCurrentPractice() {
   if (!practiceState) return;
+  if (activeSavedPuzzleId && !markPracticeStarted(activeSavedPuzzleId)) return;
   practiceToken++;
   tweens.length = 0;
   busy = false;
   practiceState = restartPractice(practiceState);
+  practiceCompletionRecorded = false;
   appState = APP_STATE.PUZZLE_PRACTICING;
   clearSelection();
   syncPracticeScene();
@@ -1271,11 +1580,24 @@ function restartCurrentPractice() {
 }
 
 function exitPractice() {
-  if (!practiceActive() || !recorderState) return;
+  if (!practiceActive()) return;
   practiceToken++;
   tweens.length = 0;
   busy = false;
   practiceState = null;
+  if (practiceReturnState === 'library') {
+    const returnId = activeSavedPuzzleId;
+    appState = APP_STATE.PUZZLE_LIBRARY;
+    appEl.classList.remove('editor-active');
+    appEl.classList.add('library-active');
+    editorPanel.classList.add('hidden');
+    recorderPanel.classList.add('hidden');
+    libraryPanel.classList.remove('hidden');
+    renderLibraryList();
+    openLibraryPuzzle(returnId);
+    return;
+  }
+  if (!recorderState) return;
   appState = APP_STATE.PUZZLE_RECORDED;
   clearSelection();
   syncRecorderScene();
@@ -1302,6 +1624,7 @@ function completePractice() {
   clearSelection();
   const invariant = checkBoardMeshInvariant(practiceState.currentBoard);
   if (!invariant.ok) throw new Error(`Practice board/mesh invariant failed: ${invariant.errors.join(' ')}`);
+  markPracticeCompleted(activeSavedPuzzleId);
   setPracticeMessage('完成！成功走出本題殺局', 'success');
   syncRecorderUI();
   refreshHUD();
@@ -1650,6 +1973,7 @@ renderer.domElement.addEventListener('click', (e) => {
     return;
   }
   if (appState === APP_STATE.PUZZLE_RECORDED) return;
+  if (libraryActive()) return;
   if (authoringActive()) {
     handleEditorBoardClick(hit);
     return;
@@ -1998,6 +2322,10 @@ btnEditor.addEventListener('click', () => {
   if (puzzleFlowActive()) exitEditor();
   else enterEditor();
 });
+btnLibrary.addEventListener('click', () => {
+  if (libraryActive()) exitEditor();
+  else enterLibrary();
+});
 editorPieceButtons.forEach((button) => {
   button.addEventListener('click', () => {
     setEditorTool({
@@ -2067,12 +2395,27 @@ document.getElementById('btnRecorderStart').addEventListener('click', startRecor
 btnRecorderUndo.addEventListener('click', undoRecorder);
 btnRecorderReset.addEventListener('click', resetRecorder);
 btnRecorderFinish.addEventListener('click', finishRecorder);
+btnSavePuzzle.addEventListener('click', saveCurrentPuzzle);
+document.getElementById('btnOpenLibrary').addEventListener('click', () => enterLibrary(savedCurrentPuzzleId));
 document.getElementById('btnRecorderCancel').addEventListener('click', cancelRecording);
 document.getElementById('btnRecorderExit').addEventListener('click', exitEditor);
 btnPracticeStart.addEventListener('click', startPractice);
 btnPracticeRestart.addEventListener('click', restartCurrentPractice);
-document.getElementById('btnPracticeExit').addEventListener('click', exitPractice);
+btnPracticeExit.addEventListener('click', exitPractice);
 document.getElementById('btnPracticePuzzleExit').addEventListener('click', exitEditor);
+libraryList.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-library-action]');
+  const card = button?.closest('[data-puzzle-id]');
+  if (!button || !card) return;
+  const { puzzleId } = card.dataset;
+  if (button.dataset.libraryAction === 'view') openLibraryPuzzle(puzzleId);
+  else if (button.dataset.libraryAction === 'practice') startSavedPractice(puzzleId);
+  else if (button.dataset.libraryAction === 'delete') deleteStoredPuzzle(puzzleId);
+});
+document.getElementById('btnLibraryBack').addEventListener('click', showLibraryList);
+btnLibraryDetailPractice.addEventListener('click', () => startSavedPractice(activeSavedPuzzleId));
+btnLibraryDetailDelete.addEventListener('click', () => deleteStoredPuzzle(activeSavedPuzzleId));
+document.getElementById('btnLibraryExit').addEventListener('click', exitEditor);
 btnNew.addEventListener('click', newGame);
 btnUndo.addEventListener('click', undo);
 document.getElementById('btnSound').addEventListener('click', (e) => {

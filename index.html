@@ -94,6 +94,7 @@
         <option value="pvp">雙人對弈</option>
       </select>
       <button id="btnEditor" type="button" aria-pressed="false">建立殺局</button>
+      <button id="btnLibrary" type="button" aria-pressed="false">我的殺局</button>
       <button id="btnUndo" type="button">悔棋</button>
       <button id="btnNew" type="button">新對局</button>
       <button id="btnSound" type="button" aria-pressed="true">音效：開</button>
@@ -212,6 +213,17 @@
             <button id="btnRecorderCancel" type="button">返回局面</button>
             <button id="btnRecorderExit" type="button">退出殺局</button>
           </div>
+          <div id="savePuzzlePanel" class="save-puzzle-panel hidden">
+            <label for="puzzleTitleInput">題目名稱</label>
+            <input id="puzzleTitleInput" type="text" maxlength="80" placeholder="例如：殺局 001">
+            <label for="puzzleNotesInput">筆記（選填）</label>
+            <textarea id="puzzleNotesInput" rows="2" maxlength="500" placeholder="記錄這題的重點"></textarea>
+            <div class="save-puzzle-actions">
+              <button id="btnSavePuzzle" type="button" class="recorder-primary">儲存題目</button>
+              <button id="btnOpenLibrary" type="button">我的殺局</button>
+            </div>
+            <p id="savePuzzleMessage" class="editor-message" role="status">輸入名稱後即可儲存到此瀏覽器。</p>
+          </div>
         </div>
 
         <div id="practiceWorkspace" class="practice-workspace hidden">
@@ -229,6 +241,34 @@
         </div>
         <p id="recorderMessage" class="editor-message" role="status">局面已確認，可以開始錄製答案。</p>
       </section>
+    </aside>
+
+    <aside id="libraryPanel" class="hidden" aria-label="我的殺局">
+      <div class="library-heading">
+        <div>
+          <h2>我的殺局</h2>
+          <p>儲存在此瀏覽器的題目</p>
+        </div>
+        <span id="libraryCount" class="editor-badge">0 題</span>
+      </div>
+      <p id="libraryIssues" class="library-issues hidden" role="status"></p>
+      <div id="libraryList"></div>
+      <p id="libraryEmpty">尚未儲存任何殺局。</p>
+      <section id="libraryDetail" class="library-detail hidden">
+        <button id="btnLibraryBack" type="button">← 返回列表</button>
+        <h3 id="libraryDetailTitle"></h3>
+        <dl id="libraryDetailMeta"></dl>
+        <p id="libraryDetailNotes"></p>
+        <div class="library-solution">
+          <h4>錄製答案</h4>
+          <ol id="libraryDetailSolution"></ol>
+        </div>
+        <div class="library-detail-actions">
+          <button id="btnLibraryDetailPractice" type="button" class="recorder-primary">開始練習</button>
+          <button id="btnLibraryDetailDelete" type="button" class="danger">刪除</button>
+        </div>
+      </section>
+      <button id="btnLibraryExit" type="button">返回棋局</button>
     </aside>
 
     <div id="stage"></div>
