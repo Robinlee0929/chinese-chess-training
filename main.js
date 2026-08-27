@@ -501,7 +501,7 @@ window.__chess = {
   newGame,
   undo,
   doMove,
-  camera, renderer, scene,
+  camera, renderer, scene, controls,
 };
 
 const turnText = document.getElementById('turnText');
@@ -780,7 +780,7 @@ function pick(event) {
 
 renderer.domElement.addEventListener('pointermove', (e) => {
   const hit = pick(e);
-  renderer.domElement.style.cursor = hit ? 'pointer' : 'grab';
+  renderer.domElement.style.cursor = hit ? 'pointer' : (viewLocked ? 'default' : 'grab');
 });
 
 let downXY = null;
@@ -1141,14 +1141,30 @@ document.getElementById('btnSound').addEventListener('click', (e) => {
   e.currentTarget.textContent = muted ? '音效：關' : '音效：開';
   e.currentTarget.setAttribute('aria-pressed', String(!muted));
 });
-document.getElementById('btnView').addEventListener('click', () => {
+function goHome(done) {
   const camFrom = camera.position.clone();
   const tgtFrom = controls.target.clone();
   tween(650, (k) => {
     camera.position.lerpVectors(camFrom, HOME.pos, k);
     controls.target.lerpVectors(tgtFrom, HOME.tgt, k);
-  });
+  }, done);
+}
+document.getElementById('btnView').addEventListener('click', () => goHome());
+
+// 固定視角：鎖定鏡頭後拖曳／滾輪都不再改變視角（Issue #2）
+let viewLocked = false;
+const btnLock = document.getElementById('btnLock');
+function syncLockUI() {
+  controls.enabled = !viewLocked;
+  btnLock.textContent = viewLocked ? '固定視角：開' : '固定視角：關';
+  btnLock.setAttribute('aria-pressed', String(viewLocked));
+}
+btnLock.addEventListener('click', () => {
+  viewLocked = !viewLocked;
+  syncLockUI();
+  if (viewLocked) goHome(); // 鎖定時先回到標準機位再凍結
 });
+syncLockUI();
 document.getElementById('btnAgain').addEventListener('click', newGame);
 
 // 全螢幕（含 Safari webkit 前綴）
@@ -1192,7 +1208,7 @@ function tick(now) {
     const s = 1 + Math.sin(now * 0.006) * 0.05;
     selRing.scale.set(s, s, 1);
   }
-  controls.update();
+  if (!viewLocked) controls.update(); // 鎖定時不套用控制器更新，慣性晃動一併凍結
   renderer.render(scene, camera);
 }
 renderer.setAnimationLoop(tick);
