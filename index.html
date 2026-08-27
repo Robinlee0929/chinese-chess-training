@@ -184,6 +184,36 @@
         <button id="btnEditorExit" type="button">退出編輯</button>
       </div>
       <p id="editorMessage" class="editor-message" role="status">選擇棋子後點擊空交叉點即可放置。</p>
+
+      <section id="recorderPanel" class="recorder-panel hidden" aria-label="殺局答案錄製器">
+        <div class="recorder-heading">
+          <div>
+            <h2 id="recorderTitle">答案錄製</h2>
+            <p id="recorderSubtitle">局面已確認，可以開始錄製。</p>
+          </div>
+          <span id="recorderBadge" class="editor-badge">準備錄製</span>
+        </div>
+
+        <div id="recorderReady">
+          <p class="editor-hint">開始後請直接在棋盤走出已知答案。每一步都會依中國象棋規則驗證。</p>
+          <button id="btnRecorderStart" type="button" class="recorder-primary">開始錄製答案</button>
+        </div>
+
+        <div id="recorderWorkspace" class="hidden">
+          <div class="recorder-turn"><span id="recorderTurnDot"></span><span id="recorderTurnText">紅方行棋</span></div>
+          <h3>已錄製答案</h3>
+          <ol id="recorderLog"></ol>
+          <p id="recorderEmpty">尚未錄製任何著法。</p>
+          <div class="recorder-actions">
+            <button id="btnRecorderUndo" type="button">退一步</button>
+            <button id="btnRecorderReset" type="button">重新錄製</button>
+            <button id="btnRecorderFinish" type="button" class="recorder-primary">完成答案</button>
+            <button id="btnRecorderCancel" type="button">返回局面</button>
+            <button id="btnRecorderExit" type="button">退出殺局</button>
+          </div>
+        </div>
+        <p id="recorderMessage" class="editor-message" role="status">局面已確認，可以開始錄製答案。</p>
+      </section>
     </aside>
 
     <div id="stage"></div>
