@@ -1147,6 +1147,9 @@ function goHome(done) {
   tween(650, (k) => {
     camera.position.lerpVectors(camFrom, HOME.pos, k);
     controls.target.lerpVectors(tgtFrom, HOME.tgt, k);
+    // 鎖定期間 tick() 跳過 controls.update()（其內部才會 lookAt），
+    // 補間途中需自行更新相機朝向，否則抵達 HOME 後視線方向是舊的
+    camera.lookAt(controls.target);
   }, done);
 }
 document.getElementById('btnView').addEventListener('click', () => goHome());
