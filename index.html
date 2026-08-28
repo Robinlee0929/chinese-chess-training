@@ -335,34 +335,29 @@
           <h3>棋子候選與人工確認</h3>
           <span id="recognitionCountBadge">90 點</span>
         </div>
-        <p class="recognition-instruction">先人工確認幾枚清楚棋子作為本次照片的參考，再重新比對未確認棋子。系統只建議，確切內容仍須由你採用或手動指定。</p>
-        <div class="recognition-board-shell">
-          <canvas id="recognitionCanvas" width="480" height="540" aria-label="透視校正棋盤照片"></canvas>
-          <div id="recognitionMarkers" class="recognition-markers" aria-label="九十個可編輯候選交叉點"></div>
+        <p class="recognition-instruction">先接受明顯空位，再逐一指定棋子或空白。每次確認會跳到下一個未確認位置；你隨時可以點棋盤改正。</p>
+        <div class="review-progress" role="status" aria-live="polite">
+          <strong id="recognitionReviewedCount">已確認 0 / 0</strong>
+          <span id="recognitionRemainingCount">剩餘 0</span>
         </div>
-        <div class="recognition-stats" aria-label="候選摘要">
-          <span id="recognitionOccupiedCount">有子 0</span>
-          <span id="recognitionUncertainCount">不確定 0</span>
-          <span id="recognitionReviewedCount">已確認 0/90</span>
+        <div class="recognition-bulk-actions review-empty-actions">
+          <button id="btnRecognitionAcceptEmpty" type="button">接受 0 個明顯空位</button>
+          <button id="btnRecognitionUndoEmpty" type="button" disabled>撤回批次空位</button>
         </div>
-        <label class="recognition-filter"><input id="recognitionUncertainOnly" type="checkbox"> 只顯示不確定候選</label>
-        <section class="recognition-picker" aria-label="所選交叉點的確切內容">
-          <div class="recognition-picker-heading">
-            <strong id="recognitionSelectedCoordinate">尚未選取交叉點</strong>
-            <span id="recognitionSuggestion">請在棋盤上選一點</span>
-          </div>
-          <div class="piece-type-suggestion" aria-live="polite">
-            <div class="piece-type-suggestion-heading">
-              <strong id="recognitionTypeSuggestion">系統建議：尚無可靠結果</strong>
-              <span id="recognitionTemplateCount">本次參考 0</span>
+        <p class="review-empty-note">僅接受高信心空位，不含不確定位置，不會覆寫已確認棋子。套用前可撤回。</p>
+        <label class="recognition-filter"><input id="recognitionUnresolvedOnly" type="checkbox"> 只看未確認</label>
+        <section id="recognitionPicker" class="recognition-picker" aria-label="所選交叉點的確切內容">
+          <div class="review-target">
+            <canvas id="recognitionTargetCanvas" width="112" height="112" aria-label="目前交叉點的照片放大"></canvas>
+            <div class="recognition-picker-heading">
+              <strong id="recognitionSelectedCoordinate">尚未選取交叉點</strong>
+              <span id="recognitionSuggestion">請在棋盤上選一點</span>
             </div>
-            <span id="recognitionTypeConfidence">請先用人工確認建立本次照片的參考</span>
-            <small id="recognitionTypeAlternatives">其他可能：無</small>
           </div>
-          <div class="recognition-choice-actions">
-            <button id="btnRecognitionAdopt" type="button" class="calibration-primary" disabled>採用建議</button>
-            <button id="btnRecognitionManual" type="button">手動選擇</button>
-            <button id="btnRecognitionEmpty" type="button" class="recognition-empty-choice">標記空白</button>
+          <div class="review-navigation" aria-label="人工確認導覽">
+            <button id="btnReviewPrevious" type="button">上一個</button>
+            <button id="btnReviewNext" type="button">下一個</button>
+            <button id="btnReviewUnresolved" type="button">下一個未確認</button>
           </div>
           <div class="recognition-palette red" aria-label="指定紅方棋子">
             <span>紅方</span>
@@ -384,15 +379,42 @@
             <button type="button" data-recognition-side="black" data-recognition-type="C">砲</button>
             <button type="button" data-recognition-side="black" data-recognition-type="P">卒</button>
           </div>
+          <button id="btnRecognitionEmpty" type="button" class="recognition-empty-choice">空白</button>
+          <div id="recognitionTypeCard" class="piece-type-suggestion hidden" aria-live="polite">
+            <strong id="recognitionTypeSuggestion"></strong>
+            <span id="recognitionTypeConfidence"></span>
+            <small>僅供參考，是否採用由你決定。</small>
+            <div class="recognition-choice-actions">
+              <button id="btnRecognitionAdopt" type="button" class="calibration-primary" disabled>採用</button>
+              <button id="btnRecognitionManual" type="button">手動選擇</button>
+            </div>
+          </div>
         </section>
-        <p id="recognitionMessage" class="calibration-message" role="status">請逐點確認，或先將全部標記為空白再放置棋子。</p>
+        <div class="recognition-board-shell">
+          <canvas id="recognitionCanvas" width="480" height="540" aria-label="透視校正棋盤照片"></canvas>
+          <div id="recognitionMarkers" class="recognition-markers" aria-label="九十個可編輯候選交叉點"></div>
+        </div>
+        <p class="review-marker-legend">● 有子　? 不確定　○ 未確認空位　空 已確認空白　字 已確認棋子　雙框 目前位置</p>
+        <div class="recognition-stats" aria-label="確認工作階段摘要">
+          <span id="recognitionOccupiedCount">偵測有子 0</span>
+          <span id="recognitionUncertainCount">不確定 0</span>
+          <span id="recognitionBulkCount">批次空位 0</span>
+          <span id="recognitionManualCount">人工棋子 0</span>
+        </div>
+        <p id="recognitionKingSummary" class="review-king-summary" role="status">紅帥：0　黑將：0</p>
+        <p id="recognitionMessage" class="calibration-message" role="status">請完成待確認位置。</p>
         <div class="recognition-bulk-actions">
-          <button id="btnRecognitionAllEmpty" type="button">全部標記為空白</button>
-          <button id="btnRecognitionRescan" type="button">重新掃描</button>
-          <button id="btnRecognitionRematch" type="button">重新比對未確認棋子</button>
+          <button id="btnRecognitionReset" type="button">重設人工確認</button>
+          <button id="btnRecognitionRescan" type="button">重新掃描（保留確認）</button>
           <button id="btnRecognitionBack" type="button">返回照片</button>
           <button id="btnRecognitionApply" type="button" class="calibration-primary" disabled>套用到編輯棋盤</button>
         </div>
+        <details class="review-optional-assistance">
+          <summary>選用：棋子種類建議</summary>
+          <p>人工確認的棋子可作為本次照片參考；沒有可靠建議時，直接手動選擇即可。</p>
+          <span id="recognitionTemplateCount">本次參考 0</span>
+          <button id="btnRecognitionRematch" type="button">重新比對未確認棋子</button>
+        </details>
         <p class="photo-privacy-note">照片、像素、裁切區、辨識參考與建議只存在此分頁記憶體中，不會上傳、寫入題目或跨照片保留。</p>
       </section>
     </aside>

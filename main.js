@@ -73,7 +73,6 @@ import {
   RECOGNITION_OCCUPANCY_OCCUPIED,
   RECOGNITION_OCCUPANCY_UNCERTAIN,
   RECOGNITION_SIDE_UNKNOWN,
-  candidatesToEditorBoard,
   createRecognitionToken,
   derivePatchRadius,
   isRecognitionTokenCurrent,
@@ -90,6 +89,12 @@ import {
   removeTemplatesForSource,
   suggestUnresolvedPieceTypes,
 } from './puzzle-photo-piece-types.js';
+import {
+  UNREVIEWED, PuzzlePhotoReviewError,
+  createReviewState, buildReviewQueue, selectReviewCandidate, confirmEmpty, confirmPiece,
+  nextCandidate, previousCandidate, nextUnresolved, acceptHighConfidenceEmpty,
+  undoBulkEmpty, resetReview, rescanReview, reviewProgress, confirmedSelections, buildReviewedBoard,
+} from './puzzle-photo-review.js';
 
 // ---------------- 常數 ----------------
 const CELL = 1;
@@ -540,7 +545,7 @@ let rectifiedPhotoPixels = null;
 let recognitionSession = null;
 let pieceTypeRecognitionVersion = 0;
 let selectedRecognitionKey = null;
-let recognitionUncertainOnly = false;
+let recognitionUnresolvedOnly = false;
 
 const puzzleFlowActive = () => appState !== APP_STATE.NORMAL_GAME;
 const authoringActive = () => appState === APP_STATE.PUZZLE_EDITOR
@@ -769,12 +774,20 @@ const recognitionMarkers = document.getElementById('recognitionMarkers');
 const recognitionOccupiedCount = document.getElementById('recognitionOccupiedCount');
 const recognitionUncertainCount = document.getElementById('recognitionUncertainCount');
 const recognitionReviewedCount = document.getElementById('recognitionReviewedCount');
-const recognitionUncertainOnlyInput = document.getElementById('recognitionUncertainOnly');
+const recognitionUnresolvedOnlyInput = document.getElementById('recognitionUnresolvedOnly');
 const recognitionSelectedCoordinate = document.getElementById('recognitionSelectedCoordinate');
 const recognitionSuggestion = document.getElementById('recognitionSuggestion');
 const recognitionTypeSuggestion = document.getElementById('recognitionTypeSuggestion');
 const recognitionTypeConfidence = document.getElementById('recognitionTypeConfidence');
-const recognitionTypeAlternatives = document.getElementById('recognitionTypeAlternatives');
+const recognitionTypeCard = document.getElementById('recognitionTypeCard');
+const recognitionTargetCanvas = document.getElementById('recognitionTargetCanvas');
+const recognitionPicker = document.getElementById('recognitionPicker');
+const recognitionRemainingCount = document.getElementById('recognitionRemainingCount');
+const recognitionBulkCount = document.getElementById('recognitionBulkCount');
+const recognitionManualCount = document.getElementById('recognitionManualCount');
+const recognitionKingSummary = document.getElementById('recognitionKingSummary');
+const btnRecognitionAcceptEmpty = document.getElementById('btnRecognitionAcceptEmpty');
+const btnRecognitionUndoEmpty = document.getElementById('btnRecognitionUndoEmpty');
 const recognitionTemplateCount = document.getElementById('recognitionTemplateCount');
 const recognitionMessage = document.getElementById('recognitionMessage');
 const btnRecognitionEmpty = document.getElementById('btnRecognitionEmpty');
@@ -1091,7 +1104,7 @@ function invalidateRecognition() {
   rectifiedPhotoPixels = null;
   recognitionSession = null;
   selectedRecognitionKey = null;
-  recognitionUncertainOnly = false;
+  recognitionUnresolvedOnly = false;
 }
 
 function invalidateRecognitionForCalibrationChange() {
@@ -1461,6 +1474,7 @@ function confirmCalibrationResult() {
 }
 
 function recognitionErrorMessage(error) {
+  if (error instanceof PuzzlePhotoReviewError) return error.message;
   if (!(error instanceof PuzzlePhotoRecognitionError)) return '無法掃描棋子候選，請重新校正後再試。';
   if (error.code === 'UNREVIEWED_INTERSECTION') return `尚有交叉點未確認：(${error.r},${error.c})。`;
   return `棋子候選掃描失敗：${error.message}`;
@@ -1502,49 +1516,59 @@ function recognitionCandidateLabel(candidate) {
 
 function recognitionMarkerText(candidate, reviewed, selection) {
   if (reviewed) return selection === null ? '空' : name(selection.side, selection.type);
-  const key = selectionKey(candidate.r, candidate.c);
-  const suggestion = recognitionSession?.typeSuggestions[key];
-  if (suggestion?.status === 'suggested' && suggestion.type) return name(suggestion.side, suggestion.type);
   if (candidate.occupancy === RECOGNITION_OCCUPANCY_UNCERTAIN) return '?';
   if (candidate.occupancy === RECOGNITION_OCCUPANCY_EMPTY) return '○';
-  if (candidate.suggestedSide === RED) return '紅';
-  if (candidate.suggestedSide === BLACK) return '黑';
   return '●';
 }
 
 function syncRecognitionUI() {
   if (!recognitionSession || calibrationMode !== 'recognition') return;
-  const { candidates, selections } = recognitionSession;
-  const reviewedCount = Object.keys(selections).length;
-  const occupiedCount = candidates.filter((candidate) => candidate.occupancy === RECOGNITION_OCCUPANCY_OCCUPIED).length;
-  const uncertainCount = candidates.filter((candidate) => candidate.occupancy === RECOGNITION_OCCUPANCY_UNCERTAIN).length;
-  recognitionOccupiedCount.textContent = `有子 ${occupiedCount}`;
-  recognitionUncertainCount.textContent = `不確定 ${uncertainCount}`;
-  recognitionReviewedCount.textContent = `已確認 ${reviewedCount}/90`;
-  recognitionUncertainOnlyInput.checked = recognitionUncertainOnly;
-  btnRecognitionApply.disabled = reviewedCount !== candidates.length;
+  const { candidates, selections, review } = recognitionSession;
+  selectedRecognitionKey = review.currentKey;
+  const progress = reviewProgress(review);
+  recognitionOccupiedCount.textContent = `偵測有子 ${progress.occupied}`;
+  recognitionUncertainCount.textContent = `不確定 ${progress.uncertain}`;
+  recognitionBulkCount.textContent = `批次空位 ${progress.bulkEmpty}`;
+  recognitionManualCount.textContent = `人工棋子 ${progress.manualPieces}`;
+  recognitionReviewedCount.textContent = `已確認 ${progress.confirmed} / ${progress.queueSize}`;
+  recognitionRemainingCount.textContent = `剩餘 ${progress.remaining}`;
+  recognitionUnresolvedOnlyInput.checked = recognitionUnresolvedOnly;
+  btnRecognitionApply.disabled = !progress.canApply;
+  btnRecognitionAcceptEmpty.textContent = `接受 ${progress.eligibleEmpty} 個明顯空位`;
+  btnRecognitionAcceptEmpty.disabled = progress.eligibleEmpty === 0;
+  btnRecognitionUndoEmpty.disabled = progress.bulkEmpty === 0;
+  const queue = buildReviewQueue(review);
+  document.getElementById('recognitionCountBadge').textContent = `待看 ${queue.length} / 90 點`;
+  document.getElementById('btnReviewPrevious').disabled = queue.length === 0;
+  document.getElementById('btnReviewNext').disabled = queue.length === 0;
+  document.getElementById('btnReviewUnresolved').disabled = progress.remaining === 0;
+  const kingsValid = progress.redKings === 1 && progress.blackKings === 1;
+  recognitionKingSummary.textContent = `紅帥：${progress.redKings}　黑將：${progress.blackKings}${kingsValid ? '' : '　⚠ 雙方應各有一將／帥，請檢查或於編輯器修正。'}`;
+  recognitionKingSummary.classList.toggle('warning', !kingsValid);
 
   recognitionMarkers.replaceChildren();
   for (const candidate of candidates) {
     const key = selectionKey(candidate.r, candidate.c);
-    const reviewed = Object.prototype.hasOwnProperty.call(selections, key);
+    const reviewed = review.entries[key].status !== UNREVIEWED;
     const selection = selections[key];
     const marker = document.createElement('button');
     marker.type = 'button';
     marker.className = `recognition-marker candidate-${candidate.occupancy}`;
     if (candidate.suggestedSide !== RECOGNITION_SIDE_UNKNOWN) marker.classList.add(`suggested-${candidate.suggestedSide}`);
     if (reviewed) marker.classList.add('reviewed', selection === null ? 'reviewed-empty' : `reviewed-${selection.side}`);
-    if (!reviewed && recognitionSession.typeSuggestions[key]?.status === 'suggested') marker.classList.add('type-suggested');
     if (key === selectedRecognitionKey) marker.classList.add('selected');
-    if (recognitionUncertainOnly && candidate.occupancy !== RECOGNITION_OCCUPANCY_UNCERTAIN) marker.classList.add('filtered');
+    if (recognitionUnresolvedOnly && reviewed) marker.classList.add('filtered');
+    marker.dataset.reviewState = review.entries[key].status;
+    marker.setAttribute('aria-pressed', String(key === selectedRecognitionKey));
     marker.style.left = `${(candidate.displayCol / 8) * 100}%`;
     marker.style.top = `${(candidate.displayRow / 9) * 100}%`;
     marker.textContent = recognitionMarkerText(candidate, reviewed, selection);
     marker.setAttribute('aria-label', `交叉點 (${candidate.r},${candidate.c})，${recognitionCandidateLabel(candidate)}${reviewed ? `，已指定${selection === null ? '空' : name(selection.side, selection.type)}` : '，尚未確認'}`);
     marker.title = marker.getAttribute('aria-label');
     marker.addEventListener('click', () => {
-      selectedRecognitionKey = key;
+      recognitionSession.review = selectReviewCandidate(recognitionSession.review, key);
       syncRecognitionUI();
+      recognitionPicker.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     });
     recognitionMarkers.append(marker);
   }
@@ -1552,48 +1576,66 @@ function syncRecognitionUI() {
   const selectedCandidate = candidates.find((candidate) => selectionKey(candidate.r, candidate.c) === selectedRecognitionKey);
   const hasSelected = !!selectedCandidate;
   recognitionSelectedCoordinate.textContent = hasSelected
-    ? `交叉點 (${selectedCandidate.r},${selectedCandidate.c})`
-    : '尚未選取交叉點';
+    ? `目前：(${selectedCandidate.r},${selectedCandidate.c})${review.entries[selectedRecognitionKey].status !== UNREVIEWED ? ' · 已確認' : ''}`
+    : '沒有需逐點確認的位置';
   recognitionSuggestion.textContent = hasSelected ? recognitionCandidateLabel(selectedCandidate) : '請在棋盤上選一點';
+  drawRecognitionTarget(selectedCandidate);
   const selectedReviewed = hasSelected && Object.prototype.hasOwnProperty.call(selections, selectedRecognitionKey);
   const typeSuggestion = hasSelected ? recognitionSession.typeSuggestions[selectedRecognitionKey] : null;
-  const suggestionPiece = typeSuggestion?.type && typeSuggestion.side
+  const usableSuggestion = !selectedReviewed && typeSuggestion?.status === 'suggested'
+    && typeSuggestion.type && typeSuggestion.side;
+  const suggestionPiece = usableSuggestion
     ? name(typeSuggestion.side, typeSuggestion.type)
     : null;
-  const confidenceLabel = typeSuggestion?.status === 'suggested'
-    ? (typeSuggestion.confidence >= 0.82 ? '高' : '中')
-    : (typeSuggestion?.status === 'uncertain' ? '不確定' : '資料不足');
-  recognitionTypeSuggestion.textContent = suggestionPiece
-    ? `系統建議：${suggestionPiece}`
-    : '系統建議：尚無可靠結果';
-  recognitionTypeConfidence.textContent = typeSuggestion
-    ? `${confidenceLabel}・${Math.round(typeSuggestion.confidence * 100)}%`
-    : '請先用人工確認建立本次照片的參考';
-  recognitionTypeAlternatives.textContent = typeSuggestion?.alternatives?.length
-    ? `其他可能：${typeSuggestion.alternatives.map((alternative) => `${name(alternative.side, alternative.type)} ${Math.round(alternative.score * 100)}%`).join('、')}`
-    : '其他可能：無';
+  recognitionTypeCard.classList.toggle('hidden', !usableSuggestion);
+  recognitionTypeSuggestion.textContent = usableSuggestion ? `建議：${typeSuggestion.side === RED ? '紅' : '黑'}${suggestionPiece}` : '';
+  recognitionTypeConfidence.textContent = usableSuggestion ? `信心：${typeSuggestion.confidence >= 0.82 ? '高' : '中'}` : '';
   recognitionTemplateCount.textContent = `本次參考 ${listTemplates(recognitionSession.typeLibrary).length}`;
   btnRecognitionAdopt.disabled = selectedReviewed || typeSuggestion?.status !== 'suggested' || !suggestionPiece;
   btnRecognitionEmpty.disabled = !hasSelected;
   recognitionPieceButtons.forEach((button) => { button.disabled = !hasSelected; });
   recognitionPalettes.forEach((palette) => {
-    palette.classList.toggle('suggested', hasSelected && palette.classList.contains(selectedCandidate.suggestedSide));
+    const prioritized = hasSelected && selectedCandidate.sideConfidence >= 0.70
+      && palette.classList.contains(selectedCandidate.suggestedSide);
+    palette.classList.toggle('suggested', prioritized);
+    palette.querySelector('span').textContent = `${palette.classList.contains('red') ? '紅方' : '黑方'}${prioritized ? ' ◀' : ''}`;
   });
 
   const selectedValue = selectedReviewed ? selections[selectedRecognitionKey] : undefined;
   btnRecognitionEmpty.classList.toggle('active', selectedValue === null);
+  btnRecognitionEmpty.setAttribute('aria-pressed', String(selectedValue === null));
   recognitionPieceButtons.forEach((button) => {
     const active = selectedValue
       && selectedValue.side === button.dataset.recognitionSide
       && selectedValue.type === button.dataset.recognitionType;
     button.classList.toggle('active', !!active);
+    button.setAttribute('aria-pressed', String(!!active));
   });
 
-  if (reviewedCount === candidates.length) {
-    setRecognitionMessage('90 個交叉點都已由你明確確認，可以套用到編輯棋盤。', 'success');
+  if (progress.canApply) {
+    setRecognitionMessage('確認完成：90 個位置都有明確決定，可以套用到編輯棋盤。', 'success');
   } else {
-    setRecognitionMessage(`尚有 ${candidates.length - reviewedCount} 個交叉點未確認；候選不會自動成為棋子。`);
+    setRecognitionMessage(`尚有 ${progress.unresolved} 個位置未確認。${progress.eligibleEmpty ? `其中 ${progress.eligibleEmpty} 個明顯空位可由你一鍵接受。` : ''}`);
   }
+}
+
+function drawRecognitionTarget(candidate) {
+  const context = recognitionTargetCanvas.getContext('2d');
+  context.clearRect(0, 0, 112, 112);
+  if (!candidate || !rectifiedPhotoPixels) return;
+  const x = (candidate.displayCol / 8) * (recognitionCanvas.width - 1);
+  const y = (candidate.displayRow / 9) * (recognitionCanvas.height - 1);
+  const radius = Math.min(recognitionCanvas.width / 8, recognitionCanvas.height / 9) * 0.65;
+  const left = Math.max(0, x - radius);
+  const top = Math.max(0, y - radius);
+  const width = Math.min(recognitionCanvas.width, x + radius) - left;
+  const height = Math.min(recognitionCanvas.height, y + radius) - top;
+  context.drawImage(recognitionCanvas, left, top, width, height,
+    ((left - x + radius) / (radius * 2)) * 112, ((top - y + radius) / (radius * 2)) * 112,
+    (width / (radius * 2)) * 112, (height / (radius * 2)) * 112);
+  context.strokeStyle = '#f0c463';
+  context.lineWidth = 2;
+  context.strokeRect(48, 48, 16, 16);
 }
 
 function scanRecognitionCandidates() {
@@ -1613,23 +1655,24 @@ function scanRecognitionCandidates() {
       { data: rectifiedPhotoPixels.data, width: rectifiedPhotoPixels.width, height: rectifiedPhotoPixels.height },
       confirmedCalibration.gridIntersections,
     );
+    const previousReview = recognitionSession && isRecognitionTokenCurrent(recognitionSession.token, recognitionVersions())
+      ? recognitionSession.review : null;
+    const review = previousReview ? rescanReview(previousReview, candidates) : createReviewState(candidates);
     recognitionSession = {
-      candidates,
-      selections: {},
+      candidates: review.candidates,
+      review,
+      get selections() { return confirmedSelections(this.review); },
       token: createRecognitionToken(recognitionVersions()),
       typeLibrary: createTemplateLibrary(),
       typeSuggestions: {},
       typePatches: {},
       typeToken: createPieceTypeSessionToken(pieceTypeVersions()),
     };
-    const firstCandidate = candidates.find((candidate) => candidate.occupancy === RECOGNITION_OCCUPANCY_UNCERTAIN)
-      || candidates.find((candidate) => candidate.occupancy === RECOGNITION_OCCUPANCY_OCCUPIED)
-      || candidates[0];
-    selectedRecognitionKey = selectionKey(firstCandidate.r, firstCandidate.c);
-    recognitionUncertainOnly = false;
+    selectedRecognitionKey = review.currentKey;
+    recognitionUnresolvedOnly = false;
     calibrationMode = 'recognition';
     syncPhotoUI();
-    toast(`已掃描 ${candidates.length} 個交叉點，請人工確認。`);
+    toast(previousReview ? '已重新掃描；所有人工確認與批次空位均已保留。' : `已掃描 90 個交叉點，${buildReviewQueue(review).length} 個位置需逐點確認。`);
   } catch (error) {
     const message = recognitionErrorMessage(error);
     setPhotoImportMessage(message, 'error');
@@ -1652,10 +1695,12 @@ function pieceTypePatchForCandidate(candidate) {
   return patch;
 }
 
-function setRecognitionSelection(selection, { announceTemplate = true } = {}) {
+function setRecognitionSelection(selection) {
   if (!recognitionSession || !selectedRecognitionKey) return;
   const candidate = recognitionSession.candidates.find((entry) => selectionKey(entry.r, entry.c) === selectedRecognitionKey);
-  recognitionSession.selections[selectedRecognitionKey] = selection === null ? null : { ...selection };
+  recognitionSession.review = selection === null
+    ? confirmEmpty(recognitionSession.review, selectedRecognitionKey)
+    : confirmPiece(recognitionSession.review, selectedRecognitionKey, selection);
   recognitionSession.typeLibrary = removeTemplatesForSource(recognitionSession.typeLibrary, selectedRecognitionKey);
   if (selection && candidate) {
     const patch = pieceTypePatchForCandidate(candidate);
@@ -1667,7 +1712,6 @@ function setRecognitionSelection(selection, { announceTemplate = true } = {}) {
         sourceKey: selectedRecognitionKey,
         confirmedByHuman: true,
       });
-      if (announceTemplate) toast('已將此棋子作為本次照片的辨識參考。');
     }
   }
   syncRecognitionUI();
@@ -1703,15 +1747,29 @@ function rematchUnresolvedPieceTypes() {
   toast(`已重新比對未確認棋子：可靠 ${reliable}，不確定 ${uncertain}。`);
 }
 
-function markAllRecognitionEmpty() {
+function acceptRecognitionEmpty() {
   if (!recognitionSession) return;
-  recognitionSession.selections = Object.fromEntries(
-    recognitionSession.candidates.map((candidate) => [selectionKey(candidate.r, candidate.c), null]),
-  );
+  const count = reviewProgress(recognitionSession.review).eligibleEmpty;
+  recognitionSession.review = acceptHighConfidenceEmpty(recognitionSession.review);
+  syncRecognitionUI();
+  toast(`已明確接受 ${count} 個明顯空位；可在套用前撤回。`);
+}
+
+function resetRecognitionReview() {
+  if (!recognitionSession || !window.confirm('重設所有人工確認與批次空位？掃描候選會保留。')) return;
+  recognitionSession.review = resetReview(recognitionSession.review);
   recognitionSession.typeLibrary = createTemplateLibrary();
   recognitionSession.typeSuggestions = {};
   syncRecognitionUI();
-  toast('已由你將 90 個交叉點標記為空白，可再指定棋子。');
+  toast('人工確認已重設，候選尚未套用到棋盤。');
+}
+
+function navigateRecognition(findKey) {
+  if (!recognitionSession) return;
+  const key = findKey(recognitionSession.review);
+  if (!key) return;
+  recognitionSession.review = selectReviewCandidate(recognitionSession.review, key);
+  syncRecognitionUI();
 }
 
 function applyRecognitionToEditor() {
@@ -1726,7 +1784,10 @@ function applyRecognitionToEditor() {
     return;
   }
   try {
-    const nextBoard = candidatesToEditorBoard(recognitionSession.candidates, recognitionSession.selections);
+    const nextBoard = buildReviewedBoard(recognitionSession.review);
+    const { redKings, blackKings } = reviewProgress(recognitionSession.review);
+    if ((redKings !== 1 || blackKings !== 1)
+      && !window.confirm(`紅帥：${redKings}　黑將：${blackKings}。雙方應各有一將／帥。仍要套用並在編輯器修正嗎？`)) return;
     const nextSide = editorState?.sideToMove ?? RED;
     editorState = createEditorState({ board: nextBoard, sideToMove: nextSide });
     appState = APP_STATE.PUZZLE_EDITOR;
@@ -1741,7 +1802,7 @@ function applyRecognitionToEditor() {
     syncRecorderUI();
     calibrationMode = 'reference';
     syncPhotoUI();
-    setEditorMessage('已套用 90 個人工確認結果；請在編輯棋盤繼續修正並確認局面。', 'success');
+    setEditorMessage('已套用完整確認結果（含明確接受的空位）；請在編輯棋盤繼續修正並確認局面。', 'success');
     toast('人工確認結果已套用到既有編輯棋盤。');
   } catch (error) {
     const message = recognitionErrorMessage(error);
@@ -3298,7 +3359,17 @@ document.getElementById('btnRecognitionBack').addEventListener('click', () => {
   calibrationMode = 'reference';
   syncPhotoUI();
 });
-document.getElementById('btnRecognitionAllEmpty').addEventListener('click', markAllRecognitionEmpty);
+btnRecognitionAcceptEmpty.addEventListener('click', acceptRecognitionEmpty);
+btnRecognitionUndoEmpty.addEventListener('click', () => {
+  if (!recognitionSession) return;
+  recognitionSession.review = undoBulkEmpty(recognitionSession.review);
+  syncRecognitionUI();
+  toast('已撤回批次空位；後續人工改正的內容保持不變。');
+});
+document.getElementById('btnRecognitionReset').addEventListener('click', resetRecognitionReview);
+document.getElementById('btnReviewPrevious').addEventListener('click', () => navigateRecognition(previousCandidate));
+document.getElementById('btnReviewNext').addEventListener('click', () => navigateRecognition(nextCandidate));
+document.getElementById('btnReviewUnresolved').addEventListener('click', () => navigateRecognition(nextUnresolved));
 btnRecognitionRematch.addEventListener('click', rematchUnresolvedPieceTypes);
 btnRecognitionApply.addEventListener('click', applyRecognitionToEditor);
 btnRecognitionEmpty.addEventListener('click', () => setRecognitionSelection(null));
@@ -3319,8 +3390,8 @@ recognitionPieceButtons.forEach((button) => {
     type: button.dataset.recognitionType,
   }));
 });
-recognitionUncertainOnlyInput.addEventListener('change', () => {
-  recognitionUncertainOnly = recognitionUncertainOnlyInput.checked;
+recognitionUnresolvedOnlyInput.addEventListener('change', () => {
+  recognitionUnresolvedOnly = recognitionUnresolvedOnlyInput.checked;
   syncRecognitionUI();
 });
 calibrationCornerButtons.forEach((button) => {
