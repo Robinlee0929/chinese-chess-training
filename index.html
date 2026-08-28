@@ -68,7 +68,7 @@
   "sameAs": ["https://github.com/doggy8088/chinese-chess"]
 }
 </script>
-<link rel="stylesheet" href="./css/style.css?v=ec8ab932de">
+<link rel="stylesheet" href="./css/style.css?v=c335a26469">
 <script type="importmap">
 {
   "imports": {
@@ -92,6 +92,8 @@
         <option value="hard">人機・困難</option>
         <option value="pvp">雙人對弈</option>
       </select>
+      <button id="btnEditor" type="button" aria-pressed="false">建立殺局</button>
+      <button id="btnLibrary" type="button" aria-pressed="false">我的殺局</button>
       <button id="btnUndo" type="button">悔棋</button>
       <button id="btnNew" type="button"><span class="t-full">新對局</span><span class="t-short">新局</span></button>
       <button id="btnMore" type="button" aria-haspopup="true" aria-expanded="false" title="更多設定" aria-label="更多設定">⋯</button>
@@ -127,6 +129,325 @@
       <footer class="copyright">
         Copyright © 2026 <a href="https://www.facebook.com/will.fans/" target="_blank" rel="noopener">Will 保哥</a>
       </footer>
+    </aside>
+
+    <aside id="editorPanel" class="hidden" aria-label="殺局局面編輯器">
+      <div class="editor-heading">
+        <div>
+          <h2>建立殺局</h2>
+          <p>手動配置棋子與先行方</p>
+        </div>
+        <span class="editor-badge">局面編輯</span>
+      </div>
+
+      <section class="editor-section photo-import-entry">
+        <h3>棋盤照片參考</h3>
+        <input id="photoFileInput" class="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" tabindex="-1" aria-hidden="true">
+        <button id="btnPhotoImport" type="button" class="photo-import-button">匯入棋盤照片</button>
+        <p class="editor-hint">照片可在本機校正並掃描候選位置，棋子種類仍由你逐點確認。</p>
+        <p id="photoImportMessage" class="photo-import-message" role="status">支援 JPEG、PNG、WebP，檔案上限 10 MB。</p>
+      </section>
+
+      <section class="editor-section">
+        <h3>紅方棋子</h3>
+        <div class="piece-palette" aria-label="紅方棋子">
+          <button type="button" class="editor-piece red" data-editor-side="red" data-editor-type="K" title="紅帥 K">帥</button>
+          <button type="button" class="editor-piece red" data-editor-side="red" data-editor-type="A" title="紅仕 A">仕</button>
+          <button type="button" class="editor-piece red" data-editor-side="red" data-editor-type="B" title="紅相 B">相</button>
+          <button type="button" class="editor-piece red" data-editor-side="red" data-editor-type="N" title="紅傌 N">傌</button>
+          <button type="button" class="editor-piece red" data-editor-side="red" data-editor-type="R" title="紅俥 R">俥</button>
+          <button type="button" class="editor-piece red" data-editor-side="red" data-editor-type="C" title="紅炮 C">炮</button>
+          <button type="button" class="editor-piece red" data-editor-side="red" data-editor-type="P" title="紅兵 P">兵</button>
+        </div>
+      </section>
+
+      <section class="editor-section">
+        <h3>黑方棋子</h3>
+        <div class="piece-palette" aria-label="黑方棋子">
+          <button type="button" class="editor-piece black" data-editor-side="black" data-editor-type="K" title="黑將 K">將</button>
+          <button type="button" class="editor-piece black" data-editor-side="black" data-editor-type="A" title="黑士 A">士</button>
+          <button type="button" class="editor-piece black" data-editor-side="black" data-editor-type="B" title="黑象 B">象</button>
+          <button type="button" class="editor-piece black" data-editor-side="black" data-editor-type="N" title="黑馬 N">馬</button>
+          <button type="button" class="editor-piece black" data-editor-side="black" data-editor-type="R" title="黑車 R">車</button>
+          <button type="button" class="editor-piece black" data-editor-side="black" data-editor-type="C" title="黑砲 C">砲</button>
+          <button type="button" class="editor-piece black" data-editor-side="black" data-editor-type="P" title="黑卒 P">卒</button>
+        </div>
+      </section>
+
+      <section class="editor-section">
+        <h3>編輯工具</h3>
+        <div class="editor-tools">
+          <button id="btnEditorMove" type="button" class="active" aria-pressed="true">移動棋子</button>
+          <button id="btnEditorErase" type="button" aria-pressed="false">刪除棋子</button>
+        </div>
+        <p id="editorToolText" class="editor-hint">目前工具：移動棋子</p>
+      </section>
+
+      <fieldset class="editor-section side-choice">
+        <legend>先行方</legend>
+        <label><input type="radio" name="editorSide" value="red" checked> 紅方先行</label>
+        <label><input type="radio" name="editorSide" value="black"> 黑方先行</label>
+      </fieldset>
+
+      <div class="editor-actions">
+        <button id="btnEditorClear" type="button">清空棋盤</button>
+        <button id="btnEditorStandard" type="button">標準開局</button>
+        <button id="btnEditorConfirm" type="button" class="primary">確認局面</button>
+        <button id="btnEditorExit" type="button">退出編輯</button>
+      </div>
+      <p id="editorMessage" class="editor-message" role="status">選擇棋子後點擊空交叉點即可放置。</p>
+
+      <section id="recorderPanel" class="recorder-panel hidden" aria-label="殺局答案錄製器">
+        <div class="recorder-heading">
+          <div>
+            <h2 id="recorderTitle">答案錄製</h2>
+            <p id="recorderSubtitle">局面已確認，可以開始錄製。</p>
+          </div>
+          <span id="recorderBadge" class="editor-badge">準備錄製</span>
+        </div>
+
+        <div id="recorderReady">
+          <p class="editor-hint">開始後請直接在棋盤走出已知答案。每一步都會依中國象棋規則驗證。</p>
+          <button id="btnRecorderStart" type="button" class="recorder-primary">開始錄製答案</button>
+        </div>
+
+        <div id="recorderWorkspace" class="hidden">
+          <div class="recorder-turn"><span id="recorderTurnDot"></span><span id="recorderTurnText">紅方行棋</span></div>
+          <h3>已錄製答案</h3>
+          <ol id="recorderLog"></ol>
+          <p id="recorderEmpty">尚未錄製任何著法。</p>
+          <div class="recorder-actions">
+            <button id="btnRecorderUndo" type="button">退一步</button>
+            <button id="btnRecorderReset" type="button">重新錄製</button>
+            <button id="btnRecorderFinish" type="button" class="recorder-primary">完成答案</button>
+            <button id="btnPracticeStart" type="button" class="recorder-primary hidden">開始練習</button>
+            <button id="btnRecorderCancel" type="button">返回局面</button>
+            <button id="btnRecorderExit" type="button">退出殺局</button>
+          </div>
+          <div id="savePuzzlePanel" class="save-puzzle-panel hidden">
+            <label for="puzzleTitleInput">題目名稱</label>
+            <input id="puzzleTitleInput" type="text" maxlength="80" placeholder="例如：殺局 001">
+            <label for="puzzleNotesInput">筆記（選填）</label>
+            <textarea id="puzzleNotesInput" rows="2" maxlength="500" placeholder="記錄這題的重點"></textarea>
+            <div class="save-puzzle-actions">
+              <button id="btnSavePuzzle" type="button" class="recorder-primary">儲存題目</button>
+              <button id="btnOpenLibrary" type="button">我的殺局</button>
+            </div>
+            <p id="savePuzzleMessage" class="editor-message" role="status">輸入名稱後即可儲存到此瀏覽器。</p>
+          </div>
+        </div>
+
+        <div id="practiceWorkspace" class="practice-workspace hidden">
+          <div class="recorder-turn"><span id="practiceTurnDot"></span><span id="practiceTurnText">紅方請走</span></div>
+          <div class="practice-stats">
+            <span id="practiceProgress">第 1 手</span>
+            <span id="practiceMistakes">錯誤 0 次</span>
+          </div>
+          <p id="practiceMessage" class="editor-message" role="status">請走出本題的第一步。</p>
+          <div class="practice-actions">
+            <button id="btnPracticeRestart" type="button">重新練習</button>
+            <button id="btnPracticeExit" type="button">返回答案</button>
+            <button id="btnPracticePuzzleExit" type="button">退出殺局</button>
+          </div>
+        </div>
+        <p id="recorderMessage" class="editor-message" role="status">局面已確認，可以開始錄製答案。</p>
+      </section>
+    </aside>
+
+    <aside id="photoPanel" class="hidden" aria-label="棋盤原始照片">
+      <div class="photo-heading">
+        <div>
+          <h2>棋盤原始照片</h2>
+          <p>本機照片與棋盤幾何校正</p>
+        </div>
+        <span class="editor-badge">本機預覽</span>
+      </div>
+
+      <div id="photoReferenceView" class="photo-view">
+        <div class="photo-frame">
+          <img id="photoPreviewImage" alt="匯入的棋盤參考照片">
+        </div>
+        <p id="photoTransformStatus" class="photo-transform-status">100%・0°</p>
+        <div class="photo-transform-actions" aria-label="照片檢視控制">
+          <button id="btnPhotoRotateLeft" type="button">向左旋轉 90°</button>
+          <button id="btnPhotoRotateRight" type="button">向右旋轉 90°</button>
+          <button id="btnPhotoZoomOut" type="button">縮小</button>
+          <button id="btnPhotoZoomIn" type="button">放大</button>
+          <button id="btnPhotoReset" type="button">重設檢視</button>
+        </div>
+        <button id="btnCalibrationStart" type="button" class="calibration-primary">校正棋盤</button>
+        <p id="calibrationSummary" class="calibration-summary" role="status">尚未校正棋盤幾何。</p>
+        <button id="btnRecognitionScan" type="button" class="calibration-primary hidden">掃描棋子</button>
+        <div class="photo-file-actions">
+          <button id="btnPhotoReplace" type="button">更換照片</button>
+          <button id="btnPhotoRemove" type="button" class="danger">移除照片</button>
+        </div>
+        <p class="photo-privacy-note">影像與校正結果只在此瀏覽器分頁中處理，不會上傳或儲存。</p>
+      </div>
+
+      <section id="calibrationAdjustView" class="photo-view calibration-view hidden" aria-label="調整棋盤四角">
+        <p class="calibration-instruction">拖曳四個角點，使其對準棋盤最外圍四角。</p>
+        <div class="calibration-canvas-shell">
+          <canvas id="calibrationCornerCanvas" aria-label="棋盤照片四角校正畫布"></canvas>
+        </div>
+        <p id="calibrationMessage" class="calibration-message" role="status">四角目前有效，可產生校正預覽。</p>
+        <div class="calibration-corner-select" aria-label="選擇要微調的角點">
+          <button type="button" class="active" data-calibration-corner="topLeft" aria-pressed="true">左上</button>
+          <button type="button" data-calibration-corner="topRight" aria-pressed="false">右上</button>
+          <button type="button" data-calibration-corner="bottomRight" aria-pressed="false">右下</button>
+          <button type="button" data-calibration-corner="bottomLeft" aria-pressed="false">左下</button>
+        </div>
+        <div class="calibration-nudge" aria-label="微調所選角點">
+          <button type="button" data-calibration-nudge="up" aria-label="向上微調">↑</button>
+          <button type="button" data-calibration-nudge="left" aria-label="向左微調">←</button>
+          <button type="button" data-calibration-nudge="down" aria-label="向下微調">↓</button>
+          <button type="button" data-calibration-nudge="right" aria-label="向右微調">→</button>
+        </div>
+        <fieldset class="calibration-orientation">
+          <legend>棋盤方向</legend>
+          <label><input type="radio" name="calibrationOrientation" value="red-bottom" checked> 紅方在下</label>
+          <label><input type="radio" name="calibrationOrientation" value="red-top"> 紅方在上</label>
+        </fieldset>
+        <p class="calibration-coordinate-note">方向只決定照片格點如何對應內部座標，不會改變先行方。</p>
+        <div class="calibration-actions">
+          <button id="btnCalibrationPreview" type="button" class="calibration-primary">產生校正預覽</button>
+          <button id="btnCalibrationReset" type="button">重設四角</button>
+          <button id="btnCalibrationCancel" type="button">返回照片</button>
+        </div>
+      </section>
+
+      <section id="calibrationPreviewView" class="photo-view calibration-view hidden" aria-label="棋盤校正預覽">
+        <div class="calibration-preview-heading">
+          <h3>透視校正與 90 交叉點</h3>
+          <span id="calibrationOrientationBadge">紅方在下</span>
+        </div>
+        <div class="calibration-rectified-shell">
+          <canvas id="calibrationRectifiedCanvas" width="480" height="540" aria-label="透視校正棋盤與九十交叉點"></canvas>
+        </div>
+        <p id="calibrationPreviewStatus" class="calibration-message" role="status">10 橫線 × 9 直線，共 90 個交叉點。</p>
+        <div class="calibration-actions">
+          <button id="btnCalibrationBack" type="button">返回調整四角</button>
+          <button id="btnCalibrationPreviewReset" type="button">重設四角</button>
+          <button id="btnCalibrationConfirm" type="button" class="calibration-primary">確認棋盤校正</button>
+        </div>
+        <p class="photo-privacy-note">校正畫面只在本機記憶體中產生，不會傳送或寫入題目。</p>
+      </section>
+
+      <section id="recognitionReviewView" class="photo-view recognition-view hidden" aria-label="棋子候選辨識與人工確認">
+        <div class="calibration-preview-heading">
+          <h3>棋子候選與人工確認</h3>
+          <span id="recognitionCountBadge">90 點</span>
+        </div>
+        <p class="recognition-instruction">先接受明顯空位，再逐一指定棋子或空白。每次確認會跳到下一個未確認位置；你隨時可以點棋盤改正。</p>
+        <div class="review-progress" role="status" aria-live="polite">
+          <strong id="recognitionReviewedCount">已確認 0 / 0</strong>
+          <span id="recognitionRemainingCount">剩餘 0</span>
+        </div>
+        <div class="recognition-bulk-actions review-empty-actions">
+          <button id="btnRecognitionAcceptEmpty" type="button">接受 0 個明顯空位</button>
+          <button id="btnRecognitionUndoEmpty" type="button" disabled>撤回批次空位</button>
+        </div>
+        <p class="review-empty-note">僅接受高信心空位，不含不確定位置，不會覆寫已確認棋子。套用前可撤回。</p>
+        <label class="recognition-filter"><input id="recognitionUnresolvedOnly" type="checkbox"> 只看未確認</label>
+        <section id="recognitionPicker" class="recognition-picker" aria-label="所選交叉點的確切內容">
+          <div class="review-target">
+            <canvas id="recognitionTargetCanvas" width="112" height="112" aria-label="目前交叉點的照片放大"></canvas>
+            <div class="recognition-picker-heading">
+              <strong id="recognitionSelectedCoordinate">尚未選取交叉點</strong>
+              <span id="recognitionSuggestion">請在棋盤上選一點</span>
+            </div>
+          </div>
+          <div class="review-navigation" aria-label="人工確認導覽">
+            <button id="btnReviewPrevious" type="button">上一個</button>
+            <button id="btnReviewNext" type="button">下一個</button>
+            <button id="btnReviewUnresolved" type="button">下一個未確認</button>
+          </div>
+          <div class="recognition-palette red" aria-label="指定紅方棋子">
+            <span>紅方</span>
+            <button type="button" data-recognition-side="red" data-recognition-type="K">帥</button>
+            <button type="button" data-recognition-side="red" data-recognition-type="A">仕</button>
+            <button type="button" data-recognition-side="red" data-recognition-type="B">相</button>
+            <button type="button" data-recognition-side="red" data-recognition-type="N">傌</button>
+            <button type="button" data-recognition-side="red" data-recognition-type="R">俥</button>
+            <button type="button" data-recognition-side="red" data-recognition-type="C">炮</button>
+            <button type="button" data-recognition-side="red" data-recognition-type="P">兵</button>
+          </div>
+          <div class="recognition-palette black" aria-label="指定黑方棋子">
+            <span>黑方</span>
+            <button type="button" data-recognition-side="black" data-recognition-type="K">將</button>
+            <button type="button" data-recognition-side="black" data-recognition-type="A">士</button>
+            <button type="button" data-recognition-side="black" data-recognition-type="B">象</button>
+            <button type="button" data-recognition-side="black" data-recognition-type="N">馬</button>
+            <button type="button" data-recognition-side="black" data-recognition-type="R">車</button>
+            <button type="button" data-recognition-side="black" data-recognition-type="C">砲</button>
+            <button type="button" data-recognition-side="black" data-recognition-type="P">卒</button>
+          </div>
+          <button id="btnRecognitionEmpty" type="button" class="recognition-empty-choice">空白</button>
+          <div id="recognitionTypeCard" class="piece-type-suggestion hidden" aria-live="polite">
+            <strong id="recognitionTypeSuggestion"></strong>
+            <span id="recognitionTypeConfidence"></span>
+            <small>僅供參考，是否採用由你決定。</small>
+            <div class="recognition-choice-actions">
+              <button id="btnRecognitionAdopt" type="button" class="calibration-primary" disabled>採用</button>
+              <button id="btnRecognitionManual" type="button">手動選擇</button>
+            </div>
+          </div>
+        </section>
+        <div class="recognition-board-shell">
+          <canvas id="recognitionCanvas" width="480" height="540" aria-label="透視校正棋盤照片"></canvas>
+          <div id="recognitionMarkers" class="recognition-markers" aria-label="九十個可編輯候選交叉點"></div>
+        </div>
+        <p class="review-marker-legend">● 有子　? 不確定　○ 未確認空位　空 已確認空白　字 已確認棋子　雙框 目前位置</p>
+        <div class="recognition-stats" aria-label="確認工作階段摘要">
+          <span id="recognitionOccupiedCount">偵測有子 0</span>
+          <span id="recognitionUncertainCount">不確定 0</span>
+          <span id="recognitionBulkCount">批次空位 0</span>
+          <span id="recognitionManualCount">人工棋子 0</span>
+        </div>
+        <p id="recognitionKingSummary" class="review-king-summary" role="status">紅帥：0　黑將：0</p>
+        <p id="recognitionMessage" class="calibration-message" role="status">請完成待確認位置。</p>
+        <div class="recognition-bulk-actions">
+          <button id="btnRecognitionReset" type="button">重設人工確認</button>
+          <button id="btnRecognitionRescan" type="button">重新掃描（保留確認）</button>
+          <button id="btnRecognitionBack" type="button">返回照片</button>
+          <button id="btnRecognitionApply" type="button" class="calibration-primary" disabled>套用到編輯棋盤</button>
+        </div>
+        <details class="review-optional-assistance">
+          <summary>選用：棋子種類建議</summary>
+          <p>人工確認的棋子可作為本次照片參考；沒有可靠建議時，直接手動選擇即可。</p>
+          <span id="recognitionTemplateCount">本次參考 0</span>
+          <button id="btnRecognitionRematch" type="button">重新比對未確認棋子</button>
+        </details>
+        <p class="photo-privacy-note">照片、像素、裁切區、辨識參考與建議只存在此分頁記憶體中，不會上傳、寫入題目或跨照片保留。</p>
+      </section>
+    </aside>
+
+    <aside id="libraryPanel" class="hidden" aria-label="我的殺局">
+      <div class="library-heading">
+        <div>
+          <h2>我的殺局</h2>
+          <p>儲存在此瀏覽器的題目</p>
+        </div>
+        <span id="libraryCount" class="editor-badge">0 題</span>
+      </div>
+      <p id="libraryIssues" class="library-issues hidden" role="status"></p>
+      <div id="libraryList"></div>
+      <p id="libraryEmpty">尚未儲存任何殺局。</p>
+      <section id="libraryDetail" class="library-detail hidden">
+        <button id="btnLibraryBack" type="button">← 返回列表</button>
+        <h3 id="libraryDetailTitle"></h3>
+        <dl id="libraryDetailMeta"></dl>
+        <p id="libraryDetailNotes"></p>
+        <div class="library-solution">
+          <h4>錄製答案</h4>
+          <ol id="libraryDetailSolution"></ol>
+        </div>
+        <div class="library-detail-actions">
+          <button id="btnLibraryDetailPractice" type="button" class="recorder-primary">開始練習</button>
+          <button id="btnLibraryDetailDelete" type="button" class="danger">刪除</button>
+        </div>
+      </section>
+      <button id="btnLibraryExit" type="button">返回棋局</button>
     </aside>
 
     <div id="stage">
@@ -170,6 +491,6 @@
   <div id="toast" class="hidden" role="status"></div>
 </div>
 
-<script type="module" src="./main.js?v=ec8ab932de"></script>
+<script type="module" src="./main.js?v=c335a26469"></script>
 </body>
 </html>

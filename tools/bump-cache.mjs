@@ -11,7 +11,7 @@
 //   node tools/bump-cache.mjs           # 依內容重算並改寫版本號
 //   node tools/bump-cache.mjs --check   # 只檢查是否需要更新（CI／hook 用）
 // ============================================================
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -19,7 +19,9 @@ import { dirname, join } from 'node:path';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 // 參與雜湊的本地檔案（內容任一變動 → 版本號改變）
-const ASSETS = ['css/style.css', 'main.js', 'game.js', 'ai.js', 'ai-worker.js'];
+// Include the integrated puzzle module graph, not only the original game entry points.
+const MODULES = readdirSync(root).filter((name) => name.endsWith('.js')).sort();
+const ASSETS = ['css/style.css', ...MODULES];
 
 // 去掉既有 ?v= 後再計算雜湊 → 同內容重複執行不會改寫（冪等）
 const normalized = ASSETS.map((p) => readFileSync(join(root, p), 'utf8').replace(/\?v=[0-9a-f]+/g, ''));
@@ -31,17 +33,9 @@ const RULES = [
   ['index.html', [
     [/((?:href|src)="\.\/(?:css\/style\.css|main\.js))(\?v=[0-9a-f]+)?"/g, `$1${V}"`],
   ]],
-  ['main.js', [
-    [/(\.\/game\.js)(\?v=[0-9a-f]+)?(?=['"])/g, `$1${V}`],
-    [/(\.\/ai-worker\.js)(\?v=[0-9a-f]+)?(?=['"])/g, `$1${V}`],
-    [/(\.\/ai\.js)(\?v=[0-9a-f]+)?(?=['"])/g, `$1${V}`],
-  ]],
-  ['ai-worker.js', [
-    [/(\.\/ai\.js)(\?v=[0-9a-f]+)?(?=['"])/g, `$1${V}`],
-  ]],
-  ['ai.js', [
-    [/(\.\/game\.js)(\?v=[0-9a-f]+)?(?=['"])/g, `$1${V}`],
-  ]],
+  ...MODULES.map((file) => [file, [
+    [/(\.\/[\w-]+\.js)(\?v=[0-9a-f]+)?(?=['"])/g, `$1${V}`],
+  ]]),
 ];
 
 const check = process.argv.includes('--check');

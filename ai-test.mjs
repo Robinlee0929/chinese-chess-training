@@ -30,13 +30,14 @@ for (const lv of ['easy', 'medium', 'hard']) {
 
 // ---------- 白吃大子：中等以上要吃掉沒人保護的車 ----------
 {
-  const b = emptyBoard();
-  b[0][4] = { type: 'K', side: RED };
-  b[9][3] = { type: 'K', side: BLACK };
-  b[5][0] = { type: 'R', side: RED };  // 紅車在 (5,0)
-  b[5][8] = { type: 'R', side: BLACK }; // 黑車同列，可直取
+  // 保留開局屏障，避免四子殘局的先將再吃與立即吃車落在 8 分隨機窗內。
+  // 紅車移到無根的 (5,1)，黑車可直取且紅方無法立即回吃。
+  const b = initialBoard();
+  b[5][1] = b[0][0]; b[0][0] = null;
+  b[5][8] = b[9][8]; b[9][8] = null;
   const mv = findBestMove(b, BLACK, 'medium');
-  ok(mv && mv.to.r === 5 && mv.to.c === 0, `medium：白吃無根紅車（實走 ${JSON.stringify(mv?.to)}）`);
+  ok(isLegal(b, mv) && mv.from.r === 5 && mv.from.c === 8 && mv.to.r === 5 && mv.to.c === 1,
+    `medium：白吃無根紅車（實走 ${JSON.stringify(mv)}）`);
 }
 
 // ---------- 解將：被將軍時必須應將 ----------
