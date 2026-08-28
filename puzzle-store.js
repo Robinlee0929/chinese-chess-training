@@ -1,4 +1,4 @@
-import { validatePuzzle, isCheckmateAfterSolution } from './puzzle-domain.js?v=1db5e72ff0';
+import { validatePuzzle, isCheckmateAfterSolution } from './puzzle-domain.js?v=681467f92f';
 
 export const PUZZLE_STORAGE_VERSION = 1;
 export const PUZZLE_STORAGE_KEY = 'chinese-chess-training:puzzles:v1';
@@ -200,7 +200,9 @@ function parseEnvelope(serialized) {
     return { records: [], issues: [issue('MISSING_VERSION', 'Saved puzzle schema version is missing.')], fatal: true };
   }
   if (parsed.version !== PUZZLE_STORAGE_VERSION) {
-    return { records: [], issues: [issue('UNSUPPORTED_VERSION', `Unsupported saved puzzle version: ${parsed.version}.`)], fatal: true };
+    // JSON objects/arrays may shadow toString; never coerce them while reporting corruption.
+    const version = typeof parsed.version === 'object' ? 'invalid type' : parsed.version;
+    return { records: [], issues: [issue('UNSUPPORTED_VERSION', `Unsupported saved puzzle version: ${version}.`)], fatal: true };
   }
   if (!Array.isArray(parsed.puzzles)) {
     return { records: [], issues: [issue('PUZZLES_NOT_ARRAY', 'Saved puzzles must be an array.')], fatal: true };

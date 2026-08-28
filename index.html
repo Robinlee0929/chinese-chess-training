@@ -68,7 +68,7 @@
   "sameAs": ["https://github.com/doggy8088/chinese-chess"]
 }
 </script>
-<link rel="stylesheet" href="./css/style.css?v=1db5e72ff0">
+<link rel="stylesheet" href="./css/style.css?v=681467f92f">
 <script type="importmap">
 {
   "imports": {
@@ -282,7 +282,7 @@
           <button id="btnPhotoReplace" type="button">更換照片</button>
           <button id="btnPhotoRemove" type="button" class="danger">移除照片</button>
         </div>
-        <p class="photo-privacy-note">影像與校正結果只在此瀏覽器分頁中處理，不會上傳或儲存。</p>
+        <p class="photo-privacy-note">照片僅在此瀏覽器分頁中處理，不會上傳或寫入題庫；移除、更換照片或結束工作階段時，會撤銷物件 URL 並清除照片工作畫布。</p>
       </div>
 
       <section id="calibrationAdjustView" class="photo-view calibration-view hidden" aria-label="調整棋盤四角">
@@ -418,7 +418,7 @@
           <span id="recognitionTemplateCount">本次參考 0</span>
           <button id="btnRecognitionRematch" type="button">重新比對未確認棋子</button>
         </details>
-        <p class="photo-privacy-note">照片、像素、裁切區、辨識參考與建議只存在此分頁記憶體中，不會上傳、寫入題目或跨照片保留。</p>
+        <p class="photo-privacy-note">照片、像素、裁切與辨識參考僅供目前分頁使用，不會上傳或寫入題庫；移除、更換照片或結束工作階段時，會清除照片工作畫布並重設辨識資料。</p>
       </section>
     </aside>
 
@@ -491,6 +491,6 @@
   <div id="toast" class="hidden" role="status"></div>
 </div>
 
-<script type="module" src="./main.js?v=1db5e72ff0"></script>
+<script type="module" src="./main.js?v=681467f92f"></script>
 </body>
 </html>

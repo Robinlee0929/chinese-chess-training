@@ -1,0 +1,20 @@
+# Dependencies and generated test/browser output
+node_modules/
+test-results/
+playwright-report/
+playwright/.cache/
+coverage/
+demo-output/
+*.webm
+*.log
+
+# Local Codex output only; keep project configuration and source assets visible
+.codex/visualizations/
+.codex/artifacts/
+.codex/tmp/
+
+# OS and Python caches
+.DS_Store
+Thumbs.db
+__pycache__/
+.pytest_cache/

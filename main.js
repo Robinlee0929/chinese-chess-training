@@ -7,7 +7,7 @@ import {
   ROWS, COLS, RED, BLACK,
   initialBoard, legalMoves, applyMove, inCheck,
   hasAnyLegalMove, name, notation, hashBoard,
-} from './game.js?v=1db5e72ff0';
+} from './game.js?v=681467f92f';
 import {
   PuzzleEditorError,
   createEditorState,
@@ -17,7 +17,7 @@ import {
   setEditorSideToMove,
   confirmAuthoredPosition,
   exportAuthoredPosition,
-} from './puzzle-editor.js?v=1db5e72ff0';
+} from './puzzle-editor.js?v=681467f92f';
 import {
   PuzzleRecorderError,
   createRecorder,
@@ -27,7 +27,7 @@ import {
   finishRecording,
   exportRecorderBoard,
   exportRecordedResult,
-} from './puzzle-recorder.js?v=1db5e72ff0';
+} from './puzzle-recorder.js?v=681467f92f';
 import {
   PuzzlePracticeError,
   createPractice,
@@ -35,8 +35,8 @@ import {
   applyOpponentReply,
   restartPractice,
   exportPracticeSnapshot,
-} from './puzzle-practice.js?v=1db5e72ff0';
-import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=1db5e72ff0';
+} from './puzzle-practice.js?v=681467f92f';
+import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=681467f92f';
 import {
   PHOTO_MAX_ZOOM,
   PHOTO_MIN_ZOOM,
@@ -50,7 +50,7 @@ import {
   validatePhotoMetadata,
   zoomPhotoIn,
   zoomPhotoOut,
-} from './puzzle-photo.js?v=1db5e72ff0';
+} from './puzzle-photo.js?v=681467f92f';
 import {
   CALIBRATION_CANONICAL_HEIGHT,
   CALIBRATION_CANONICAL_WIDTH,
@@ -66,7 +66,7 @@ import {
   setCorner,
   transformPoint,
   validateQuadrilateral,
-} from './puzzle-photo-calibration.js?v=1db5e72ff0';
+} from './puzzle-photo-calibration.js?v=681467f92f';
 import {
   PuzzlePhotoRecognitionError,
   RECOGNITION_OCCUPANCY_EMPTY,
@@ -78,7 +78,7 @@ import {
   isRecognitionTokenCurrent,
   recognizeIntersections,
   selectionKey,
-} from './puzzle-photo-recognition.js?v=1db5e72ff0';
+} from './puzzle-photo-recognition.js?v=681467f92f';
 import {
   addTemplate,
   createPieceTypeSessionToken,
@@ -88,13 +88,13 @@ import {
   normalizePiecePatch,
   removeTemplatesForSource,
   suggestUnresolvedPieceTypes,
-} from './puzzle-photo-piece-types.js?v=1db5e72ff0';
+} from './puzzle-photo-piece-types.js?v=681467f92f';
 import {
   UNREVIEWED, PuzzlePhotoReviewError,
   createReviewState, buildReviewQueue, selectReviewCandidate, confirmEmpty, confirmPiece,
   nextCandidate, previousCandidate, nextUnresolved, acceptHighConfidenceEmpty,
   undoBulkEmpty, resetReview, rescanReview, reviewProgress, confirmedSelections, buildReviewedBoard,
-} from './puzzle-photo-review.js?v=1db5e72ff0';
+} from './puzzle-photo-review.js?v=681467f92f';
 
 // ---------------- 常數 ----------------
 const CELL = 1;
@@ -580,7 +580,7 @@ let aiMoveStart = 0;
 let aiWorker = null;
 let aiModule = null;   // Worker 不可用時的主執行緒後備
 try {
-  aiWorker = new Worker(new URL('./ai-worker.js?v=1db5e72ff0', import.meta.url), { type: 'module' });
+  aiWorker = new Worker(new URL('./ai-worker.js?v=681467f92f', import.meta.url), { type: 'module' });
   aiWorker.onmessage = (e) => onAIResult(e.data);
   aiWorker.onerror = () => {
     aiWorker = null;
@@ -602,7 +602,7 @@ function requestAIMove() {
   if (aiWorker) {
     aiWorker.postMessage(payload);
   } else {
-    (aiModule ??= import('./ai.js?v=1db5e72ff0')).then(({ findBestMove }) => {
+    (aiModule ??= import('./ai.js?v=681467f92f')).then(({ findBestMove }) => {
       setTimeout(() => {
         if (token !== aiToken) return;
         onAIResult({ token, result: findBestMove(payload.board, payload.side, payload.level, payload.recent) });
@@ -1132,6 +1132,10 @@ function invalidateRecognition() {
   recognitionSession = null;
   selectedRecognitionKey = null;
   recognitionUnresolvedOnly = false;
+  // Reset backing pixels and context state, preserving dimensions for the next review.
+  for (const canvas of [calibrationRectifiedCanvas, recognitionCanvas, recognitionTargetCanvas]) {
+    canvas.width = canvas.width;
+  }
 }
 
 function invalidateRecognitionForCalibrationChange() {
@@ -1143,6 +1147,7 @@ function invalidateCalibration() {
   photoRecognitionVersion++;
   calibrationRecognitionVersion++;
   invalidateRecognition();
+  calibrationCornerCanvas.width = calibrationCornerCanvas.width;
   calibrationState = null;
   confirmedCalibration = null;
   calibrationMode = 'reference';
@@ -3511,6 +3516,7 @@ document.querySelectorAll('input[name="editorSide"]').forEach((input) => {
   });
 });
 document.getElementById('btnEditorClear').addEventListener('click', () => {
+  releasePhotoReference();
   editorState = createEditorState({ sideToMove: editorState.sideToMove });
   markEditorDirty();
   syncEditorScene();
@@ -3518,6 +3524,7 @@ document.getElementById('btnEditorClear').addEventListener('click', () => {
   refreshHUD();
 });
 document.getElementById('btnEditorStandard').addEventListener('click', () => {
+  releasePhotoReference();
   editorState = createEditorState({ board: initialBoard(), sideToMove: editorState.sideToMove });
   markEditorDirty();
   syncEditorScene();

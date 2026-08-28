@@ -222,6 +222,39 @@ test('unsupported schema version is handled', () => {
   assert.equal(makeStore(storage).loadAll().issues[0].code, 'UNSUPPORTED_VERSION');
 });
 
+for (const [label, version] of [
+  ['object', {}], ['null', null], ['array', []], ['array containing an object', [{ toString: null }]],
+  ['non-callable toString', { toString: null }],
+  ['hostile-looking toString', { toString: 'throw new Error("must not execute")', valueOf: null }],
+  ['unsupported number', 99], ['unsupported string', '1'], ['unsupported boolean', true],
+]) {
+  test(`${label} version reports corruption without coercion or writeback`, () => {
+    const serialized = JSON.stringify({ version, puzzles: [] });
+    let writes = 0;
+    const store = makeStore({ getItem: () => serialized, setItem() { writes++; } });
+    const result = store.loadAll();
+    assert.deepEqual(result.puzzles, []);
+    assert.equal(result.issues[0].code, 'UNSUPPORTED_VERSION');
+    for (const action of [
+      () => store.savePuzzle(matePuzzle()),
+      () => store.deletePuzzle('existing'),
+      () => store.updatePuzzleMetadata('existing', { title: 'changed' }),
+      () => store.markPracticeStarted('existing'),
+      () => store.markPracticeCompleted('existing'),
+    ]) assert.throws(action, { name: 'PuzzleStoreError', code: 'STORAGE_CORRUPT' });
+    assert.equal(writes, 0);
+  });
+}
+
+test('supported numeric version still loads a valid saved puzzle without writeback', () => {
+  const { storage, saved } = savedFixture();
+  const serialized = storage.dump();
+  let writes = 0;
+  const store = makeStore({ getItem: () => serialized, setItem() { writes++; } });
+  assert.deepEqual(store.loadAll(), { puzzles: [saved], issues: [] });
+  assert.equal(writes, 0);
+});
+
 test('malformed puzzles array is handled', () => {
   const storage = memoryStorage({
     [PUZZLE_STORAGE_KEY]: JSON.stringify({ version: PUZZLE_STORAGE_VERSION, puzzles: {} }),

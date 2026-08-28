@@ -15,14 +15,28 @@ import { createPuzzleStore } from './puzzle-store.js';
 // rendering/DOM doubles. No browser globals are injected and no UI logic is copied.
 const source = readFileSync(new URL('./main.js', import.meta.url), 'utf8');
 function functionSource(name) {
-  const match = source.match(new RegExp(`^function ${name}\\([^]*?^}`, 'm'));
+  const match = source.match(new RegExp(`^(?:async )?function ${name}\\([^]*?^}`, 'm'));
   assert.ok(match, `main.js function ${name} exists`);
   return match[0];
 }
 const noop = () => {};
 function node() {
-  return { classList: { add: noop, remove: noop, toggle: noop }, removeAttribute: noop,
+  return { classList: { add: noop, remove: noop, toggle: noop }, removeAttribute(key) { delete this[key]; },
     style: {}, value: '', textContent: '', innerHTML: '' };
+}
+const photoCanvasNames = ['calibrationCornerCanvas', 'calibrationRectifiedCanvas',
+  'recognitionCanvas', 'recognitionTargetCanvas'];
+function photoCanvas(width = 4, height = 3) {
+  // Canvas dimension assignments reset pixels even when the dimension is unchanged.
+  return {
+    _width: width, height, pixels: new Uint8ClampedArray(width * height * 4), resets: 0,
+    get width() { return this._width; },
+    set width(value) {
+      this._width = value;
+      this.pixels = new Uint8ClampedArray(value * this.height * 4);
+      this.resets++;
+    },
+  };
 }
 function vector(x = 0, y = 0, z = 0) {
   return { x, y, z, set(x, y, z) { Object.assign(this, { x, y, z }); },
@@ -43,7 +57,8 @@ function harness() {
     practiceState: null, activeSavedPuzzleId: null, practiceCompletionRecorded: false,
     recognitionSession: null, selectedRecognitionKey: null, recognitionUnresolvedOnly: false,
     photoLoadToken: 0, photoRecognitionVersion: 0, calibrationRecognitionVersion: 0,
-    pieceTypeRecognitionVersion: 0, photoObjectUrl: null, pendingPhotoObjectUrl: null,
+    pieceTypeRecognitionVersion: 0, photoObjectUrl: null, pendingPhotoObjectUrl: null, createdUrls: [],
+    savedCurrentPuzzleId: null,
     photoReferenceState: photo.createPhotoReferenceState(), calibrationState: null,
     rectifiedPhotoPixels: null, confirmedCalibration: null, revoked: [],
     APP_STATE: Object.fromEntries(['NORMAL_GAME', 'PUZZLE_EDITOR', 'PUZZLE_CONFIRMED',
@@ -55,19 +70,23 @@ function harness() {
     setRecorderMessage: noop, setPracticeMessage: noop, syncRecorderUI: noop,
     syncPhotoUI: noop, syncRecognitionUI: noop, markPracticeCompleted: noop,
     markPracticeStarted: () => true, isAI: () => false, setEditorTool: noop,
-    setEditorMessage: noop, setPhotoImportMessage: noop,
+    setEditorMessage: noop, setPhotoImportMessage: noop, renderLibraryList: noop,
+    decodePhotoObjectUrl: async () => ({ naturalWidth: 4, naturalHeight: 3 }),
     document: { querySelector: () => ({ checked: false }) },
     window: { confirm: () => false },
     performance: { now: () => context.clock },
     setTimeout: (callback) => context.timers.push(callback),
     showGameOver: (checked) => context.shownResults.push(checked),
     puzzleFlowActive: () => context.appState !== 'NORMAL_GAME',
-    URL: { revokeObjectURL: (url) => context.revoked.push(url) },
+    URL: { revokeObjectURL: (url) => context.revoked.push(url),
+      createObjectURL: () => { const url = `blob:new-${context.createdUrls.length}`; context.createdUrls.push(url); return url; } },
     Date,
     to3D: (r, c) => vector(c - 4, 0, 4.5 - r),
   });
   for (const name of ['appEl', 'editorPanel', 'recorderPanel', 'libraryPanel', 'banner',
     'overlay', 'logEl', 'logEmpty', 'photoPreviewImage', 'photoFileInput']) context[name] = node();
+  for (const name of photoCanvasNames) context[name] = name === 'recognitionTargetCanvas'
+    ? photoCanvas(112, 112) : photoCanvas();
   context.lastFromMark = { visible: false };
   context.lastToMark = { visible: false };
   context.makePiece = (piece, r, c) => ({
@@ -84,7 +103,8 @@ function harness() {
     'animatePracticeMove', 'afterPracticeMove', 'queueOpponentReply', 'completePractice',
     'restartCurrentPractice', 'resetRecognitionReview', 'invalidateRecognition',
     'invalidateRecognitionForCalibrationChange', 'invalidateCalibration', 'releasePhotoReference',
-    'enterEditor', 'exitEditor', 'onAIResult'];
+    'enterEditor', 'exitEditor', 'enterLibrary', 'markEditorDirty', 'onAIResult',
+    'loadSelectedPhoto', 'photoErrorMessage'];
   vm.runInContext(names.map(functionSource).join('\n'), context);
   context.flushAnimations = () => {
     let guard = 0;
@@ -302,6 +322,152 @@ test('authoring exit revokes both photo URLs and invalidates recognition/session
   assert.ok(ctx.photoLoadToken > token);
   for (const key of ['photoObjectUrl', 'pendingPhotoObjectUrl', 'calibrationState', 'confirmedCalibration', 'rectifiedPhotoPixels', 'recognitionSession']) assert.equal(ctx[key], null);
   assert.equal(ctx.photoReferenceState.photo, null);
+});
+
+function seedPhotoSession(ctx) {
+  ctx.photoObjectUrl = 'blob:current';
+  ctx.photoPreviewImage.src = ctx.photoObjectUrl;
+  ctx.photoReferenceState = photo.createPhotoReferenceState({ name: 'old.png', type: 'image/png', size: 100 });
+  ctx.calibrationState = {}; ctx.confirmedCalibration = {};
+  ctx.calibrationMode = 'recognition';
+  ctx.rectifiedPhotoPixels = { data: new Uint8ClampedArray([10, 20, 30, 255]) };
+  ctx.recognitionSession = { typeLibrary: { templates: ['old'] }, typePatches: { old: [10, 20, 30] } };
+  ctx.selectedRecognitionKey = '0,0';
+  ctx.recognitionUnresolvedOnly = true;
+  for (const name of photoCanvasNames) ctx[name].pixels.fill(255);
+}
+
+function assertPhotoPixelsCleared(ctx, names = photoCanvasNames) {
+  for (const name of names) {
+    assert.ok(ctx[name].resets > 0, `${name} buffer explicitly reset`);
+    assert.ok(ctx[name].pixels.every((value) => value === 0), `${name} has no old pixels`);
+    assert.ok(ctx[name].width > 0 && ctx[name].height > 0, `${name} remains drawable`);
+  }
+  assert.equal(ctx.recognitionTargetCanvas.width, 112);
+  assert.equal(ctx.recognitionTargetCanvas.height, 112);
+  for (const key of ['rectifiedPhotoPixels', 'recognitionSession', 'selectedRecognitionKey']) assert.equal(ctx[key], null);
+  assert.equal(ctx.recognitionUnresolvedOnly, false);
+}
+
+function clickSourceHandler(ctx, id) {
+  const match = source.match(new RegExp(`document\\.getElementById\\('${id}'\\)\\.addEventListener\\('click', \\(\\) => \\{([^]*?)^}\\);`, 'm'));
+  assert.ok(match, `${id} real click handler exists`);
+  vm.runInContext(`(() => {${match[1]}\n})()`, ctx);
+}
+
+test('photo canvas inventory covers every persistent photo-bearing HTML canvas', () => {
+  const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
+  const ids = [...html.matchAll(/<canvas id="([^"]+)"/g)].map((match) => match[1]);
+  assert.deepEqual(ids.filter((id) => id !== 'confettiCv').sort(), [...photoCanvasNames].sort());
+});
+
+for (const action of ['remove', 'exitEditor', 'enterEditor', 'enterLibrary', 'btnEditorClear', 'btnEditorStandard']) {
+  test(`${action} clears photo canvases, URLs and state without retaining stale renders`, () => {
+    const ctx = harness();
+    ctx.appState = action === 'enterEditor' ? 'NORMAL_GAME' : action === 'enterLibrary' ? 'PUZZLE_RECORDED' : 'PUZZLE_EDITOR';
+    ctx.editorState = editor.createEditorState({ board: fixture().initialBoard, sideToMove: 'black' });
+    const editorBefore = ctx.editorState;
+    seedPhotoSession(ctx);
+    ctx.pendingPhotoObjectUrl = 'blob:pending';
+    const token = ctx.photoLoadToken;
+    if (action === 'remove') clickSourceHandler(ctx, 'btnPhotoRemove');
+    else if (action.startsWith('btn')) clickSourceHandler(ctx, action);
+    else ctx[action]();
+    assertPhotoPixelsCleared(ctx);
+    assert.deepEqual(ctx.revoked, ['blob:current', 'blob:pending']);
+    assert.ok(ctx.photoLoadToken > token);
+    for (const key of ['photoObjectUrl', 'pendingPhotoObjectUrl', 'calibrationState', 'confirmedCalibration']) assert.equal(ctx[key], null);
+    assert.equal(ctx.photoReferenceState.photo, null);
+    assert.equal(ctx.photoPreviewImage.src, undefined);
+    // Previously queued UI draws must remain inert after full invalidation.
+    for (const name of ['renderCalibrationAdjustment', 'renderRectifiedPreview', 'syncRecognitionUI']) {
+      vm.runInContext(`(${functionSource(name)})()`, ctx);
+    }
+    assertPhotoPixelsCleared(ctx);
+    if (action === 'remove') assert.equal(ctx.editorState, editorBefore, 'photo removal does not change the board');
+    if (action.startsWith('btn')) {
+      same(ctx.editorState.board, action === 'btnEditorClear' ? editor.createEmptyEditorBoard() : game.initialBoard());
+      assert.equal(ctx.editorState.sideToMove, 'black');
+      invariant(ctx, ctx.editorState.board);
+    }
+  });
+}
+
+test('successful photo replacement clears all old pixels and preserves the editor board', async () => {
+  const ctx = harness();
+  seedPhotoSession(ctx);
+  ctx.editorState = editor.createEditorState({ board: fixture().initialBoard });
+  const boardBefore = ctx.editorState;
+  await ctx.loadSelectedPhoto({ name: 'new.png', type: 'image/png', size: 100 });
+  assertPhotoPixelsCleared(ctx);
+  assert.ok(ctx.revoked.includes('blob:current'));
+  assert.equal(ctx.photoObjectUrl, 'blob:new-0');
+  assert.equal(ctx.photoPreviewImage.src, 'blob:new-0');
+  assert.equal(ctx.photoReferenceState.photo.name, 'new.png');
+  assert.equal(ctx.editorState, boardBefore);
+  assert.equal(ctx.pendingPhotoObjectUrl, null);
+});
+
+test('derived invalidation clears old rectification/review pixels but retains the current photo', () => {
+  const ctx = harness();
+  seedPhotoSession(ctx);
+  ctx.invalidateRecognitionForCalibrationChange();
+  assertPhotoPixelsCleared(ctx, photoCanvasNames.slice(1));
+  assert.equal(ctx.calibrationCornerCanvas.resets, 0, 'current source adjustment canvas retained');
+  assert.equal(ctx.photoObjectUrl, 'blob:current');
+  assert.deepEqual(ctx.revoked, []);
+});
+
+test('failed replacement and picker cancellation preserve the current photo and pixels', async () => {
+  const ctx = harness();
+  seedPhotoSession(ctx);
+  const session = ctx.recognitionSession;
+  ctx.decodePhotoObjectUrl = async () => { throw new Error('decode failed'); };
+  await ctx.loadSelectedPhoto({ name: 'bad.png', type: 'image/png', size: 100 });
+  await ctx.loadSelectedPhoto({ name: 'bad.svg', type: 'image/svg+xml', size: 100 });
+  await ctx.loadSelectedPhoto(null);
+  assert.deepEqual(ctx.revoked, ['blob:new-0']);
+  assert.equal(ctx.photoObjectUrl, 'blob:current');
+  assert.equal(ctx.recognitionSession, session);
+  for (const name of photoCanvasNames) {
+    assert.equal(ctx[name].resets, 0);
+    assert.ok(ctx[name].pixels.every((value) => value === 255));
+  }
+});
+
+test('late decode after exit cannot restore cleared pixels or photo state', async () => {
+  const ctx = harness();
+  ctx.appState = 'PUZZLE_EDITOR';
+  seedPhotoSession(ctx);
+  let finish;
+  ctx.decodePhotoObjectUrl = () => new Promise((resolve) => { finish = resolve; });
+  const pending = ctx.loadSelectedPhoto({ name: 'late.png', type: 'image/png', size: 100 });
+  ctx.exitEditor();
+  finish({ naturalWidth: 4, naturalHeight: 3 });
+  await pending;
+  assertPhotoPixelsCleared(ctx);
+  assert.equal(ctx.photoObjectUrl, null);
+  assert.equal(ctx.photoPreviewImage.src, undefined);
+  assert.equal(ctx.photoReferenceState.photo, null);
+  assert.ok(ctx.revoked.includes('blob:new-0'));
+});
+
+test('superseded decode cannot replace or clear the newer photo session', async () => {
+  const ctx = harness();
+  seedPhotoSession(ctx);
+  let finishOld;
+  ctx.decodePhotoObjectUrl = (url) => url === 'blob:new-0'
+    ? new Promise((resolve) => { finishOld = resolve; })
+    : Promise.resolve({ naturalWidth: 4, naturalHeight: 3 });
+  const old = ctx.loadSelectedPhoto({ name: 'slow.png', type: 'image/png', size: 100 });
+  await ctx.loadSelectedPhoto({ name: 'newest.png', type: 'image/png', size: 100 });
+  assertPhotoPixelsCleared(ctx);
+  for (const name of photoCanvasNames) ctx[name].pixels.fill(42);
+  finishOld({ naturalWidth: 4, naturalHeight: 3 });
+  await old;
+  assert.equal(ctx.photoObjectUrl, 'blob:new-1');
+  assert.equal(ctx.photoReferenceState.photo.name, 'newest.png');
+  for (const name of photoCanvasNames) assert.ok(ctx[name].pixels.every((value) => value === 42));
 });
 
 test('mesh checker detects off-square, zero-scale and unregistered scene ghosts', () => {
