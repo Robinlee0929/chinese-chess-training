@@ -133,6 +133,22 @@ test('strong dark synthetic disk suggests black', () => assert.equal(classifySyn
 test('strong red synthetic disk is occupied', () => assert.equal(classifySynthetic([188, 35, 26, 255]).occupancy, RECOGNITION_OCCUPANCY_OCCUPIED));
 test('strong red synthetic disk suggests red', () => assert.equal(classifySynthetic([188, 35, 26, 255]).suggestedSide, RED));
 test('weak synthetic contrast is uncertain', () => assert.equal(classifySynthetic([150, 125, 88, 255], 6).occupancy, RECOGNITION_OCCUPANCY_UNCERTAIN));
+test('edge-rich low-contrast physical-piece features are occupied', () => assert.equal(classifyPatch({
+  luminanceContrast: 0.075,
+  innerStdDev: 41,
+  outerStdDev: 45,
+  edgeMean: 0.061,
+  redChroma: 0.02,
+  darknessDelta: 0.03,
+}).occupancy, RECOGNITION_OCCUPANCY_OCCUPIED));
+test('mild board texture without a piece remains empty', () => assert.equal(classifyPatch({
+  luminanceContrast: 0.012,
+  innerStdDev: 16,
+  outerStdDev: 18,
+  edgeMean: 0.012,
+  redChroma: 0.03,
+  darknessDelta: 0.01,
+}).occupancy, RECOGNITION_OCCUPANCY_EMPTY));
 test('ambiguous side evidence remains unknown', () => {
   const result = classifyPatch({
     luminanceContrast: 0.12,

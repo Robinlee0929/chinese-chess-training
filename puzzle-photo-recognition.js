@@ -98,24 +98,30 @@ export function extractPatchFeatures(pixelBuffer, point, options = {}) {
 
 export function classifyPatch(features) {
   requireFeatures(features);
-  const contrastSignal = clamp01(features.luminanceContrast / 0.20);
-  const varianceSignal = clamp01((features.innerStdDev - features.outerStdDev * 0.45) / 58);
-  const edgeSignal = clamp01(features.edgeMean / 0.105);
+  // Physical pieces often have only modest centre/background luminance contrast,
+  // especially on warm wood or cloth boards. Their glyph and rim still create a
+  // repeatable local edge/texture signal, so weight that evidence before contrast.
+  const contrastSignal = clamp01(features.luminanceContrast / 0.12);
+  const varianceSignal = clamp01((features.innerStdDev - 8) / 45);
+  const edgeSignal = clamp01(features.edgeMean / 0.065);
+  const solidContrastSignal = clamp01((features.luminanceContrast - 0.04) / 0.04)
+    * clamp01((8 - features.innerStdDev) / 8);
   const occupancyEvidence = clamp01(
-    contrastSignal * 0.46 + varianceSignal * 0.32 + edgeSignal * 0.22,
+    edgeSignal * 0.50 + contrastSignal * 0.30 + varianceSignal * 0.20
+      + solidContrastSignal * 0.10,
   );
 
   let occupancy;
   let occupancyConfidence;
-  if (occupancyEvidence <= 0.17) {
+  if (occupancyEvidence <= 0.25) {
     occupancy = RECOGNITION_OCCUPANCY_EMPTY;
-    occupancyConfidence = clamp01(0.58 + (0.17 - occupancyEvidence) * 2.1);
-  } else if (occupancyEvidence >= 0.50) {
+    occupancyConfidence = clamp01(0.58 + (0.25 - occupancyEvidence) * 1.2);
+  } else if (occupancyEvidence >= 0.65) {
     occupancy = RECOGNITION_OCCUPANCY_OCCUPIED;
-    occupancyConfidence = clamp01(0.58 + (occupancyEvidence - 0.50));
+    occupancyConfidence = clamp01(0.58 + (occupancyEvidence - 0.65) * 0.8);
   } else {
     occupancy = RECOGNITION_OCCUPANCY_UNCERTAIN;
-    occupancyConfidence = clamp01(0.28 + Math.abs(occupancyEvidence - 0.41) * 0.7);
+    occupancyConfidence = clamp01(0.28 + Math.abs(occupancyEvidence - 0.50) * 0.7);
   }
 
   let suggestedSide = RECOGNITION_SIDE_UNKNOWN;
