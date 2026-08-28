@@ -291,5 +291,48 @@ test('corrupt storage is not overwritten by mutation', () => {
   assert.equal(storage.dump(), '{broken');
 });
 
+test('unavailable storage reads fail safely without an uncaught exception', () => {
+  const store = makeStore({ getItem() { throw new Error('SecurityError'); }, setItem() {} });
+  assert.deepEqual(store.loadAll().puzzles, []);
+  assert.equal(store.loadAll().issues[0].code, 'STORE_READ_FAILED');
+});
+
+test('unavailable storage cannot be mistaken for an empty writable library', () => {
+  let writes = 0;
+  const store = makeStore({
+    getItem() { throw new Error('SecurityError'); },
+    setItem() { writes++; },
+  });
+  assert.throws(() => store.savePuzzle(matePuzzle()), (error) => (
+    error instanceof PuzzleStoreError && error.code === 'STORE_READ_FAILED'
+  ));
+  assert.equal(writes, 0);
+});
+
+test('quota failure preserves the existing serialized library', () => {
+  const { storage, saved } = savedFixture();
+  const before = storage.dump();
+  const store = makeStore({ getItem: storage.getItem, setItem() { throw new Error('QuotaExceededError'); } });
+  assert.throws(() => store.markPracticeStarted(saved.id), { code: 'STORE_WRITE_FAILED' });
+  assert.equal(storage.dump(), before);
+});
+
+test('only canonical chess fields persist, including inside board pieces', () => {
+  const storage = memoryStorage();
+  const input = matePuzzle();
+  const transient = { sourceImage: 'data:image/png;base64,PRIVATE', templates: [{ pixels: [1, 2, 3] }] };
+  Object.assign(input, transient, { calibration: { corners: [] }, recognition: { patches: [] } });
+  input.initialBoard[0][3].photo = transient;
+  input.solution[0].patch = transient;
+  const saved = makeStore(storage).savePuzzle(input);
+  assert.deepEqual(saved.initialBoard[0][3], { type: 'K', side: RED });
+  assert.equal(storage.dump().includes('PRIVATE'), false);
+  assert.equal(storage.dump().includes('templates'), false);
+  assert.equal(storage.dump().includes('calibration'), false);
+  assert.equal(storage.dump().includes('recognition'), false);
+  transient.templates[0].pixels[0] = 999;
+  assert.equal(storage.dump().includes('999'), false);
+});
+
 console.log(`\n${passed} puzzle-store tests passed; ${failed} failed.`);
 process.exit(failed === 0 ? 0 : 1);

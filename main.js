@@ -524,7 +524,12 @@ let recorderState = null;
 let recordedPuzzleResult = null;
 let practiceState = null;
 let practiceToken = 0;
-const puzzleStore = createPuzzleStore({ storage: window.localStorage });
+// Access may throw when browser storage is disabled. Defer it to the store's
+// guarded operations so normal play and unsaved authoring still work.
+const puzzleStore = createPuzzleStore({ storage: {
+  getItem: (key) => window.localStorage.getItem(key),
+  setItem: (key, value) => window.localStorage.setItem(key, value),
+} });
 let libraryViewPuzzle = null;
 let activeSavedPuzzleId = null;
 let savedCurrentPuzzleId = null;
@@ -894,9 +899,17 @@ function pieceAt(r, c) {
   return pieces.find((o) => o.userData.r === r && o.userData.c === c);
 }
 
+function releasePieceMesh(mesh) {
+  scene.remove(mesh);
+  // Geometry and side/bottom materials are shared. Only the top material and
+  // its procedural texture belong to this piece and must be released on removal.
+  mesh.material[1].map.dispose();
+  mesh.material[1].dispose();
+}
+
 function rebuildPieceMeshes(sourceBoard, animate = false) {
   clearSelection();
-  for (const m of [...pieces]) scene.remove(m);
+  for (const m of [...pieces]) releasePieceMesh(m);
   pieces = [];
   let i = 0;
   for (let r = 0; r < ROWS; r++)
@@ -916,6 +929,8 @@ function rebuildPieceMeshes(sourceBoard, animate = false) {
 
 function buildScene() {
   rebuildPieceMeshes(board, true);
+  const invariant = checkBoardMeshInvariant(board);
+  if (!invariant.ok) throw new Error(`Normal board/mesh invariant failed: ${invariant.errors.join(' ')}`);
 }
 
 function checkBoardMeshInvariant(sourceBoard) {
@@ -933,6 +948,13 @@ function checkBoardMeshInvariant(sourceBoard) {
     if (seen.has(key)) errors.push(`Duplicate mesh at ${key}.`);
     seen.add(key);
     if (mesh.parent !== scene || mesh.visible === false) errors.push(`Mesh at ${key} is not visible in the scene.`);
+    const expected = to3D(r, c);
+    if (Math.abs(mesh.position.x - expected.x) > 0.001 || Math.abs(mesh.position.z - expected.z) > 0.001) {
+      errors.push(`Mesh at ${key} is positioned on a different square.`);
+    }
+    if (![mesh.scale.x, mesh.scale.y, mesh.scale.z].every((value) => Number.isFinite(value) && value > 0)) {
+      errors.push(`Mesh at ${key} has no visible scale.`);
+    }
     const logical = sourceBoard[r]?.[c];
     if (!logical) errors.push(`Mesh at ${key} has no logical piece.`);
     else if (!piece || logical.side !== piece.side || logical.type !== piece.type) {
@@ -942,6 +964,9 @@ function checkBoardMeshInvariant(sourceBoard) {
 
   if (pieces.length !== boardPieceCount) {
     errors.push(`Expected ${boardPieceCount} meshes but found ${pieces.length}.`);
+  }
+  for (const child of scene.children) {
+    if (child.userData?.piece && !pieces.includes(child)) errors.push('Scene contains an unregistered piece mesh.');
   }
   for (let r = 0; r < ROWS; r++)
     for (let c = 0; c < COLS; c++) {
@@ -2208,6 +2233,7 @@ function storeErrorMessage(error) {
   if (!(error instanceof PuzzleStoreError)) return '儲存空間發生未知錯誤。';
   if (error.code === 'EMPTY_TITLE') return '請輸入題目名稱。';
   if (error.code === 'STORAGE_CORRUPT') return '題庫含有損壞資料，為避免覆寫，這次操作已取消。';
+  if (error.code === 'STORE_READ_FAILED') return '無法讀取瀏覽器儲存空間，請確認隱私設定；原有資料未變更。';
   if (error.code === 'STORE_WRITE_FAILED') return '無法寫入瀏覽器儲存空間，請確認空間或隱私設定。';
   return `題庫操作失敗：${error.message}`;
 }
@@ -2305,7 +2331,9 @@ function renderLibraryList() {
   libraryCount.textContent = `${loaded.puzzles.length} 題`;
   libraryIssues.classList.toggle('hidden', loaded.issues.length === 0);
   libraryIssues.textContent = loaded.issues.length
-    ? `有 ${loaded.issues.length} 筆資料無法讀取；有效題目仍可檢視，但題庫不會被覆寫。`
+    ? (loaded.issues.some((entry) => entry.code === 'STORE_READ_FAILED')
+      ? '無法讀取瀏覽器儲存空間，請確認隱私設定；原有資料未變更。'
+      : `有 ${loaded.issues.length} 筆資料無法讀取；有效題目仍可檢視，但題庫不會被覆寫。`)
     : '';
   libraryList.replaceChildren(...loaded.puzzles.map(createLibraryCard));
   libraryList.classList.remove('hidden');
@@ -2458,7 +2486,7 @@ function doRecorderMove(from, to) {
   }, () => {
     moving.position.y = Y0;
     if (capturedMesh) {
-      scene.remove(capturedMesh);
+      releasePieceMesh(capturedMesh);
       pieces = pieces.filter((piece) => piece !== capturedMesh);
     }
     finishRecorderMove(captured);
@@ -2671,7 +2699,7 @@ function animatePracticeMove(result) {
   }, () => {
     moving.position.y = Y0;
     if (capturedMesh) {
-      scene.remove(capturedMesh);
+      releasePieceMesh(capturedMesh);
       pieces = pieces.filter((piece) => piece !== capturedMesh);
     }
     if (result.captured) sfx.capture(); else sfx.move();
@@ -2851,7 +2879,7 @@ function doMove(from, to) {
     if (cap) {
       sfx.capture();
       animateCapture(cap, () => {
-        scene.remove(cap);
+        releasePieceMesh(cap);
         const i = pieces.indexOf(cap);
         if (i >= 0) pieces.splice(i, 1);
         finishMove(nota, captured);
@@ -2863,6 +2891,8 @@ function doMove(from, to) {
 }
 
 function finishMove(nota, captured) {
+  const invariant = checkBoardMeshInvariant(board);
+  if (!invariant.ok) throw new Error(`Normal board/mesh invariant failed: ${invariant.errors.join(' ')}`);
   if (captured) capturedBy[turn].push(captured);
   addLog(nota, turn);
   turn = turn === RED ? BLACK : RED;
@@ -2878,7 +2908,10 @@ function finishMove(nota, captured) {
     over = true;
     winner = turn === RED ? BLACK : RED;
     refreshHUD();
-    setTimeout(() => showGameOver(checked), checked ? 900 : 300);
+    const token = aiToken;
+    setTimeout(() => {
+      if (token === aiToken && !puzzleFlowActive() && over) showGameOver(checked);
+    }, checked ? 900 : 300);
   }
   refreshHUD();
   maybeAIMove();
@@ -2906,6 +2939,8 @@ function undoPly() {
     capturedBy[turn === RED ? BLACK : RED].pop();
   }
   turn = turn === RED ? BLACK : RED;
+  const invariant = checkBoardMeshInvariant(board);
+  if (!invariant.ok) throw new Error(`Undo board/mesh invariant failed: ${invariant.errors.join(' ')}`);
 }
 
 function undo() {

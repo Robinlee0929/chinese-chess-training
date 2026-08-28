@@ -701,7 +701,7 @@ aside h3 {
 }
 #recorderLog li {
   display: grid;
-  grid-template-columns: 24px 22px 1fr;
+  grid-template-columns: 22px minmax(0, 1fr);
   align-items: center;
   gap: 5px;
   padding: 5px 7px;

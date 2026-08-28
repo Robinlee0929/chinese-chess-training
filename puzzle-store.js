@@ -21,7 +21,13 @@ export function createPuzzleStore({
   requireStorage(storage);
 
   function loadAll() {
-    const parsed = parseEnvelope(storage.getItem(key));
+    let serialized;
+    try {
+      serialized = storage.getItem(key);
+    } catch {
+      return { puzzles: [], issues: [issue('STORE_READ_FAILED', 'Unable to read saved puzzles.')] };
+    }
+    const parsed = parseEnvelope(serialized);
     if (parsed.fatal) return { puzzles: [], issues: parsed.issues };
     const puzzles = [];
     const issues = [...parsed.issues];
@@ -144,6 +150,9 @@ export function createPuzzleStore({
 
   function recordsForMutation() {
     const loaded = loadAll();
+    if (loaded.issues.some((entry) => entry.code === 'STORE_READ_FAILED')) {
+      throw new PuzzleStoreError('STORE_READ_FAILED', 'Unable to read saved puzzles; storage was left unchanged.');
+    }
     if (loaded.issues.length > 0) {
       throw new PuzzleStoreError(
         'STORAGE_CORRUPT',
@@ -321,7 +330,8 @@ function issue(code, message, index, id) {
 }
 
 function clonePiece(piece) {
-  return piece === null ? null : { ...piece };
+  // Persist chess data only, never arbitrary nested photo/session fields.
+  return piece === null ? null : { type: piece.type, side: piece.side };
 }
 
 function cloneBoard(board) {
