@@ -226,6 +226,37 @@ export function hasAnyLegalMove(b, side) {
   return false;
 }
 
+// ---------------- 三次重複局面／長將 ----------------
+/**
+ * 三次重複局面判決（長將判負）：同一局面（含輪走方）出現第三次時——
+ *   · 其間某一方每步都照將（長將）→ 該方判負
+ *   · 雙方皆長將或皆非長將 → 判和
+ * @param {Array<{key:string, mover:(string|null), check:boolean}>} records
+ *   每步之後的局面記錄；[0] 為起始局面（mover=null）。
+ *   key＝hashBoard(盤面)+'|'+輪走方（不含輪走方不算「同一局面」）。
+ * @param {string} key 目前（剛形成）的局面鍵
+ * @returns {null|{result:'loss', loser:string, reason:'長將'}|{result:'draw', reason:string}}
+ *   null＝未構成三次重複
+ */
+export function repetitionVerdict(records, key) {
+  const idxs = [];
+  for (let i = 0; i < records.length; i++) if (records[i].key === key) idxs.push(i);
+  if (idxs.length < 3) return null;
+  const perpetual = { [RED]: true, [BLACK]: true };
+  const hasMoved = { [RED]: false, [BLACK]: false };
+  for (let i = idxs[0] + 1; i < records.length; i++) {
+    const rec = records[i];
+    if (rec.mover == null) continue;
+    hasMoved[rec.mover] = true;
+    if (!rec.check) perpetual[rec.mover] = false;
+  }
+  const redPerp = hasMoved[RED] && perpetual[RED];
+  const blackPerp = hasMoved[BLACK] && perpetual[BLACK];
+  if (redPerp && !blackPerp) return { result: 'loss', loser: RED, reason: '長將' };
+  if (blackPerp && !redPerp) return { result: 'loss', loser: BLACK, reason: '長將' };
+  return { result: 'draw', reason: redPerp && blackPerp ? '雙方長將' : '三次重複局面' };
+}
+
 // ---------------- 棋譜 notation ----------------
 // 普通記錄法：
 //   平（橫走）/ 斜走（傌象仕）：第四字＝到達的線路號
