@@ -24,7 +24,10 @@ const MODULES = readdirSync(root).filter((name) => name.endsWith('.js')).sort();
 const ASSETS = ['css/style.css', ...MODULES];
 
 // 去掉既有 ?v= 後再計算雜湊 → 同內容重複執行不會改寫（冪等）
-const normalized = ASSETS.map((p) => readFileSync(join(root, p), 'utf8').replace(/\?v=[0-9a-f]+/g, ''));
+// These JS/CSS text assets use canonical LF for hashing only; never rewrite source EOL.
+const normalized = ASSETS.map((p) => readFileSync(join(root, p), 'utf8')
+  .replace(/\r\n?/g, '\n')
+  .replace(/\?v=[0-9a-f]+/g, ''));
 const version = createHash('sha256').update(normalized.join('\0')).digest('hex').slice(0, 10);
 
 // 每個檔案中「本地資源引用位址」的改寫規則（?v= 直接內嵌在引用處）
