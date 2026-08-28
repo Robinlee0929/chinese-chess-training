@@ -1,5 +1,5 @@
 // AI 搜索在 Worker 執行，避免深層搜索卡住畫面
-import { findBestMove } from './ai.js?v=681467f92f';
+import { findBestMove } from './ai.js?v=27a40f9997';
 
 self.onmessage = (e) => {
   const { board, side, level, token, recent } = e.data;

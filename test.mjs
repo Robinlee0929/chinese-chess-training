@@ -1,7 +1,7 @@
 // 引擎邏輯自測
 import {
   initialBoard, legalMoves, inCheck, kingsFacing,
-  applyMove, hasAnyLegalMove, name, notation, RED, BLACK,
+  applyMove, hasAnyLegalMove, name, notation, hashBoard, repetitionVerdict, RED, BLACK,
 } from './game.js';
 
 let failed = 0;
@@ -135,6 +135,70 @@ const cap = applyMove(b, { r: 2, c: 7 }, { r: 2, c: 6 });
 ok(!!cap && cap.side === RED && cap.type === 'P', `炮(2,7)平(2,6) 吃紅兵（實為 ${cap ? name(cap.side, cap.type) : '無'}）`);
 b = initialBoard();
 ok(applyMove(b, { r: 2, c: 1 }, { r: 1, c: 1 }) === null, '空位走子不回傳被吃子');
+
+// ---------- 三次重複局面：長將判負（紅俥沿列連照，黑將閃避） ----------
+// 記錄格式：{ key: hashBoard+'|'+輪走方, mover: 走該步的一方, check: 該步是否照將 }
+let bPerp = emptyBoard();
+bPerp[0][0] = { type: 'K', side: RED };
+bPerp[7][0] = { type: 'R', side: RED };
+bPerp[7][4] = { type: 'K', side: BLACK };
+const repRecs = [{ key: hashBoard(bPerp) + '|black', mover: null, check: false }];
+const repCycle = [
+  [{ r: 7, c: 4 }, { r: 8, c: 4 }, BLACK], // 將閃避
+  [{ r: 7, c: 0 }, { r: 8, c: 0 }, RED],   // 俥照將
+  [{ r: 8, c: 4 }, { r: 7, c: 4 }, BLACK], // 將閃避
+  [{ r: 8, c: 0 }, { r: 7, c: 0 }, RED],   // 俥照將
+];
+for (let cyc = 0; cyc < 2; cyc++)
+  for (const [from, to, side] of repCycle) {
+    applyMove(bPerp, from, to);
+    repRecs.push({
+      key: hashBoard(bPerp) + '|' + (side === RED ? 'black' : 'red'),
+      mover: side,
+      check: inCheck(bPerp, side === RED ? BLACK : RED),
+    });
+  }
+ok(repRecs.filter((x) => x.key === repRecs[0].key).length === 3, '同一局面（含輪走方）出現三次');
+const perp = repetitionVerdict(repRecs, repRecs[repRecs.length - 1].key);
+ok(!!perp && perp.result === 'loss' && perp.loser === RED, `紅方每步都照將 → 長將判負（實為 ${JSON.stringify(perp)}）`);
+
+// ---------- 三次重複局面：無照將的循環 → 判和 ----------
+let bRep = emptyBoard();
+bRep[0][0] = { type: 'K', side: RED };
+bRep[4][3] = { type: 'R', side: RED };
+bRep[9][4] = { type: 'K', side: BLACK };
+const drawRecs = [{ key: hashBoard(bRep) + '|black', mover: null, check: false }];
+const drawCycle = [
+  [{ r: 9, c: 4 }, { r: 9, c: 5 }, BLACK],
+  [{ r: 4, c: 3 }, { r: 5, c: 3 }, RED],
+  [{ r: 9, c: 5 }, { r: 9, c: 4 }, BLACK],
+  [{ r: 5, c: 3 }, { r: 4, c: 3 }, RED],
+];
+for (let cyc = 0; cyc < 2; cyc++)
+  for (const [from, to, side] of drawCycle) {
+    applyMove(bRep, from, to);
+    drawRecs.push({
+      key: hashBoard(bRep) + '|' + (side === RED ? 'black' : 'red'),
+      mover: side,
+      check: inCheck(bRep, side === RED ? BLACK : RED),
+    });
+  }
+const repDraw = repetitionVerdict(drawRecs, drawRecs[drawRecs.length - 1].key);
+ok(!!repDraw && repDraw.result === 'draw' && repDraw.reason === '三次重複局面', `無照將的重複循環 → 判和（實為 ${JSON.stringify(repDraw)}）`);
+
+// ---------- 雙方皆長將 → 判和；僅兩次重複 → 尚不判決 ----------
+const bothRecs = [{ key: 'P|red', mover: null, check: false }];
+for (let i = 0; i < 2; i++) {
+  bothRecs.push({ key: 'Q|black', mover: RED, check: true });
+  bothRecs.push({ key: 'P|red', mover: BLACK, check: true });
+}
+const both = repetitionVerdict(bothRecs, 'P|red');
+ok(!!both && both.result === 'draw' && both.reason === '雙方長將', `雙方皆長將 → 判和（實為 ${JSON.stringify(both)}）`);
+
+const twoRecs = [{ key: 'P|red', mover: null, check: false }];
+twoRecs.push({ key: 'Q|black', mover: RED, check: true });
+twoRecs.push({ key: 'P|red', mover: BLACK, check: false });
+ok(repetitionVerdict(twoRecs, 'P|red') === null, '同一局面只出現兩次 → 尚不判決');
 
 console.log(failed === 0 ? '\n全部通過 ✔' : `\n${failed} 項失敗 ✘`);
 process.exit(failed === 0 ? 0 : 1);

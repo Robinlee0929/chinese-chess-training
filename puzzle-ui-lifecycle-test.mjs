@@ -51,6 +51,7 @@ function harness() {
     scene, Y0: 0.18, pieces: [], tweens: [], clock: 0, timers: [], shownResults: [],
     board: game.initialBoard(), turn: game.RED, history: [],
     posHistory: [game.hashBoard(game.initialBoard())], capturedBy: { red: [], black: [] },
+    repHistory: [{ key: game.hashBoard(game.initialBoard()) + '|red', mover: null, check: false }],
     busy: false, over: false, winner: null, aiToken: 0, aiThinking: false, undoCount: 0,
     AI_SIDE: game.BLACK, aiMoveStart: 0,
     practiceToken: 0, appState: 'NORMAL_GAME', editorState: null, recorderState: null,
@@ -76,7 +77,7 @@ function harness() {
     window: { confirm: () => false },
     performance: { now: () => context.clock },
     setTimeout: (callback) => context.timers.push(callback),
-    showGameOver: (checked) => context.shownResults.push(checked),
+    showGameOver: (endReason) => context.shownResults.push(endReason),
     puzzleFlowActive: () => context.appState !== 'NORMAL_GAME',
     URL: { revokeObjectURL: (url) => context.revoked.push(url),
       createObjectURL: () => { const url = `blob:new-${context.createdUrls.length}`; context.createdUrls.push(url); return url; } },
@@ -160,6 +161,130 @@ test('normal move/capture and both undos preserve the existing mesh invariant', 
   same(ctx.posHistory, [game.hashBoard(ctx.board)]);
   ctx.newGame();
   same(ctx.posHistory, [game.hashBoard(game.initialBoard())]);
+  same(ctx.repHistory, [{ key: game.hashBoard(game.initialBoard()) + '|red', mover: null, check: false }]);
+});
+
+function playNormal(ctx, from, to) {
+  assert.equal(ctx.board[from.r][from.c].side, ctx.turn);
+  assert.ok(game.legalMoves(ctx.board, from.r, from.c).some(m => m.r === to.r && m.c === to.c));
+  ctx.doMove(from, to);
+  ctx.flushAnimations();
+  invariant(ctx, ctx.board);
+  assert.equal(ctx.repHistory.length, ctx.history.length + 1);
+  assert.equal(ctx.repHistory.at(-1).key, game.hashBoard(ctx.board) + '|' + ctx.turn);
+}
+
+function repetitionFixture(perpetual = false) {
+  if (!perpetual) return { board: game.initialBoard(), turn: 'red', cycle: [
+    [{ r: 0, c: 1 }, { r: 2, c: 2 }], [{ r: 9, c: 1 }, { r: 7, c: 2 }],
+    [{ r: 2, c: 2 }, { r: 0, c: 1 }], [{ r: 7, c: 2 }, { r: 9, c: 1 }],
+  ] };
+  const board = editor.createEmptyEditorBoard();
+  board[0][3] = { type: 'K', side: 'red' };
+  board[7][0] = { type: 'R', side: 'red' };
+  board[7][4] = { type: 'K', side: 'black' };
+  return { board, turn: 'black', cycle: [
+    [{ r: 7, c: 4 }, { r: 8, c: 4 }], [{ r: 7, c: 0 }, { r: 8, c: 0 }],
+    [{ r: 8, c: 4 }, { r: 7, c: 4 }], [{ r: 8, c: 0 }, { r: 7, c: 0 }],
+  ] };
+}
+
+for (const perpetual of [false, true]) {
+  test(`normal ${perpetual ? 'perpetual check' : 'threefold draw'} adjudication, undo and reset`, () => {
+    const ctx = harness();
+    const setup = repetitionFixture(perpetual);
+    ctx.resetTo(setup.board, setup.turn);
+    same(ctx.repHistory, [{ key: game.hashBoard(ctx.board) + '|' + setup.turn, mover: null, check: false }]);
+    for (const move of setup.cycle) playNormal(ctx, ...move);
+    assert.equal(ctx.over, false, 'second occurrence is not terminal');
+    for (const move of setup.cycle) playNormal(ctx, ...move);
+    assert.equal(ctx.over, true);
+    assert.equal(ctx.winner, perpetual ? 'black' : null);
+    ctx.flushTimers();
+    same(ctx.shownResults, [perpetual ? '長將' : '三次重複局面']);
+    ctx.undo();
+    assert.equal(ctx.over, false);
+    assert.equal(ctx.winner, null);
+    assert.equal(ctx.repHistory.length, 8);
+    assert.equal(ctx.repHistory.at(-1).key, game.hashBoard(ctx.board) + '|' + ctx.turn);
+    playNormal(ctx, ...setup.cycle.at(-1));
+    assert.equal(ctx.over, true, 'replaying the undone move restores the verdict');
+    ctx.newGame();
+    ctx.flushTimers();
+    assert.equal(ctx.over, false);
+    same(ctx.shownResults, [perpetual ? '長將' : '三次重複局面'], 'new game cancels the old result');
+    same(ctx.repHistory, [{ key: game.hashBoard(ctx.board) + '|red', mover: null, check: false }]);
+  });
+}
+
+test('normal repetition history remains isolated across editor, recorder, practice and library', () => {
+  const ctx = harness();
+  ctx.newGame();
+  for (const move of repetitionFixture().cycle) playNormal(ctx, ...move);
+  const normalBoard = structuredClone(ctx.board);
+  const normalHistory = structuredClone(ctx.repHistory);
+  ctx.enterEditor();
+  const puzzle = fixture();
+  ctx.recorderState = recorder.createRecorder(puzzle);
+  ctx.appState = 'PUZZLE_RECORDING';
+  ctx.syncRecorderScene();
+  for (const move of puzzle.solution) {
+    ctx.doRecorderMove(move.from, move.to); ctx.flushAnimations();
+  }
+  ctx.practiceState = practice.createPractice(puzzle);
+  ctx.appState = 'PUZZLE_PRACTICING';
+  ctx.syncPracticeScene();
+  const first = practice.attemptPracticeMove(ctx.practiceState, puzzle.solution[0].from, puzzle.solution[0].to);
+  ctx.practiceState = first.practice; ctx.animatePracticeMove(first); ctx.flushAnimations();
+  ctx.flushTimers(); ctx.flushAnimations();
+  const last = practice.attemptPracticeMove(ctx.practiceState, puzzle.solution[2].from, puzzle.solution[2].to);
+  ctx.practiceState = last.practice; ctx.animatePracticeMove(last); ctx.flushAnimations();
+  assert.equal(ctx.appState, 'PUZZLE_PRACTICE_COMPLETE');
+  same(ctx.repHistory, normalHistory);
+  ctx.exitEditor();
+  ctx.enterLibrary();
+  same(ctx.repHistory, normalHistory);
+  ctx.exitEditor();
+  same(ctx.board, normalBoard);
+  same(ctx.repHistory, normalHistory);
+  for (const move of repetitionFixture().cycle) playNormal(ctx, ...move);
+  assert.equal(ctx.over, true);
+  assert.equal(ctx.winner, null, 'normal game resumes its own repetition count');
+});
+
+test('real result presenter treats draws neutrally and reports long-check loser correctly', () => {
+  for (const [mode, winner, reason, title] of [
+    ['pvp', null, '三次重複局面', '和局'], ['medium', null, '雙方長將', '和局'],
+    ['pvp', 'black', '長將', '黑方勝'], ['medium', 'black', '長將', '惜敗…'],
+  ]) {
+    const ctx = harness();
+    const calls = [];
+    Object.assign(ctx, { mode, winner, history: Array(8).fill({}), gameStartTime: Date.now(),
+      DIFF: { medium: { label: '中等', stars: 2 } }, SITE_URL: 'http://127.0.0.1:8000/',
+      isAI: () => mode !== 'pvp', fmtTime: () => '0:01',
+      startConfetti: () => calls.push('confetti'), stopConfetti: () => calls.push('stop'),
+      sfx: { win: () => calls.push('win'), lose: () => calls.push('lose') },
+    });
+    for (const id of ['ovCard', 'ovBadge', 'ovTitle', 'ovStars', 'ovSub', 'ovReason',
+      'stRounds', 'stTime', 'stCaps', 'stUndo', 'btnShare']) ctx[id] = node();
+    const classes = {};
+    ctx.ovCard.classList.toggle = (key, value) => { classes[key] = value; };
+    vm.runInContext(functionSource('showGameOver'), ctx);
+    ctx.showGameOver(reason);
+    assert.equal(ctx.ovTitle.textContent, title);
+    assert.equal(ctx.lastResult.draw, winner === null);
+    if (winner === null) {
+      assert.equal(ctx.ovStars.style.display, 'none');
+      assert.equal(ctx.btnShare.style.display, 'none');
+      assert.equal(classes.win, false); assert.equal(classes.lose, false);
+      assert.equal(ctx.ovReason.textContent, `${reason}，判和`);
+      assert.equal(ctx.lastResult.reasonChars, '和棋');
+      assert.deepEqual(calls, ['stop']);
+    } else {
+      assert.match(ctx.ovReason.textContent, /長將.*判負/);
+      assert.equal(ctx.lastResult.reasonChars, '長將');
+    }
+  }
 });
 
 test('integration retains upstream stage controls and unique puzzle DOM hooks', () => {

@@ -6,8 +6,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
   ROWS, COLS, RED, BLACK,
   initialBoard, legalMoves, applyMove, inCheck,
-  hasAnyLegalMove, name, notation, hashBoard,
-} from './game.js?v=681467f92f';
+  hasAnyLegalMove, name, notation, hashBoard, repetitionVerdict,
+} from './game.js?v=27a40f9997';
 import {
   PuzzleEditorError,
   createEditorState,
@@ -17,7 +17,7 @@ import {
   setEditorSideToMove,
   confirmAuthoredPosition,
   exportAuthoredPosition,
-} from './puzzle-editor.js?v=681467f92f';
+} from './puzzle-editor.js?v=27a40f9997';
 import {
   PuzzleRecorderError,
   createRecorder,
@@ -27,7 +27,7 @@ import {
   finishRecording,
   exportRecorderBoard,
   exportRecordedResult,
-} from './puzzle-recorder.js?v=681467f92f';
+} from './puzzle-recorder.js?v=27a40f9997';
 import {
   PuzzlePracticeError,
   createPractice,
@@ -35,8 +35,8 @@ import {
   applyOpponentReply,
   restartPractice,
   exportPracticeSnapshot,
-} from './puzzle-practice.js?v=681467f92f';
-import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=681467f92f';
+} from './puzzle-practice.js?v=27a40f9997';
+import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=27a40f9997';
 import {
   PHOTO_MAX_ZOOM,
   PHOTO_MIN_ZOOM,
@@ -50,7 +50,7 @@ import {
   validatePhotoMetadata,
   zoomPhotoIn,
   zoomPhotoOut,
-} from './puzzle-photo.js?v=681467f92f';
+} from './puzzle-photo.js?v=27a40f9997';
 import {
   CALIBRATION_CANONICAL_HEIGHT,
   CALIBRATION_CANONICAL_WIDTH,
@@ -66,7 +66,7 @@ import {
   setCorner,
   transformPoint,
   validateQuadrilateral,
-} from './puzzle-photo-calibration.js?v=681467f92f';
+} from './puzzle-photo-calibration.js?v=27a40f9997';
 import {
   PuzzlePhotoRecognitionError,
   RECOGNITION_OCCUPANCY_EMPTY,
@@ -78,7 +78,7 @@ import {
   isRecognitionTokenCurrent,
   recognizeIntersections,
   selectionKey,
-} from './puzzle-photo-recognition.js?v=681467f92f';
+} from './puzzle-photo-recognition.js?v=27a40f9997';
 import {
   addTemplate,
   createPieceTypeSessionToken,
@@ -88,13 +88,13 @@ import {
   normalizePiecePatch,
   removeTemplatesForSource,
   suggestUnresolvedPieceTypes,
-} from './puzzle-photo-piece-types.js?v=681467f92f';
+} from './puzzle-photo-piece-types.js?v=27a40f9997';
 import {
   UNREVIEWED, PuzzlePhotoReviewError,
   createReviewState, buildReviewQueue, selectReviewCandidate, confirmEmpty, confirmPiece,
   nextCandidate, previousCandidate, nextUnresolved, acceptHighConfidenceEmpty,
   undoBulkEmpty, resetReview, rescanReview, reviewProgress, confirmedSelections, buildReviewedBoard,
-} from './puzzle-photo-review.js?v=681467f92f';
+} from './puzzle-photo-review.js?v=27a40f9997';
 
 // ---------------- 常數 ----------------
 const CELL = 1;
@@ -500,6 +500,7 @@ let legal = [];        // 選中子的合法著法
 let pieces = [];       // 所有棋子 mesh
 let history = [];      // {from,to,captured,nota}
 let posHistory = [];   // 每步之後的局面雜湊，供 AI 避免重複局面
+let repHistory = [];   // {key,mover,check}：三次重複局面／長將判決用
 let capturedBy = { [RED]: [], [BLACK]: [] };
 let over = false, winner = null, busy = false;
 let gameStartTime = Date.now();
@@ -580,7 +581,7 @@ let aiMoveStart = 0;
 let aiWorker = null;
 let aiModule = null;   // Worker 不可用時的主執行緒後備
 try {
-  aiWorker = new Worker(new URL('./ai-worker.js?v=681467f92f', import.meta.url), { type: 'module' });
+  aiWorker = new Worker(new URL('./ai-worker.js?v=27a40f9997', import.meta.url), { type: 'module' });
   aiWorker.onmessage = (e) => onAIResult(e.data);
   aiWorker.onerror = () => {
     aiWorker = null;
@@ -602,7 +603,7 @@ function requestAIMove() {
   if (aiWorker) {
     aiWorker.postMessage(payload);
   } else {
-    (aiModule ??= import('./ai.js?v=681467f92f')).then(({ findBestMove }) => {
+    (aiModule ??= import('./ai.js?v=27a40f9997')).then(({ findBestMove }) => {
       setTimeout(() => {
         if (token !== aiToken) return;
         onAIResult({ token, result: findBestMove(payload.board, payload.side, payload.level, payload.recent) });
@@ -835,7 +836,7 @@ function refreshHUD() {
   } else if (appState === APP_STATE.PUZZLE_VIEW) {
     turnText.textContent = `檢視・${libraryViewPuzzle.title}`;
   } else if (over) {
-    turnText.textContent = winner === RED ? '紅方勝' : '黑方勝';
+    turnText.textContent = winner == null ? '和局' : winner === RED ? '紅方勝' : '黑方勝';
   } else if (aiThinking) {
     turnText.textContent = 'AI 思考中…';
   } else if (isAI()) {
@@ -2816,6 +2817,7 @@ function newGame() {
   board = initialBoard();
   turn = RED;
   posHistory = [hashBoard(board)];
+  repHistory = [{ key: hashBoard(board) + '|' + turn, mover: null, check: false }];
   gameStartTime = Date.now();
   undoCount = 0;
   stopConfetti();
@@ -2836,6 +2838,7 @@ function resetTo(customBoard, turnSide) {
   board = customBoard;
   if (turnSide) turn = turnSide;
   posHistory = [hashBoard(board)];
+  repHistory = [{ key: hashBoard(board) + '|' + turn, mover: null, check: false }];
   history = [];
   capturedBy = { [RED]: [], [BLACK]: [] };
   over = false;
@@ -2905,23 +2908,43 @@ function finishMove(nota, captured) {
   if (!invariant.ok) throw new Error(`Normal board/mesh invariant failed: ${invariant.errors.join(' ')}`);
   if (captured) capturedBy[turn].push(captured);
   addLog(nota, turn);
+  const mover = turn;
   turn = turn === RED ? BLACK : RED;
   busy = false;
 
   const checked = inCheck(board, turn);
   const has = hasAnyLegalMove(board, turn);
+  repHistory.push({ key: hashBoard(board) + '|' + turn, mover, check: checked });
+
+  let endReason = null; // '將死' | '困斃' | '長將' | '三次重複局面' | '雙方長將'
+  if (!has) {
+    over = true;
+    winner = turn === RED ? BLACK : RED;
+    endReason = checked ? '將死' : '困斃';
+  } else {
+    // 長將判負／三次重複局面判和
+    const verdict = repetitionVerdict(repHistory, repHistory[repHistory.length - 1].key);
+    if (verdict) {
+      over = true;
+      if (verdict.result === 'loss') {
+        winner = verdict.loser === RED ? BLACK : RED;
+        endReason = '長將';
+      } else {
+        winner = null;
+        endReason = verdict.reason;
+      }
+    }
+  }
   if (checked) {
     sfx.check();
     showBanner();
   }
-  if (!has) {
-    over = true;
-    winner = turn === RED ? BLACK : RED;
+  if (over) {
     refreshHUD();
     const token = aiToken;
     setTimeout(() => {
-      if (token === aiToken && !puzzleFlowActive() && over) showGameOver(checked);
-    }, checked ? 900 : 300);
+      if (token === aiToken && !puzzleFlowActive() && over) showGameOver(endReason);
+    }, endReason === '將死' ? 900 : 300);
   }
   refreshHUD();
   maybeAIMove();
@@ -2936,6 +2959,7 @@ function showBanner() {
 function undoPly() {
   const h = history.pop();
   posHistory.pop();
+  repHistory.pop();
   const p = pieceAt(h.to.r, h.to.c);
   applyMove(board, h.to, h.from);
   p.userData.r = h.from.r;
@@ -3089,20 +3113,28 @@ function toast(msg) {
   toastTimer = setTimeout(() => toastEl.classList.add('hidden'), 3600);
 }
 
-function showGameOver(checked) {
+function showGameOver(endReason) {
   const pvp = !isAI();
-  const playerWin = !pvp && winner !== AI_SIDE;
+  const draw = winner == null;
+  const playerWin = !pvp && !draw && winner !== AI_SIDE;
   const d = pvp ? null : DIFF[mode];
   const plies = Math.max(1, history.length); // 棋譜著法數
   const secs = Math.max(1, Math.round((Date.now() - gameStartTime) / 1000));
-  const caps = pvp ? capturedBy[winner].length : capturedBy[RED].length;
+  const caps = pvp ? capturedBy[winner ?? RED].length : capturedBy[RED].length;
   const pure = undoCount === 0; // 全程零悔棋：純度勳章
-  const reasonChars = checked ? '將死' : '困斃';
+  const reasonChars = draw ? '和棋' : endReason; // 戰績卡紅印：將死/困斃/長將/和棋
   const winLabel = winner === RED ? '紅方' : '黑方';
-  const celebrate = pvp || playerWin;
+  const celebrate = !draw && (pvp || playerWin);
 
   let title, sub, badge, cardTitle, cardSub, shareText;
-  if (pvp) {
+  if (draw) {
+    title = '和局';
+    sub = pvp ? '棋逢敵手，握手言和！' : '勢均力敵，不分勝負！';
+    badge = pvp ? '雙人對弈' : `人機對弈 ・ ${d.label}`;
+    cardTitle = '和局';
+    cardSub = `${pvp ? '雙人對弈' : `「${d.label}」AI`} ・ 鏖戰 ${plies} 著${pure ? ' ・ 零悔棋' : ''}`;
+    shareText = `我們在 3D 中國象棋鏖戰 ${plies} 著，弈和不分勝負！來對弈一局：${SITE_URL}`;
+  } else if (pvp) {
     title = `${winLabel}勝`;
     sub = '棋逢敵手，精彩對弈！';
     badge = '雙人對弈';
@@ -3124,12 +3156,12 @@ function showGameOver(checked) {
     badge = `人機對弈 ・ ${d.label}`;
   }
 
-  lastResult = { pvp, playerWin, d, plies, secs, caps, undoCount, pure, reasonChars, cardTitle, cardSub, shareText };
+  lastResult = { pvp, playerWin, draw, d, plies, secs, caps, undoCount, pure, reasonChars, cardTitle, cardSub, shareText };
 
   ovBadge.textContent = badge;
   ovTitle.textContent = title;
   ovSub.textContent = sub;
-  if (d) {
+  if (d && !draw) {
     ovStars.innerHTML = [1, 2, 3].map((i) =>
       `<span class="${i <= d.stars ? 'on' : ''}" style="animation-delay:${0.2 + i * 0.14}s">★</span>`
     ).join('');
@@ -3142,9 +3174,13 @@ function showGameOver(checked) {
   stCaps.textContent = caps;
   stUndo.textContent = undoCount;
   stUndo.classList.toggle('pure', pure);
-  ovReason.textContent = celebrate ? `以「${reasonChars}」取勝` : `遭「${reasonChars}」落敗`;
+  ovReason.textContent = draw
+    ? `${endReason}，判和`
+    : endReason === '長將'
+      ? (celebrate ? '對方「長將」判負' : '「長將」判負')
+      : (celebrate ? `以「${reasonChars}」取勝` : `遭「${reasonChars}」落敗`);
   ovCard.classList.toggle('win', celebrate);
-  ovCard.classList.toggle('lose', !celebrate);
+  ovCard.classList.toggle('lose', !celebrate && !draw);
   btnShare.style.display = celebrate ? '' : 'none';
   overlay.classList.remove('hidden');
   if (celebrate) {
@@ -3152,7 +3188,7 @@ function showGameOver(checked) {
     startConfetti();
   } else {
     stopConfetti();
-    sfx.lose();
+    if (!draw) sfx.lose();
   }
 }
 

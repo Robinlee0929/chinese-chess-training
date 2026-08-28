@@ -4,7 +4,7 @@
 // 難度：easy（淺層＋隨機）/ medium（3 層）/ hard（迭代加深至 6 層，殘局更深）
 // 加強：置換表、killer/history 排序、將軍延伸、應將靜態搜索、重複局面偵測
 // ============================================================
-import { ROWS, COLS, RED, BLACK, getMoves, legalMoves, kingsFacing, kingPos, inCheck, hashBoard } from './game.js?v=681467f92f';
+import { ROWS, COLS, RED, BLACK, getMoves, legalMoves, kingsFacing, kingPos, inCheck, hashBoard } from './game.js?v=27a40f9997';
 
 const INF = 1e9;
 const MATE = 100000;
@@ -557,9 +557,10 @@ export function findBestMove(srcBoard, side, level = 'medium', recent = []) {
         if (Math.abs(e.score) > MATE - 200) continue;
         const cap = make(b, e.m);
         const h = hashBoard(b);
+        const chk = inCheckFast(b, other(side)); // 走完後照將＝有長將判負風險
         unmake(b, e.m, cap);
         const n = seen.get(h) || 0;
-        if (n) e.score -= 12 * n;
+        if (n) e.score -= (chk ? 60 : 12) * n;
       }
       near.sort((a, b2) => b2.score - a.score);
     }
@@ -577,9 +578,10 @@ export function findBestMove(srcBoard, side, level = 'medium', recent = []) {
       if (Math.abs(e.score) > MATE - 200) continue;
       const cap = make(b, e.m);
       const h = hashBoard(b);
+      const chk = inCheckFast(b, other(side)); // 走完後照將＝有長將判負風險
       unmake(b, e.m, cap);
       const n = seen.get(h) || 0;
-      if (n) e.score -= 12 * n;
+      if (n) e.score -= (chk ? 60 : 12) * n;
     }
     scored.sort((a, b2) => b2.score - a.score);
   }
