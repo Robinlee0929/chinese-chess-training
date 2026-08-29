@@ -6,6 +6,10 @@
 
 > **手動擺盤 → 確認局面 → 錄製答案 → 開始練習 → 完成殺局**
 
+## 線上試玩
+
+本衍生專案已部署於 GitHub Pages：<https://robinlee0929.github.io/chinese-chess-training/>
+
 <p align="center">
   <img src="docs/assets/mate-puzzle-editor.png" alt="手動配置中國象棋殺局的局面編輯器" width="800">
 </p>
@@ -55,7 +59,7 @@ python -m http.server 8000
 
 ## Local persistence
 
-- 題目儲存在**目前網站來源、瀏覽器與使用者設定檔**的 `localStorage`；不同主機／連接埠或瀏覽器不共用題庫。沒有帳號、後端或跨裝置／跨瀏覽器同步。
+- 題目儲存在**目前網站來源、瀏覽器與使用者設定檔**的 `localStorage`。localhost 與 GitHub Pages 使用不同的瀏覽器儲存命名空間，因此 localhost 建立的題目不會自動出現在 Pages；Pages 題目仍只保存在該瀏覽器本機，沒有雲端或跨裝置同步。
 - **清除網站資料、瀏覽器儲存空間或移除設定檔會刪除本機題目。** 目前沒有題庫匯入／匯出備份功能；請自行保留重要局面與解法的外部紀錄。
 - 目前使用 `chinese-chess-training:puzzles:v1`，格式為 `{ version: 1, puzzles: [...] }`。只保存題目 ID、名稱、10×9 棋盤、先行方、答案、標籤／筆記、時間與練習計數，不保存照片處理資料。
 - 無效 JSON、不支援版本或個別壞題目會顯示問題；有效記錄仍可讀取，含損壞記錄的題庫不會被修改操作覆寫。重複 ID 只顯示第一筆有效記錄並阻止修改。瀏覽器拒絕讀寫或空間不足時會提示失敗，不會假裝儲存成功。
@@ -81,7 +85,7 @@ python -m http.server 8000
 
 ## 部署與快取
 
-本衍生專案正在準備 GitHub Pages 部署，但尚未啟用，目前沒有已驗證的衍生專案線上試玩網址。靜態主機的快取標頭取決於實際部署；本專案以「**內容雜湊版本號**」更新 JS/CSS 引用：每次更新 JS/CSS 後、push 前執行
+本衍生專案已透過 GitHub Pages 上線：<https://robinlee0929.github.io/chinese-chess-training/>。靜態主機的快取標頭取決於實際部署；本專案以「**內容雜湊版本號**」更新 JS/CSS 引用：每次更新 JS/CSS 後、push 前執行
 
 ```bash
 node tools/bump-cache.mjs           # 重算雜湊並改寫所有引用位址
