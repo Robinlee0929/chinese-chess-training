@@ -7,7 +7,7 @@ import {
   ROWS, COLS, RED, BLACK,
   initialBoard, legalMoves, applyMove, inCheck,
   hasAnyLegalMove, name, notation, hashBoard, repetitionVerdict,
-} from './game.js?v=27a40f9997';
+} from './game.js?v=a1f6281687';
 import {
   PuzzleEditorError,
   createEditorState,
@@ -17,7 +17,7 @@ import {
   setEditorSideToMove,
   confirmAuthoredPosition,
   exportAuthoredPosition,
-} from './puzzle-editor.js?v=27a40f9997';
+} from './puzzle-editor.js?v=a1f6281687';
 import {
   PuzzleRecorderError,
   createRecorder,
@@ -27,7 +27,7 @@ import {
   finishRecording,
   exportRecorderBoard,
   exportRecordedResult,
-} from './puzzle-recorder.js?v=27a40f9997';
+} from './puzzle-recorder.js?v=a1f6281687';
 import {
   PuzzlePracticeError,
   createPractice,
@@ -35,8 +35,8 @@ import {
   applyOpponentReply,
   restartPractice,
   exportPracticeSnapshot,
-} from './puzzle-practice.js?v=27a40f9997';
-import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=27a40f9997';
+} from './puzzle-practice.js?v=a1f6281687';
+import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=a1f6281687';
 import {
   PHOTO_MAX_ZOOM,
   PHOTO_MIN_ZOOM,
@@ -50,7 +50,7 @@ import {
   validatePhotoMetadata,
   zoomPhotoIn,
   zoomPhotoOut,
-} from './puzzle-photo.js?v=27a40f9997';
+} from './puzzle-photo.js?v=a1f6281687';
 import {
   CALIBRATION_CANONICAL_HEIGHT,
   CALIBRATION_CANONICAL_WIDTH,
@@ -66,7 +66,7 @@ import {
   setCorner,
   transformPoint,
   validateQuadrilateral,
-} from './puzzle-photo-calibration.js?v=27a40f9997';
+} from './puzzle-photo-calibration.js?v=a1f6281687';
 import {
   PuzzlePhotoRecognitionError,
   RECOGNITION_OCCUPANCY_EMPTY,
@@ -78,7 +78,7 @@ import {
   isRecognitionTokenCurrent,
   recognizeIntersections,
   selectionKey,
-} from './puzzle-photo-recognition.js?v=27a40f9997';
+} from './puzzle-photo-recognition.js?v=a1f6281687';
 import {
   addTemplate,
   createPieceTypeSessionToken,
@@ -88,13 +88,13 @@ import {
   normalizePiecePatch,
   removeTemplatesForSource,
   suggestUnresolvedPieceTypes,
-} from './puzzle-photo-piece-types.js?v=27a40f9997';
+} from './puzzle-photo-piece-types.js?v=a1f6281687';
 import {
   UNREVIEWED, PuzzlePhotoReviewError,
   createReviewState, buildReviewQueue, selectReviewCandidate, confirmEmpty, confirmPiece,
   nextCandidate, previousCandidate, nextUnresolved, acceptHighConfidenceEmpty,
   undoBulkEmpty, resetReview, rescanReview, reviewProgress, confirmedSelections, buildReviewedBoard,
-} from './puzzle-photo-review.js?v=27a40f9997';
+} from './puzzle-photo-review.js?v=a1f6281687';
 
 // ---------------- 常數 ----------------
 const CELL = 1;
@@ -581,7 +581,7 @@ let aiMoveStart = 0;
 let aiWorker = null;
 let aiModule = null;   // Worker 不可用時的主執行緒後備
 try {
-  aiWorker = new Worker(new URL('./ai-worker.js?v=27a40f9997', import.meta.url), { type: 'module' });
+  aiWorker = new Worker(new URL('./ai-worker.js?v=a1f6281687', import.meta.url), { type: 'module' });
   aiWorker.onmessage = (e) => onAIResult(e.data);
   aiWorker.onerror = () => {
     aiWorker = null;
@@ -603,7 +603,7 @@ function requestAIMove() {
   if (aiWorker) {
     aiWorker.postMessage(payload);
   } else {
-    (aiModule ??= import('./ai.js?v=27a40f9997')).then(({ findBestMove }) => {
+    (aiModule ??= import('./ai.js?v=a1f6281687')).then(({ findBestMove }) => {
       setTimeout(() => {
         if (token !== aiToken) return;
         onAIResult({ token, result: findBestMove(payload.board, payload.side, payload.level, payload.recent) });
@@ -3082,7 +3082,7 @@ renderer.domElement.addEventListener('click', (e) => {
 });
 
 // ---------------- 終局畫面 / 彩帶 / 分享 ----------------
-const SITE_URL = 'https://chinese-chess.gh.miniasp.com/';
+const SITE_URL = 'https://robinlee0929.github.io/chinese-chess-training/';
 const DIFF = {
   easy:   { label: '簡單', stars: 1, winTitle: '旗開得勝！', winSub: '小試身手就拿下 AI，好的開始！' },
   medium: { label: '中等', stars: 2, winTitle: '運籌帷幄！', winSub: '攻守有度，中等 AI 也不是你的對手！' },
@@ -3357,7 +3357,7 @@ async function buildShareCard(res) {
   g.fillText('不 服 來 戰', W / 2, 1262);
   g.fillStyle = '#9a8a74';
   g.font = `500 28px ${sans}`;
-  g.fillText('chinese-chess.gh.miniasp.com', W / 2, 1306);
+  g.fillText('robinlee0929.github.io/chinese-chess-training', W / 2, 1306);
 
   return cv;
 }

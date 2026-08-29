@@ -3,24 +3,24 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>中國象棋 · Three.js 3D</title>
+<title>中國象棋殺局訓練 · Xiangqi Mate Puzzle</title>
 
 <!-- SEO -->
-<meta name="description" content="用 Three.js 打造的 3D 互動中國象棋，支援人機對弈（AI 分簡單、中等、困難三級）與雙人對戰。完整規則引擎：將軍、將死、困斃、長將判負、三次重複局面判和、蹩馬腿、塞象眼、炮翻山、白臉將，並以傳統棋譜記法記錄著法。免費線上遊玩，無需安裝。">
+<meta name="description" content="非官方中國象棋衍生／擴充：使用 Three.js 3D 棋盤建立殺局、錄製解答並反覆練習，也支援人機與雙人對弈。">
 <meta name="author" content="Will 保哥">
 <meta name="theme-color" content="#171310">
 <link rel="icon" href="./favicon.ico" sizes="16x16 32x32 48x48">
 <link rel="apple-touch-icon" href="./apple-touch-icon.png">
-<link rel="canonical" href="https://chinese-chess.gh.miniasp.com/">
+<link rel="canonical" href="https://robinlee0929.github.io/chinese-chess-training/">
 
 <!-- Open Graph -->
 <meta property="og:type" content="website">
-<meta property="og:site_name" content="中國象棋 · Three.js 3D">
-<meta property="og:title" content="中國象棋 · Three.js 3D">
-<meta property="og:description" content="用 Three.js 打造的 3D 互動中國象棋，支援人機對弈（三級 AI 難度）與雙人對戰。完整規則引擎與傳統棋譜記法，免費線上遊玩。">
-<meta property="og:url" content="https://chinese-chess.gh.miniasp.com/">
+<meta property="og:site_name" content="中國象棋殺局訓練">
+<meta property="og:title" content="中國象棋殺局訓練 · Xiangqi Mate Puzzle">
+<meta property="og:description" content="非官方中國象棋衍生／擴充：建立殺局、錄製解答並反覆練習，也支援人機與雙人對弈。">
+<meta property="og:url" content="https://robinlee0929.github.io/chinese-chess-training/">
 <meta property="og:locale" content="zh_TW">
-<meta property="og:image" content="https://chinese-chess.gh.miniasp.com/og-image.jpg?v=20260826">
+<meta property="og:image" content="https://robinlee0929.github.io/chinese-chess-training/og-image.jpg?v=20260826">
 <meta property="og:image:type" content="image/jpeg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -28,20 +28,20 @@
 
 <!-- Twitter Card -->
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="中國象棋 · Three.js 3D">
-<meta name="twitter:description" content="用 Three.js 打造的 3D 互動中國象棋，支援人機對弈（三級 AI 難度）與雙人對戰。完整規則引擎與傳統棋譜記法，免費線上遊玩。">
-<meta name="twitter:image" content="https://chinese-chess.gh.miniasp.com/og-image.jpg?v=20260826">
+<meta name="twitter:title" content="中國象棋殺局訓練 · Xiangqi Mate Puzzle">
+<meta name="twitter:description" content="非官方中國象棋衍生／擴充：建立殺局、錄製解答並反覆練習，也支援人機與雙人對弈。">
+<meta name="twitter:image" content="https://robinlee0929.github.io/chinese-chess-training/og-image.jpg?v=20260826">
 
 <!-- JSON-LD -->
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
   "@type": "VideoGame",
-  "name": "中國象棋 · Three.js 3D",
-  "alternateName": "Chinese Chess (Xiangqi) 3D",
-  "description": "用 Three.js 打造的 3D 互動中國象棋，支援人機對弈（AI 分簡單、中等、困難三級）與雙人對戰。完整規則引擎：將軍、將死、困斃、長將判負、三次重複局面判和、蹩馬腿、塞象眼、炮翻山、白臉將，並以傳統棋譜記法記錄著法。",
-  "url": "https://chinese-chess.gh.miniasp.com/",
-  "image": "https://chinese-chess.gh.miniasp.com/og-image.jpg?v=20260826",
+  "name": "中國象棋殺局訓練 · Xiangqi Mate Puzzle",
+  "alternateName": "Chinese Chess Mate Puzzle Training",
+  "description": "非官方中國象棋衍生／擴充：使用 Three.js 3D 棋盤建立殺局、錄製解答並反覆練習，也支援人機與雙人對弈。",
+  "url": "https://robinlee0929.github.io/chinese-chess-training/",
+  "image": "https://robinlee0929.github.io/chinese-chess-training/og-image.jpg?v=20260826",
   "inLanguage": "zh-Hant",
   "genre": ["棋類遊戲", "策略遊戲"],
   "gamePlatform": "Web Browser",
@@ -64,11 +64,12 @@
     "name": "Will 保哥",
     "url": "https://www.facebook.com/will.fans/"
   },
-  "license": "https://github.com/doggy8088/chinese-chess/blob/main/LICENSE",
-  "sameAs": ["https://github.com/doggy8088/chinese-chess"]
+  "license": "https://github.com/Robinlee0929/chinese-chess-training/blob/main/LICENSE",
+  "sameAs": ["https://github.com/Robinlee0929/chinese-chess-training"],
+  "isBasedOn": "https://github.com/doggy8088/chinese-chess"
 }
 </script>
-<link rel="stylesheet" href="./css/style.css?v=27a40f9997">
+<link rel="stylesheet" href="./css/style.css?v=a1f6281687">
 <script type="importmap">
 {
   "imports": {
@@ -102,7 +103,7 @@
         <button id="btnSound" type="button" aria-pressed="true">音效：開</button>
         <button id="btnView" type="button" title="循環切換：紅方 → 黑方 → 側面 → 俯視">視角</button>
         <button id="btnFull" type="button" aria-pressed="false">全螢幕</button>
-        <a id="repoLink" href="https://github.com/doggy8088/chinese-chess" target="_blank" rel="noopener" title="在 GitHub 檢視原始碼">
+        <a id="repoLink" href="https://github.com/Robinlee0929/chinese-chess-training" target="_blank" rel="noopener" title="在 GitHub 檢視原始碼">
           <svg viewBox="0 0 16 16" aria-hidden="true" width="15" height="15" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-2.92-.89-2.92-2.75 0-.53.19-1.07.5-1.48-.05-.12-.22-.62.05-1.29 0 0 .61-.19 2 .74a4.7 4.7 0 0 1 2.55 0c1.39-.94 2-.74 2-.74.27.67.1 1.17.05 1.29.31.41.5.94.5 1.48 0 1.87-1.14 2.55-2.93 2.75.29.25.55.74.55 1.5 0 1.08-.01 1.96-.01 2.23 0 .21.15.46.55.38A7.99 7.99 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
           <span>GitHub</span>
         </a>
@@ -491,6 +492,6 @@
   <div id="toast" class="hidden" role="status"></div>
 </div>
 
-<script type="module" src="./main.js?v=27a40f9997"></script>
+<script type="module" src="./main.js?v=a1f6281687"></script>
 </body>
 </html>
