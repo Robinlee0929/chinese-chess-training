@@ -6,6 +6,10 @@
 
 > **手動擺盤 → 確認局面 → 錄製答案 → 開始練習 → 完成殺局**
 
+<p align="center">
+  <img src="docs/assets/mate-puzzle-editor.png" alt="手動配置中國象棋殺局的局面編輯器" width="800">
+</p>
+
 ## Quick Start
 
 ```bash
