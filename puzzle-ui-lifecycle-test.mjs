@@ -9,7 +9,8 @@ import * as practice from './puzzle-practice.js';
 import * as review from './puzzle-photo-review.js';
 import * as photo from './puzzle-photo.js';
 import * as pieceTypes from './puzzle-photo-piece-types.js';
-import { createPuzzleStore } from './puzzle-store.js';
+import * as transfer from './puzzle-transfer.js';
+import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js';
 
 // Execute the real UI lifecycle functions with a deterministic clock and minimal
 // rendering/DOM doubles. No browser globals are injected and no UI logic is copied.
@@ -47,7 +48,8 @@ function harness() {
   const scene = { children: [], add(mesh) { this.children.push(mesh); mesh.parent = this; },
     remove(mesh) { this.children = this.children.filter((entry) => entry !== mesh); mesh.parent = null; } };
   const context = vm.createContext({
-    ...game, ...editor, ...recorder, ...practice, ...review, ...photo, ...pieceTypes,
+    ...game, ...editor, ...recorder, ...practice, ...review, ...photo, ...pieceTypes, ...transfer,
+    PuzzleStoreError, Blob,
     scene, Y0: 0.18, pieces: [], tweens: [], clock: 0, timers: [], shownResults: [],
     board: game.initialBoard(), turn: game.RED, history: [],
     posHistory: [game.hashBoard(game.initialBoard())], capturedBy: { red: [], black: [] },
@@ -60,6 +62,7 @@ function harness() {
     photoLoadToken: 0, photoRecognitionVersion: 0, calibrationRecognitionVersion: 0,
     pieceTypeRecognitionVersion: 0, photoObjectUrl: null, pendingPhotoObjectUrl: null, createdUrls: [],
     savedCurrentPuzzleId: null,
+    pendingPuzzleImport: null, puzzleImportToken: 0,
     photoReferenceState: photo.createPhotoReferenceState(), calibrationState: null,
     rectifiedPhotoPixels: null, confirmedCalibration: null, revoked: [],
     APP_STATE: Object.fromEntries(['NORMAL_GAME', 'PUZZLE_EDITOR', 'PUZZLE_CONFIRMED',
@@ -79,13 +82,16 @@ function harness() {
     setTimeout: (callback) => context.timers.push(callback),
     showGameOver: (endReason) => context.shownResults.push(endReason),
     puzzleFlowActive: () => context.appState !== 'NORMAL_GAME',
+    libraryActive: () => ['PUZZLE_LIBRARY', 'PUZZLE_VIEW'].includes(context.appState),
     URL: { revokeObjectURL: (url) => context.revoked.push(url),
       createObjectURL: () => { const url = `blob:new-${context.createdUrls.length}`; context.createdUrls.push(url); return url; } },
     Date,
     to3D: (r, c) => vector(c - 4, 0, 4.5 - r),
   });
   for (const name of ['appEl', 'editorPanel', 'recorderPanel', 'libraryPanel', 'banner',
-    'overlay', 'logEl', 'logEmpty', 'photoPreviewImage', 'photoFileInput']) context[name] = node();
+    'overlay', 'logEl', 'logEmpty', 'photoPreviewImage', 'photoFileInput', 'puzzleImportFile',
+    'libraryTransferStatus', 'libraryImportPreview', 'libraryImportPreviewText',
+    'btnLibraryImportConfirm']) context[name] = node();
   for (const name of photoCanvasNames) context[name] = name === 'recognitionTargetCanvas'
     ? photoCanvas(112, 112) : photoCanvas();
   context.lastFromMark = { visible: false };
@@ -105,7 +111,9 @@ function harness() {
     'restartCurrentPractice', 'resetRecognitionReview', 'invalidateRecognition',
     'invalidateRecognitionForCalibrationChange', 'invalidateCalibration', 'releasePhotoReference',
     'enterEditor', 'exitEditor', 'enterLibrary', 'markEditorDirty', 'onAIResult',
-    'loadSelectedPhoto', 'photoErrorMessage'];
+    'loadSelectedPhoto', 'photoErrorMessage', 'storeErrorMessage', 'transferErrorMessage',
+    'setLibraryTransferStatus', 'preparePuzzleImportPreview', 'clearPendingPuzzleImport',
+    'downloadPuzzleTransfer', 'loadPuzzleImportFile', 'cancelPuzzleImport', 'confirmPuzzleImport'];
   vm.runInContext(names.map(functionSource).join('\n'), context);
   context.flushAnimations = () => {
     let guard = 0;
@@ -633,4 +641,183 @@ test('rebuild and capture release per-piece GPU resources, preserving shared mat
   ctx.doMove({ r: 2, c: 1 }, { r: 9, c: 1 }); ctx.flushAnimations();
   assert.equal(captured.material[1].disposed, true);
   assert.equal(captured.material[1].map.disposed, true);
+});
+
+function portableFixture(id = 'ui-transfer', title = 'UI 匯入題') {
+  return { id, title, ...fixture(), tags: ['UI'], notes: '<img onerror=alert(1)> 純文字' };
+}
+
+function transferText(puzzles) {
+  return transfer.serializePuzzleExport(puzzles, { now: () => '2026-08-30T04:00:00.000Z' });
+}
+
+test('real preview selector reports valid, importable and collision counts without mutation', () => {
+  const ctx = harness();
+  const incoming = [portableFixture('existing'), portableFixture('new')];
+  const preview = ctx.preparePuzzleImportPreview(incoming, [{ id: 'existing' }]);
+  same(preview, {
+    totalValidCount: 2, importableCount: 1, skippedCollisionCount: 1, skippedIds: ['existing'],
+  });
+  assert.equal(Object.isFrozen(preview), true);
+  assert.equal(Object.isFrozen(preview.skippedIds), true);
+});
+
+test('file preview is non-mutating, repeatable for the same file and renders imported text safely', async () => {
+  const ctx = harness();
+  ctx.appState = 'PUZZLE_LIBRARY';
+  let writes = 0;
+  const memory = new Map();
+  ctx.puzzleStore = createPuzzleStore({
+    storage: {
+      getItem: (key) => memory.get(key) ?? null,
+      setItem(key, value) { writes++; memory.set(key, value); },
+    },
+  });
+  const text = transferText([portableFixture()]);
+  const file = { size: new TextEncoder().encode(text).byteLength, text: async () => text };
+  ctx.puzzleImportFile.value = 'chosen.json';
+  await ctx.loadPuzzleImportFile(file);
+  assert.equal(ctx.pendingPuzzleImport.preview.totalValidCount, 1);
+  assert.equal(ctx.pendingPuzzleImport.preview.importableCount, 1);
+  assert.equal(ctx.puzzleImportFile.value, '');
+  assert.equal(writes, 0);
+  assert.equal(ctx.libraryImportPreviewText.textContent.includes('可匯入 1 題'), true);
+  assert.equal(ctx.libraryImportPreviewText.innerHTML, '');
+  await ctx.loadPuzzleImportFile(file);
+  assert.equal(ctx.pendingPuzzleImport.puzzles[0].notes, '<img onerror=alert(1)> 純文字');
+  assert.equal(writes, 0, 're-selecting the same file only refreshes preview');
+});
+
+test('noncanonical imported ID is rejected before preview or storage mutation', async () => {
+  const ctx = harness();
+  ctx.appState = 'PUZZLE_LIBRARY';
+  let writes = 0;
+  const memory = new Map();
+  ctx.puzzleStore = createPuzzleStore({
+    storage: {
+      getItem: (key) => memory.get(key) ?? null,
+      setItem(key, value) { writes++; memory.set(key, value); },
+    },
+  });
+  const transferEnvelope = JSON.parse(transferText([portableFixture('abc')]));
+  transferEnvelope.puzzles[0].id = ' abc ';
+  const text = JSON.stringify(transferEnvelope);
+  await ctx.loadPuzzleImportFile({
+    size: new TextEncoder().encode(text).byteLength,
+    text: async () => text,
+  });
+  assert.equal(ctx.pendingPuzzleImport, null);
+  assert.equal(ctx.libraryTransferStatus.textContent, '檔案內含無效的殺局題目。');
+  assert.equal(writes, 0);
+});
+
+test('cancel leaves exact storage unchanged and clears pending import', async () => {
+  const ctx = harness();
+  ctx.appState = 'PUZZLE_LIBRARY';
+  const memory = new Map();
+  let writes = 0;
+  ctx.puzzleStore = createPuzzleStore({
+    storage: {
+      getItem: (key) => memory.get(key) ?? null,
+      setItem(key, value) { writes++; memory.set(key, value); },
+    },
+    now: () => '2026-08-30T03:00:00.000Z',
+  });
+  ctx.puzzleStore.importPuzzles([portableFixture('existing')]);
+  const before = memory.get('chinese-chess-training:puzzles:v1');
+  writes = 0;
+  const text = transferText([portableFixture()]);
+  await ctx.loadPuzzleImportFile({ size: text.length, text: async () => text });
+  ctx.cancelPuzzleImport();
+  assert.equal(ctx.pendingPuzzleImport, null);
+  assert.equal(writes, 0);
+  assert.equal(memory.get('chinese-chess-training:puzzles:v1'), before);
+  assert.equal(ctx.libraryTransferStatus.textContent.includes('未變更'), true);
+});
+
+test('confirm calls the real atomic store path once and refreshes status', async () => {
+  const ctx = harness();
+  ctx.appState = 'PUZZLE_LIBRARY';
+  const memory = new Map();
+  let writes = 0;
+  ctx.puzzleStore = createPuzzleStore({
+    storage: {
+      getItem: (key) => memory.get(key) ?? null,
+      setItem(key, value) { writes++; memory.set(key, value); },
+    },
+    now: () => '2026-08-30T05:00:00.000Z',
+  });
+  const text = transferText([portableFixture()]);
+  await ctx.loadPuzzleImportFile({ size: text.length, text: async () => text });
+  ctx.confirmPuzzleImport();
+  assert.equal(writes, 1);
+  assert.equal(ctx.pendingPuzzleImport, null);
+  assert.equal(ctx.puzzleStore.getPuzzle('ui-transfer').practiceCount, 0);
+  assert.equal(ctx.libraryTransferStatus.textContent, '匯入完成：新增 1 題，略過既有 ID 0 題。');
+});
+
+test('exact-ID collision preview and store result agree without a write', async () => {
+  const ctx = harness();
+  ctx.appState = 'PUZZLE_LIBRARY';
+  const memory = new Map();
+  let writes = 0;
+  ctx.puzzleStore = createPuzzleStore({
+    storage: {
+      getItem: (key) => memory.get(key) ?? null,
+      setItem(key, value) { writes++; memory.set(key, value); },
+    },
+    now: () => '2026-08-30T05:00:00.000Z',
+  });
+  ctx.puzzleStore.importPuzzles([portableFixture()]);
+  writes = 0;
+  const text = transferText([portableFixture()]);
+  await ctx.loadPuzzleImportFile({ size: text.length, text: async () => text });
+  assert.equal(ctx.pendingPuzzleImport.preview.totalValidCount, 1);
+  assert.equal(ctx.pendingPuzzleImport.preview.importableCount, 0);
+  assert.equal(ctx.pendingPuzzleImport.preview.skippedCollisionCount, 1);
+  assert.equal(ctx.btnLibraryImportConfirm.disabled, true);
+  const result = ctx.puzzleStore.importPuzzles(ctx.pendingPuzzleImport.puzzles);
+  assert.deepEqual(result, {
+    importedCount: 0, skippedCount: 1, importedIds: [], skippedIds: ['ui-transfer'],
+  });
+  ctx.confirmPuzzleImport();
+  assert.equal(writes, 0);
+});
+
+test('download creates and revokes one local object URL', () => {
+  const ctx = harness();
+  let clicked = 0;
+  let appended = 0;
+  ctx.document = {
+    ...ctx.document,
+    body: { appendChild() { appended++; } },
+    createElement: (tag) => {
+      assert.equal(tag, 'a');
+      return { href: '', download: '', hidden: false, click() { clicked++; }, remove: noop };
+    },
+  };
+  const text = ctx.downloadPuzzleTransfer([portableFixture()], 'puzzle.json');
+  assert.equal(JSON.parse(text).puzzles.length, 1);
+  assert.equal(appended, 1);
+  assert.equal(clicked, 1);
+  assert.deepEqual(ctx.createdUrls, ['blob:new-0']);
+  assert.deepEqual(ctx.revoked, []);
+  ctx.flushTimers();
+  assert.deepEqual(ctx.revoked, ['blob:new-0']);
+});
+
+test('late file read after leaving the library cannot restore pending import state', async () => {
+  const ctx = harness();
+  ctx.appState = 'PUZZLE_LIBRARY';
+  ctx.puzzleStore = createPuzzleStore({ storage: { getItem: () => null, setItem: noop } });
+  let finish;
+  const pending = ctx.loadPuzzleImportFile({
+    size: 1,
+    text: () => new Promise((resolve) => { finish = resolve; }),
+  });
+  ctx.exitEditor();
+  finish(transferText([portableFixture()]));
+  await pending;
+  assert.equal(ctx.pendingPuzzleImport, null);
+  assert.equal(ctx.appState, 'NORMAL_GAME');
 });

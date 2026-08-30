@@ -69,7 +69,7 @@
   "isBasedOn": "https://github.com/doggy8088/chinese-chess"
 }
 </script>
-<link rel="stylesheet" href="./css/style.css?v=a1f6281687">
+<link rel="stylesheet" href="./css/style.css?v=fae10dbd73">
 <script type="importmap">
 {
   "imports": {
@@ -431,6 +431,22 @@
         </div>
         <span id="libraryCount" class="editor-badge">0 題</span>
       </div>
+      <div class="library-transfer-actions" aria-label="題庫匯入與匯出">
+        <button id="btnLibraryExportAll" type="button" disabled>匯出全部</button>
+        <button id="btnLibraryImport" type="button">匯入 JSON</button>
+        <label class="visually-hidden" for="puzzleImportFile">選擇殺局 JSON 匯入檔案</label>
+        <input id="puzzleImportFile" class="visually-hidden" type="file"
+          accept=".json,application/json" aria-describedby="libraryTransferStatus" tabindex="-1">
+      </div>
+      <p id="libraryTransferStatus" class="library-transfer-status" role="status" aria-live="polite"></p>
+      <section id="libraryImportPreview" class="library-import-preview hidden" aria-label="匯入預覽">
+        <p id="libraryImportPreviewText"></p>
+        <p>確認後只會新增 ID 不衝突的題目；既有題目不會被覆寫。</p>
+        <div class="library-import-preview-actions">
+          <button id="btnLibraryImportConfirm" type="button" class="recorder-primary" disabled>確認匯入</button>
+          <button id="btnLibraryImportCancel" type="button">取消</button>
+        </div>
+      </section>
       <p id="libraryIssues" class="library-issues hidden" role="status"></p>
       <div id="libraryList"></div>
       <p id="libraryEmpty">尚未儲存任何殺局。</p>
@@ -445,6 +461,7 @@
         </div>
         <div class="library-detail-actions">
           <button id="btnLibraryDetailPractice" type="button" class="recorder-primary">開始練習</button>
+          <button id="btnLibraryDetailExport" type="button">匯出此題</button>
           <button id="btnLibraryDetailDelete" type="button" class="danger">刪除</button>
         </div>
       </section>
@@ -492,6 +509,6 @@
   <div id="toast" class="hidden" role="status"></div>
 </div>
 
-<script type="module" src="./main.js?v=a1f6281687"></script>
+<script type="module" src="./main.js?v=fae10dbd73"></script>
 </body>
 </html>

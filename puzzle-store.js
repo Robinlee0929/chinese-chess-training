@@ -1,4 +1,4 @@
-import { validatePuzzle, isCheckmateAfterSolution } from './puzzle-domain.js?v=a1f6281687';
+import { validatePuzzle, isCheckmateAfterSolution } from './puzzle-domain.js?v=fae10dbd73';
 
 export const PUZZLE_STORAGE_VERSION = 1;
 export const PUZZLE_STORAGE_KEY = 'chinese-chess-training:puzzles:v1';
@@ -94,6 +94,59 @@ export function createPuzzleStore({
     return cloneRecord(record);
   }
 
+  function importPuzzles(puzzles) {
+    if (!Array.isArray(puzzles)) {
+      throw new PuzzleStoreError('INVALID_IMPORT', 'Imported puzzles must be an array.');
+    }
+    const incoming = [];
+    const incomingIds = new Set();
+    for (const raw of puzzles) {
+      const id = requireImportedId(raw?.id);
+      if (incomingIds.has(id)) {
+        throw new PuzzleStoreError('DUPLICATE_ID', `Duplicate imported puzzle ID: ${id}`, { id });
+      }
+      incomingIds.add(id);
+      const title = requireImportedTitle(raw?.title);
+      const tags = validateImportedTags(raw?.tags);
+      const chess = validateChessData({
+        id,
+        title,
+        initialBoard: raw?.initialBoard,
+        sideToMove: raw?.sideToMove,
+        solution: raw?.solution,
+        tags,
+      });
+      incoming.push({
+        id,
+        title,
+        initialBoard: chess.initialBoard,
+        sideToMove: chess.sideToMove,
+        solution: chess.solution,
+        tags,
+        notes: validateImportedNotes(raw?.notes),
+      });
+    }
+    if (incoming.length === 0) return freezeImportSummary([], []);
+
+    const records = recordsForMutation();
+    const existingIds = new Set(records.map((record) => record.id));
+    const skippedIds = incoming.filter((record) => existingIds.has(record.id)).map((record) => record.id);
+    const importable = incoming.filter((record) => !existingIds.has(record.id));
+    if (importable.length === 0) return freezeImportSummary([], skippedIds);
+
+    const timestamp = normalizeTimestamp(now(), 'now');
+    const imported = importable.map((record) => validateStoredRecord({
+      ...record,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      practiceCount: 0,
+      completedCount: 0,
+      lastPracticedAt: null,
+    }));
+    writeRecords([...records, ...imported]);
+    return freezeImportSummary(imported.map((record) => record.id), skippedIds);
+  }
+
   function updatePuzzleMetadata(id, updates = {}) {
     requireId(id);
     const records = recordsForMutation();
@@ -178,10 +231,22 @@ export function createPuzzleStore({
     listPuzzles,
     getPuzzle,
     savePuzzle,
+    importPuzzles,
     updatePuzzleMetadata,
     deletePuzzle,
     markPracticeStarted,
     markPracticeCompleted,
+  });
+}
+
+function freezeImportSummary(importedIds, skippedIds) {
+  const imported = Object.freeze([...importedIds]);
+  const skipped = Object.freeze([...skippedIds]);
+  return Object.freeze({
+    importedCount: imported.length,
+    skippedCount: skipped.length,
+    importedIds: imported,
+    skippedIds: skipped,
   });
 }
 
@@ -216,7 +281,7 @@ function validateStoredRecord(raw) {
   }
   const id = requireId(raw.id);
   const title = requireTitle(raw.title);
-  const tags = normalizeTags(raw.tags);
+  const tags = validateTags(raw.tags);
   const chess = validateChessData({
     id,
     title,
@@ -237,7 +302,7 @@ function validateStoredRecord(raw) {
     sideToMove: chess.sideToMove,
     solution: chess.solution,
     tags,
-    notes: normalizeNotes(raw.notes),
+    notes: validateNotes(raw.notes),
     createdAt,
     updatedAt,
     practiceCount: normalizeCount(raw.practiceCount, 'practiceCount'),
@@ -297,6 +362,48 @@ function requireTitle(title) {
     throw new PuzzleStoreError('EMPTY_TITLE', 'Puzzle title is required.');
   }
   return title.trim();
+}
+
+function requireImportedId(id) {
+  const value = requireId(id);
+  if (value !== id) {
+    throw new PuzzleStoreError('INVALID_ID', 'Imported puzzle ID must not have edge whitespace.');
+  }
+  return id;
+}
+
+function requireImportedTitle(title) {
+  const value = requireTitle(title);
+  if (value !== title) {
+    throw new PuzzleStoreError('EMPTY_TITLE', 'Imported puzzle title must not have edge whitespace.');
+  }
+  return title;
+}
+
+function validateImportedTags(tags) {
+  const values = validateTags(tags);
+  if (values.some((tag) => tag !== tag.trim())) {
+    throw new PuzzleStoreError('INVALID_TAGS', 'Imported puzzle tags must not have edge whitespace.');
+  }
+  return values;
+}
+
+function validateImportedNotes(notes) {
+  return validateNotes(notes);
+}
+
+function validateTags(tags) {
+  if (tags === undefined) return [];
+  if (!Array.isArray(tags) || tags.some((tag) => typeof tag !== 'string')) {
+    throw new PuzzleStoreError('INVALID_TAGS', 'Puzzle tags must be an array of strings.');
+  }
+  return tags.slice();
+}
+
+function validateNotes(notes) {
+  if (notes === undefined) return '';
+  if (typeof notes !== 'string') throw new PuzzleStoreError('INVALID_NOTES', 'Puzzle notes must be a string.');
+  return notes;
 }
 
 function normalizeTags(tags) {

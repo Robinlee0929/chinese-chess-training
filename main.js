@@ -7,7 +7,7 @@ import {
   ROWS, COLS, RED, BLACK,
   initialBoard, legalMoves, applyMove, inCheck,
   hasAnyLegalMove, name, notation, hashBoard, repetitionVerdict,
-} from './game.js?v=a1f6281687';
+} from './game.js?v=fae10dbd73';
 import {
   PuzzleEditorError,
   createEditorState,
@@ -17,7 +17,7 @@ import {
   setEditorSideToMove,
   confirmAuthoredPosition,
   exportAuthoredPosition,
-} from './puzzle-editor.js?v=a1f6281687';
+} from './puzzle-editor.js?v=fae10dbd73';
 import {
   PuzzleRecorderError,
   createRecorder,
@@ -27,7 +27,7 @@ import {
   finishRecording,
   exportRecorderBoard,
   exportRecordedResult,
-} from './puzzle-recorder.js?v=a1f6281687';
+} from './puzzle-recorder.js?v=fae10dbd73';
 import {
   PuzzlePracticeError,
   createPractice,
@@ -35,8 +35,16 @@ import {
   applyOpponentReply,
   restartPractice,
   exportPracticeSnapshot,
-} from './puzzle-practice.js?v=a1f6281687';
-import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=a1f6281687';
+} from './puzzle-practice.js?v=fae10dbd73';
+import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=fae10dbd73';
+import {
+  PUZZLE_TRANSFER_FORMAT,
+  PUZZLE_TRANSFER_SCHEMA_VERSION,
+  PUZZLE_TRANSFER_MAX_BYTES,
+  PuzzleTransferError,
+  serializePuzzleExport,
+  parsePuzzleImport,
+} from './puzzle-transfer.js?v=fae10dbd73';
 import {
   PHOTO_MAX_ZOOM,
   PHOTO_MIN_ZOOM,
@@ -50,7 +58,7 @@ import {
   validatePhotoMetadata,
   zoomPhotoIn,
   zoomPhotoOut,
-} from './puzzle-photo.js?v=a1f6281687';
+} from './puzzle-photo.js?v=fae10dbd73';
 import {
   CALIBRATION_CANONICAL_HEIGHT,
   CALIBRATION_CANONICAL_WIDTH,
@@ -66,7 +74,7 @@ import {
   setCorner,
   transformPoint,
   validateQuadrilateral,
-} from './puzzle-photo-calibration.js?v=a1f6281687';
+} from './puzzle-photo-calibration.js?v=fae10dbd73';
 import {
   PuzzlePhotoRecognitionError,
   RECOGNITION_OCCUPANCY_EMPTY,
@@ -78,7 +86,7 @@ import {
   isRecognitionTokenCurrent,
   recognizeIntersections,
   selectionKey,
-} from './puzzle-photo-recognition.js?v=a1f6281687';
+} from './puzzle-photo-recognition.js?v=fae10dbd73';
 import {
   addTemplate,
   createPieceTypeSessionToken,
@@ -88,13 +96,13 @@ import {
   normalizePiecePatch,
   removeTemplatesForSource,
   suggestUnresolvedPieceTypes,
-} from './puzzle-photo-piece-types.js?v=a1f6281687';
+} from './puzzle-photo-piece-types.js?v=fae10dbd73';
 import {
   UNREVIEWED, PuzzlePhotoReviewError,
   createReviewState, buildReviewQueue, selectReviewCandidate, confirmEmpty, confirmPiece,
   nextCandidate, previousCandidate, nextUnresolved, acceptHighConfidenceEmpty,
   undoBulkEmpty, resetReview, rescanReview, reviewProgress, confirmedSelections, buildReviewedBoard,
-} from './puzzle-photo-review.js?v=a1f6281687';
+} from './puzzle-photo-review.js?v=fae10dbd73';
 
 // ---------------- 常數 ----------------
 const CELL = 1;
@@ -535,6 +543,8 @@ const puzzleStore = createPuzzleStore({ storage: {
 let libraryViewPuzzle = null;
 let activeSavedPuzzleId = null;
 let savedCurrentPuzzleId = null;
+let pendingPuzzleImport = null;
+let puzzleImportToken = 0;
 let practiceReturnState = 'recorded';
 let practiceCompletionRecorded = false;
 let photoReferenceState = createPhotoReferenceState();
@@ -581,7 +591,7 @@ let aiMoveStart = 0;
 let aiWorker = null;
 let aiModule = null;   // Worker 不可用時的主執行緒後備
 try {
-  aiWorker = new Worker(new URL('./ai-worker.js?v=a1f6281687', import.meta.url), { type: 'module' });
+  aiWorker = new Worker(new URL('./ai-worker.js?v=fae10dbd73', import.meta.url), { type: 'module' });
   aiWorker.onmessage = (e) => onAIResult(e.data);
   aiWorker.onerror = () => {
     aiWorker = null;
@@ -603,7 +613,7 @@ function requestAIMove() {
   if (aiWorker) {
     aiWorker.postMessage(payload);
   } else {
-    (aiModule ??= import('./ai.js?v=a1f6281687')).then(({ findBestMove }) => {
+    (aiModule ??= import('./ai.js?v=fae10dbd73')).then(({ findBestMove }) => {
       setTimeout(() => {
         if (token !== aiToken) return;
         onAIResult({ token, result: findBestMove(payload.board, payload.side, payload.level, payload.recent) });
@@ -750,6 +760,15 @@ const libraryDetailNotes = document.getElementById('libraryDetailNotes');
 const libraryDetailSolution = document.getElementById('libraryDetailSolution');
 const btnLibraryDetailPractice = document.getElementById('btnLibraryDetailPractice');
 const btnLibraryDetailDelete = document.getElementById('btnLibraryDetailDelete');
+const btnLibraryExportAll = document.getElementById('btnLibraryExportAll');
+const btnLibraryImport = document.getElementById('btnLibraryImport');
+const puzzleImportFile = document.getElementById('puzzleImportFile');
+const libraryTransferStatus = document.getElementById('libraryTransferStatus');
+const libraryImportPreview = document.getElementById('libraryImportPreview');
+const libraryImportPreviewText = document.getElementById('libraryImportPreviewText');
+const btnLibraryImportConfirm = document.getElementById('btnLibraryImportConfirm');
+const btnLibraryImportCancel = document.getElementById('btnLibraryImportCancel');
+const btnLibraryDetailExport = document.getElementById('btnLibraryDetailExport');
 const photoFileInput = document.getElementById('photoFileInput');
 const btnPhotoImport = document.getElementById('btnPhotoImport');
 const photoImportMessage = document.getElementById('photoImportMessage');
@@ -2012,6 +2031,7 @@ function exitEditor() {
   libraryViewPuzzle = null;
   activeSavedPuzzleId = null;
   savedCurrentPuzzleId = null;
+  clearPendingPuzzleImport({ clearStatus: true });
   busy = false;
   clearSelection();
   appEl.classList.remove('editor-active');
@@ -2246,6 +2266,177 @@ function storeErrorMessage(error) {
   return `題庫操作失敗：${error.message}`;
 }
 
+function transferErrorMessage(error) {
+  if (!(error instanceof PuzzleTransferError)) return '無法讀取匯入檔案，請確認檔案仍可存取。';
+  const messages = {
+    INVALID_JSON: '檔案不是有效的 JSON。',
+    INVALID_ROOT: '檔案不是有效的殺局匯出格式。',
+    UNSUPPORTED_FORMAT: '檔案格式不受支援。',
+    UNSUPPORTED_SCHEMA_VERSION: '檔案版本不受支援。',
+    UNSUPPORTED_PUZZLE_VERSION: '檔案包含不受支援的題目版本。',
+    INVALID_EXPORTED_AT: '檔案的匯出時間無效。',
+    TOO_LARGE: '檔案超過 5 MiB 上限。',
+    TOO_MANY_PUZZLES: '檔案超過 1000 題上限。',
+    DUPLICATE_ID: '檔案內含重複的題目 ID，未匯入任何資料。',
+    INVALID_PUZZLE: '檔案內含無效的殺局題目。',
+    NOT_CHECKMATE: '檔案內含未以將死結束的答案。',
+  };
+  return messages[error.code] || `無法匯入：${error.message}`;
+}
+
+function setLibraryTransferStatus(message, kind = '') {
+  libraryTransferStatus.textContent = message;
+  libraryTransferStatus.classList.toggle('success', kind === 'success');
+  libraryTransferStatus.classList.toggle('error', kind === 'error');
+}
+
+function preparePuzzleImportPreview(puzzles, existingPuzzles) {
+  const existingIds = new Set(existingPuzzles.map((puzzle) => puzzle.id));
+  const skippedIds = puzzles.filter((puzzle) => existingIds.has(puzzle.id)).map((puzzle) => puzzle.id);
+  return Object.freeze({
+    totalValidCount: puzzles.length,
+    importableCount: puzzles.length - skippedIds.length,
+    skippedCollisionCount: skippedIds.length,
+    skippedIds: Object.freeze(skippedIds),
+  });
+}
+
+function clearPendingPuzzleImport({ clearStatus = false } = {}) {
+  puzzleImportToken++;
+  pendingPuzzleImport = null;
+  puzzleImportFile.value = '';
+  libraryImportPreview.classList.add('hidden');
+  libraryImportPreviewText.textContent = '';
+  btnLibraryImportConfirm.disabled = true;
+  if (clearStatus) {
+    setLibraryTransferStatus(
+      `匯入／匯出格式：${PUZZLE_TRANSFER_FORMAT} v${PUZZLE_TRANSFER_SCHEMA_VERSION}；統計與照片不包含在內。`,
+    );
+  }
+}
+
+function safeDownloadName(value) {
+  const normalized = String(value || '').normalize('NFKC')
+    .replace(/[^\p{L}\p{N}_-]+/gu, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+  return normalized || 'puzzle';
+}
+
+function downloadPuzzleTransfer(records, filename) {
+  const text = serializePuzzleExport(records);
+  const blob = new Blob([text], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.hidden = true;
+  document.body.appendChild(link);
+  try {
+    link.click();
+  } finally {
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+  return text;
+}
+
+function exportAllPuzzles() {
+  const loaded = puzzleStore.loadAll();
+  if (loaded.puzzles.length === 0) return;
+  try {
+    downloadPuzzleTransfer(loaded.puzzles, 'chinese-chess-puzzles.json');
+    setLibraryTransferStatus(`已匯出 ${loaded.puzzles.length} 題；統計與照片未包含。`, 'success');
+  } catch (error) {
+    setLibraryTransferStatus(transferErrorMessage(error), 'error');
+  }
+}
+
+function exportSelectedPuzzle() {
+  if (!activeSavedPuzzleId) return;
+  const puzzle = puzzleStore.getPuzzle(activeSavedPuzzleId);
+  if (!puzzle) {
+    setLibraryTransferStatus('找不到要匯出的題目。', 'error');
+    return;
+  }
+  try {
+    const filename = `chinese-chess-puzzle-${safeDownloadName(puzzle.title)}.json`;
+    downloadPuzzleTransfer([puzzle], filename);
+    setLibraryTransferStatus(`已匯出「${puzzle.title}」；統計與照片未包含。`, 'success');
+  } catch (error) {
+    setLibraryTransferStatus(transferErrorMessage(error), 'error');
+  }
+}
+
+async function loadPuzzleImportFile(file) {
+  const token = ++puzzleImportToken;
+  pendingPuzzleImport = null;
+  libraryImportPreview.classList.add('hidden');
+  btnLibraryImportConfirm.disabled = true;
+  if (!file) {
+    puzzleImportFile.value = '';
+    return;
+  }
+  setLibraryTransferStatus('正在本機驗證匯入檔案…');
+  try {
+    if (file.size > PUZZLE_TRANSFER_MAX_BYTES) {
+      throw new PuzzleTransferError('TOO_LARGE', 'Puzzle transfer is too large.');
+    }
+    const text = await file.text();
+    if (token !== puzzleImportToken || !libraryActive()) return;
+    const puzzles = parsePuzzleImport(text);
+    const loaded = puzzleStore.loadAll();
+    if (loaded.issues.length) {
+      const readFailed = loaded.issues.some((entry) => entry.code === 'STORE_READ_FAILED');
+      throw new PuzzleStoreError(
+        readFailed ? 'STORE_READ_FAILED' : 'STORAGE_CORRUPT',
+        'Existing storage cannot be safely modified.',
+      );
+    }
+    const preview = preparePuzzleImportPreview(puzzles, loaded.puzzles);
+    pendingPuzzleImport = Object.freeze({ puzzles, preview });
+    libraryImportPreviewText.textContent = `有效 ${preview.totalValidCount} 題；可匯入 ${preview.importableCount} 題；既有 ID 衝突 ${preview.skippedCollisionCount} 題將略過且不覆寫。`;
+    libraryImportPreview.classList.remove('hidden');
+    btnLibraryImportConfirm.disabled = preview.importableCount === 0;
+    setLibraryTransferStatus(
+      preview.importableCount
+        ? '檔案驗證完成。請確認預覽後再匯入。'
+        : '檔案驗證完成，但所有題目 ID 都已存在，沒有資料需要匯入。',
+    );
+  } catch (error) {
+    if (token !== puzzleImportToken) return;
+    const message = error instanceof PuzzleStoreError
+      ? storeErrorMessage(error)
+      : transferErrorMessage(error);
+    setLibraryTransferStatus(message, 'error');
+    pendingPuzzleImport = null;
+    libraryImportPreview.classList.add('hidden');
+  } finally {
+    if (token === puzzleImportToken) puzzleImportFile.value = '';
+  }
+}
+
+function cancelPuzzleImport() {
+  clearPendingPuzzleImport();
+  setLibraryTransferStatus('已取消匯入；題庫未變更。');
+}
+
+function confirmPuzzleImport() {
+  if (!pendingPuzzleImport || pendingPuzzleImport.preview.importableCount === 0) return;
+  try {
+    const result = puzzleStore.importPuzzles(pendingPuzzleImport.puzzles);
+    clearPendingPuzzleImport();
+    renderLibraryList();
+    setLibraryTransferStatus(
+      `匯入完成：新增 ${result.importedCount} 題，略過既有 ID ${result.skippedCount} 題。`,
+      'success',
+    );
+  } catch (error) {
+    const message = storeErrorMessage(error);
+    setLibraryTransferStatus(message, 'error');
+  }
+}
+
 function saveCurrentPuzzle() {
   if (appState !== APP_STATE.PUZZLE_RECORDED || !recordedPuzzleResult || savedCurrentPuzzleId) return;
   if (!puzzleTitleInput.value.trim()) {
@@ -2337,6 +2528,7 @@ function createLibraryCard(puzzle) {
 function renderLibraryList() {
   const loaded = puzzleStore.loadAll();
   libraryCount.textContent = `${loaded.puzzles.length} 題`;
+  btnLibraryExportAll.disabled = loaded.puzzles.length === 0;
   libraryIssues.classList.toggle('hidden', loaded.issues.length === 0);
   libraryIssues.textContent = loaded.issues.length
     ? (loaded.issues.some((entry) => entry.code === 'STORE_READ_FAILED')
@@ -2396,6 +2588,7 @@ function enterLibrary(preferredId = null) {
   recorderPanel.classList.add('hidden');
   libraryPanel.classList.remove('hidden');
   banner.classList.add('hidden');
+  clearPendingPuzzleImport({ clearStatus: true });
   renderLibraryList();
   const id = preferredId || savedCurrentPuzzleId;
   if (id) openLibraryPuzzle(id);
@@ -3616,6 +3809,12 @@ libraryList.addEventListener('click', (event) => {
 document.getElementById('btnLibraryBack').addEventListener('click', showLibraryList);
 btnLibraryDetailPractice.addEventListener('click', () => startSavedPractice(activeSavedPuzzleId));
 btnLibraryDetailDelete.addEventListener('click', () => deleteStoredPuzzle(activeSavedPuzzleId));
+btnLibraryDetailExport.addEventListener('click', exportSelectedPuzzle);
+btnLibraryExportAll.addEventListener('click', exportAllPuzzles);
+btnLibraryImport.addEventListener('click', () => puzzleImportFile.click());
+puzzleImportFile.addEventListener('change', () => loadPuzzleImportFile(puzzleImportFile.files?.[0]));
+btnLibraryImportConfirm.addEventListener('click', confirmPuzzleImport);
+btnLibraryImportCancel.addEventListener('click', cancelPuzzleImport);
 document.getElementById('btnLibraryExit').addEventListener('click', exitEditor);
 btnNew.addEventListener('click', newGame);
 btnUndo.addEventListener('click', undo);

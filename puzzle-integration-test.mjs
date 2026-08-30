@@ -5,6 +5,7 @@ import { createPuzzle, isCheckmateAfterSolution } from './puzzle-domain.js';
 import { createEditorState, placeEditorPiece, confirmAuthoredPosition } from './puzzle-editor.js';
 import { createRecorder, recordMove, undoRecordedMove, finishRecording } from './puzzle-recorder.js';
 import { createPuzzleStore, PUZZLE_STORAGE_KEY } from './puzzle-store.js';
+import { serializePuzzleExport, parsePuzzleImport } from './puzzle-transfer.js';
 import { createPractice, attemptPracticeMove, applyOpponentReply, restartPractice } from './puzzle-practice.js';
 import { createReviewState, confirmPiece, acceptHighConfidenceEmpty, buildReviewedBoard } from './puzzle-photo-review.js';
 
@@ -93,4 +94,69 @@ test('explicit photo review → editor confirmation → existing recorder contra
   const confirmed = confirmAuthoredPosition(createEditorState({ board, sideToMove: RED }));
   const recorder = line.reduce((state, move) => recordMove(state, ...move), createRecorder(confirmed.position));
   assert.equal(finishRecording(recorder).checkmate, true);
+});
+
+test('stored puzzle → portable export/parse → atomic import → semantic reload', () => {
+  const sourceMemory = new Map();
+  const sourceStorage = {
+    getItem: (key) => sourceMemory.get(key) ?? null,
+    setItem: (key, value) => sourceMemory.set(key, value),
+  };
+  const sourceStore = createPuzzleStore({
+    storage: sourceStorage,
+    idFactory: () => 'portable-fixture',
+    now: () => '2026-08-30T01:00:00.000Z',
+  });
+  const puzzle = createPuzzle({
+    id: 'source-domain-id', title: '可攜殺局', ...finishRecording(
+      line.reduce((state, move) => recordMove(state, ...move), createRecorder(confirmAuthoredPosition(authored()).position)),
+    ).result,
+    tags: ['次序二', '次序一'], notes: '<b>純文字</b>',
+  });
+  const saved = sourceStore.savePuzzle(puzzle.toJSON());
+  sourceStore.markPracticeStarted(saved.id);
+  sourceStore.markPracticeCompleted(saved.id);
+  const portableSource = {
+    ...sourceStore.listPuzzles()[0],
+    tags: ['次序二', '次序一'],
+    notes: '  <b>純文字</b>\n  ',
+  };
+  const text = serializePuzzleExport([portableSource], {
+    now: () => '2026-08-30T02:00:00.000Z',
+  });
+  assert.equal(text.includes('practiceCount'), false);
+  assert.equal(text.includes('createdAt'), false);
+  const parsed = parsePuzzleImport(text);
+
+  const targetMemory = new Map();
+  let writes = 0;
+  const targetStorage = {
+    getItem: (key) => targetMemory.get(key) ?? null,
+    setItem(key, value) { writes++; targetMemory.set(key, value); },
+  };
+  const targetStore = createPuzzleStore({
+    storage: targetStorage,
+    now: () => '2026-08-30T03:00:00.000Z',
+  });
+  const result = targetStore.importPuzzles(parsed);
+  assert.equal(writes, 1);
+  assert.deepEqual(result.importedIds, [saved.id]);
+  const reloaded = createPuzzleStore({ storage: targetStorage }).getPuzzle(saved.id);
+  for (const field of ['id', 'title', 'initialBoard', 'sideToMove', 'solution', 'tags', 'notes']) {
+    assert.deepEqual(reloaded[field], portableSource[field]);
+  }
+  assert.equal(reloaded.createdAt, '2026-08-30T03:00:00.000Z');
+  assert.equal(reloaded.updatedAt, reloaded.createdAt);
+  assert.equal(reloaded.practiceCount, 0);
+  assert.equal(reloaded.completedCount, 0);
+  assert.equal(reloaded.lastPracticedAt, null);
+  assert.deepEqual(reloaded.tags, ['次序二', '次序一']);
+  assert.equal(reloaded.notes, '  <b>純文字</b>\n  ');
+
+  const beforeCollision = targetMemory.get(PUZZLE_STORAGE_KEY);
+  writes = 0;
+  const collision = targetStore.importPuzzles(parsed);
+  assert.deepEqual(collision.skippedIds, [saved.id]);
+  assert.equal(writes, 0);
+  assert.equal(targetMemory.get(PUZZLE_STORAGE_KEY), beforeCollision);
 });

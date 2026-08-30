@@ -842,6 +842,36 @@ aside h3 {
 .library-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
 .library-heading h2 { font-size: 18px; letter-spacing: 3px; }
 .library-heading p { margin-top: 4px; color: var(--muted); font-size: 11.5px; }
+.library-transfer-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+}
+.library-transfer-actions button { min-height: 38px; padding: 7px 8px; font-size: 12px; }
+.library-transfer-status {
+  min-height: 18px;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.library-transfer-status.success { color: #9fd68f; }
+.library-transfer-status.error { color: #e99a8e; }
+.library-import-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid rgba(217, 164, 65, 0.5);
+  border-radius: 9px;
+  background: rgba(217, 164, 65, 0.08);
+  color: var(--text);
+  font-size: 11.5px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.library-import-preview-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.library-import-preview-actions button { min-height: 38px; padding: 7px 6px; font-size: 12px; }
 .library-issues {
   color: #e99a8e;
   border-left: 3px solid var(--red);
@@ -876,7 +906,8 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
 }
 .library-solution h4 { color: var(--muted); font-size: 11.5px; letter-spacing: 1px; margin-bottom: 6px; }
 .library-solution ol { padding-left: 22px; color: var(--text); font-size: 12px; line-height: 1.7; }
-.library-detail-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.library-detail-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+.library-detail-actions button { padding-left: 5px; padding-right: 5px; }
 #btnLibraryExit { margin-top: auto; }
 
 /* 左下角版權：字體與 .help 說明文字一致，水平置中 */
@@ -1159,6 +1190,8 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
     border-right: none;
     border-top: 1px solid var(--line);
   }
+  .library-transfer-actions button,
+  .library-import-preview-actions button { min-height: 42px; }
   #right { display: none; }
   h1 { font-size: 15px; letter-spacing: 3px; }
   .brand .sub { display: none; }

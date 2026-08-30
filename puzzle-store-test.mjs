@@ -367,5 +367,197 @@ test('only canonical chess fields persist, including inside board pieces', () =>
   assert.equal(storage.dump().includes('999'), false);
 });
 
+function importable(id, title = `匯入 ${id}`) {
+  return { id, ...matePuzzle(title) };
+}
+
+function trackedStorage(initial = {}) {
+  const storage = memoryStorage(initial);
+  let writes = 0;
+  return {
+    getItem: storage.getItem,
+    setItem(key, value) { writes++; storage.setItem(key, value); },
+    dump: storage.dump,
+    resetWrites() { writes = 0; },
+    get writes() { return writes; },
+  };
+}
+
+test('atomic multi-record import preserves IDs, data and one shared timestamp in one write', () => {
+  const storage = trackedStorage();
+  const timestamp = '2026-08-30T12:34:56.000Z';
+  const store = makeStore(storage, { now: () => timestamp });
+  const first = importable('import-1');
+  const second = importable('import-2');
+  const result = store.importPuzzles([first, second]);
+  assert.deepEqual(result, {
+    importedCount: 2, skippedCount: 0,
+    importedIds: ['import-1', 'import-2'], skippedIds: [],
+  });
+  assert.equal(Object.isFrozen(result), true);
+  assert.equal(Object.isFrozen(result.importedIds), true);
+  assert.equal(storage.writes, 1);
+  const records = store.listPuzzles();
+  assert.deepEqual(records.map(({ id }) => id), ['import-1', 'import-2']);
+  for (const [record, input] of records.map((record, index) => [record, [first, second][index]])) {
+    assert.equal(record.createdAt, timestamp);
+    assert.equal(record.updatedAt, timestamp);
+    assert.equal(record.practiceCount, 0);
+    assert.equal(record.completedCount, 0);
+    assert.equal(record.lastPracticedAt, null);
+    assert.deepEqual(record.initialBoard, input.initialBoard);
+    assert.deepEqual(record.solution, input.solution);
+    assert.deepEqual(record.tags, input.tags);
+    assert.equal(record.notes, input.notes);
+  }
+});
+
+test('import preserves canonical portable text and note edge whitespace across reload', () => {
+  const storage = trackedStorage();
+  const store = makeStore(storage, { now: () => '2026-08-30T12:34:56.000Z' });
+  const input = importable('exact-id', 'Unicode 殺局 🐉');
+  input.tags = ['次序二', '次序一', ''];
+  input.notes = '  第一行\n第二行  ';
+  store.importPuzzles([input]);
+  const reloaded = makeStore(storage).getPuzzle('exact-id');
+  assert.equal(reloaded.id, 'exact-id');
+  assert.equal(reloaded.title, 'Unicode 殺局 🐉');
+  assert.deepEqual(reloaded.tags, ['次序二', '次序一', '']);
+  assert.equal(reloaded.notes, '  第一行\n第二行  ');
+});
+
+test('direct import rejects noncanonical identifier text before reading or writing', () => {
+  let reads = 0;
+  let writes = 0;
+  const store = makeStore({ getItem() { reads++; return null; }, setItem() { writes++; } });
+  const cases = [
+    [Object.assign(importable('canonical'), { id: ' canonical ' }), 'INVALID_ID'],
+    [Object.assign(importable('canonical'), { title: ' 非標準 ' }), 'EMPTY_TITLE'],
+    [Object.assign(importable('canonical'), { tags: [' 車殺'] }), 'INVALID_TAGS'],
+  ];
+  for (const [input, code] of cases) {
+    assert.throws(() => store.importPuzzles([input]), { name: 'PuzzleStoreError', code });
+  }
+  assert.equal(reads, 0);
+  assert.equal(writes, 0);
+});
+
+test('existing ID collision is skipped without overwrite or write when all collide', () => {
+  const storage = trackedStorage();
+  const store = makeStore(storage, { idFactory: () => 'existing-id' });
+  const existing = store.savePuzzle(matePuzzle('原題'));
+  const before = storage.dump();
+  storage.resetWrites();
+  const collision = importable(existing.id, '不得覆寫');
+  const result = store.importPuzzles([collision]);
+  assert.deepEqual(result, {
+    importedCount: 0, skippedCount: 1,
+    importedIds: [], skippedIds: [existing.id],
+  });
+  assert.equal(storage.writes, 0);
+  assert.equal(storage.dump(), before);
+  assert.equal(store.getPuzzle(existing.id).title, '原題');
+});
+
+test('mixed collision imports only new records in one write', () => {
+  const storage = trackedStorage();
+  const store = makeStore(storage, { idFactory: () => 'existing-id' });
+  const existing = store.savePuzzle(matePuzzle('原題'));
+  storage.resetWrites();
+  const result = store.importPuzzles([
+    importable(existing.id, '不得覆寫'), importable('new-id', '新題'),
+  ]);
+  assert.deepEqual(result, {
+    importedCount: 1, skippedCount: 1,
+    importedIds: ['new-id'], skippedIds: [existing.id],
+  });
+  assert.equal(storage.writes, 1);
+  assert.deepEqual(store.listPuzzles().map(({ id }) => id), [existing.id, 'new-id']);
+  assert.equal(store.getPuzzle(existing.id).title, '原題');
+});
+
+test('duplicate incoming IDs reject before reading or writing storage', () => {
+  let reads = 0;
+  let writes = 0;
+  const store = makeStore({ getItem() { reads++; return null; }, setItem() { writes++; } });
+  assert.throws(() => store.importPuzzles([
+    importable('duplicate'), importable('duplicate'),
+  ]), { name: 'PuzzleStoreError', code: 'DUPLICATE_ID' });
+  assert.equal(reads, 0);
+  assert.equal(writes, 0);
+});
+
+test('empty import performs no read and no write', () => {
+  let reads = 0;
+  let writes = 0;
+  const store = makeStore({ getItem() { reads++; return null; }, setItem() { writes++; } });
+  assert.deepEqual(store.importPuzzles([]), {
+    importedCount: 0, skippedCount: 0, importedIds: [], skippedIds: [],
+  });
+  assert.equal(reads, 0);
+  assert.equal(writes, 0);
+});
+
+test('all imported puzzles validate before any existing storage read', () => {
+  let reads = 0;
+  let writes = 0;
+  const store = makeStore({ getItem() { reads++; return null; }, setItem() { writes++; } });
+  const invalid = importable('invalid');
+  invalid.solution[0].to = { r: 5, c: 5 };
+  assert.throws(() => store.importPuzzles([importable('valid'), invalid]), {
+    name: 'PuzzleStoreError', code: 'INVALID_PUZZLE',
+  });
+  assert.equal(reads, 0);
+  assert.equal(writes, 0);
+});
+
+test('corrupt or unavailable storage blocks import without writes', () => {
+  let writes = 0;
+  const corrupt = makeStore({ getItem: () => '{broken', setItem() { writes++; } });
+  assert.throws(() => corrupt.importPuzzles([importable('new')]), {
+    name: 'PuzzleStoreError', code: 'STORAGE_CORRUPT',
+  });
+  const unavailable = makeStore({ getItem() { throw new Error('SecurityError'); }, setItem() { writes++; } });
+  assert.throws(() => unavailable.importPuzzles([importable('new')]), {
+    name: 'PuzzleStoreError', code: 'STORE_READ_FAILED',
+  });
+  assert.equal(writes, 0);
+});
+
+test('failed final import write has no fallback and preserves prior serialization', () => {
+  const { storage, saved } = savedFixture();
+  const before = storage.dump();
+  let writes = 0;
+  const store = makeStore({
+    getItem: storage.getItem,
+    setItem() { writes++; throw new Error('QuotaExceededError'); },
+  });
+  assert.throws(() => store.importPuzzles([importable('new-id')]), {
+    name: 'PuzzleStoreError', code: 'STORE_WRITE_FAILED',
+  });
+  assert.equal(writes, 1);
+  assert.equal(storage.dump(), before);
+  assert.equal(makeStore(storage).getPuzzle(saved.id).title, saved.title);
+});
+
+test('import is deeply isolated and persists canonical fields only', () => {
+  const storage = trackedStorage();
+  const store = makeStore(storage);
+  const input = importable('isolated');
+  input.photo = { bytes: 'PRIVATE' };
+  input.initialBoard[0][3].sourceImage = 'PRIVATE';
+  input.solution[0].recognition = { pixels: [1] };
+  store.importPuzzles([input]);
+  input.initialBoard[0][3].type = 'R';
+  input.solution[0].from.r = 9;
+  input.tags[0] = 'changed';
+  const loaded = store.getPuzzle('isolated');
+  assert.deepEqual(loaded.initialBoard[0][3], { type: 'K', side: RED });
+  assert.deepEqual(loaded.solution[0].from, { r: 3, c: 0 });
+  assert.deepEqual(loaded.tags, ['車殺']);
+  assert.equal(storage.dump().includes('PRIVATE'), false);
+  assert.equal(storage.dump().includes('recognition'), false);
+});
+
 console.log(`\n${passed} puzzle-store tests passed; ${failed} failed.`);
 process.exit(failed === 0 ? 0 : 1);
