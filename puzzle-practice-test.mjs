@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import { RED, BLACK } from './game.js';
 import {
   PuzzlePracticeError,
+  PRACTICE_HINT_MAX_LEVEL,
   createPractice,
   attemptPracticeMove,
   applyOpponentReply,
+  derivePracticeHint,
   restartPractice,
   exportPracticeBoard,
   exportPracticeSnapshot,
@@ -244,6 +246,85 @@ test('user input is blocked while opponent reply is pending', () => {
   const result = attemptPracticeMove(afterUser, { r: 6, c: 8 }, { r: 9, c: 8 });
   assert.equal(result.error.code, 'NOT_USER_TURN');
   assert.equal(result.practice.currentPly, 1);
+});
+
+test('hint level 1 exposes only the current recorded piece identity', () => {
+  const hint = derivePracticeHint(createPractice(multiPlyMate()), 1);
+  assert.deepEqual(hint, { level: 1, piece: { side: RED, type: 'P', name: '兵' } });
+  for (const key of ['from', 'to', 'notation']) assert.equal(key in hint, false);
+});
+
+test('hint level 2 exposes the exact source and no destination or notation', () => {
+  const hint = derivePracticeHint(createPractice(multiPlyMate()), 2);
+  assert.deepEqual(hint.from, { r: 3, c: 0 });
+  assert.equal('to' in hint, false);
+  assert.equal('notation' in hint, false);
+});
+
+test('hint level 3 exposes source and destination but no notation', () => {
+  const hint = derivePracticeHint(createPractice(multiPlyMate()), 3);
+  assert.deepEqual(hint.from, { r: 3, c: 0 });
+  assert.deepEqual(hint.to, { r: 4, c: 0 });
+  assert.equal('notation' in hint, false);
+});
+
+test('hint level 4 uses the existing traditional notation', () => {
+  const hint = derivePracticeHint(createPractice(multiPlyMate()), PRACTICE_HINT_MAX_LEVEL);
+  assert.equal(hint.notation, '兵九進一');
+});
+
+test('hint derivation neither mutates nor advances practice or mistakes', () => {
+  const current = createPractice(multiPlyMate());
+  const before = exportPracticeSnapshot(current);
+  derivePracticeHint(current, 4);
+  assert.deepEqual(exportPracticeSnapshot(current), before);
+  assert.equal(current.currentPly, 0);
+  assert.equal(current.mistakes, 0);
+});
+
+test('returned hint is deeply frozen and isolated', () => {
+  const current = createPractice(multiPlyMate());
+  const hint = derivePracticeHint(current, 4);
+  assert.equal(Object.isFrozen(hint), true);
+  assert.equal(Object.isFrozen(hint.piece), true);
+  assert.equal(Object.isFrozen(hint.from), true);
+  assert.equal(Object.isFrozen(hint.to), true);
+  assert.throws(() => { hint.piece.type = 'R'; }, TypeError);
+  assert.throws(() => { hint.from.r = 9; }, TypeError);
+  assert.deepEqual(derivePracticeHint(current, 2).from, { r: 3, c: 0 });
+});
+
+for (const level of [0, 5, -1, 1.5, '1', null]) {
+  test(`invalid hint level ${JSON.stringify(level)} is rejected`, () => {
+    assertPracticeError(() => derivePracticeHint(createPractice(multiPlyMate()), level), 'INVALID_HINT_LEVEL');
+  });
+}
+
+test('hint is unavailable during the recorded opponent turn', () => {
+  assertPracticeError(() => derivePracticeHint(firstMove(createPractice(multiPlyMate())).practice, 1), 'HINT_NOT_AVAILABLE');
+});
+
+test('hint is unavailable after practice completion', () => {
+  const completed = attemptPracticeMove(createPractice(userCaptureMate()), { r: 6, c: 8 }, { r: 9, c: 8 }).practice;
+  assertPracticeError(() => derivePracticeHint(completed, 1), 'HINT_NOT_AVAILABLE');
+});
+
+test('hint rejects a recorded move with a mismatched side', () => {
+  const current = exportPracticeSnapshot(createPractice(multiPlyMate()));
+  current.solution[0].side = BLACK;
+  assertPracticeError(() => derivePracticeHint(current, 1), 'INCONSISTENT_HINT_MOVE');
+});
+
+test('hint rejects a missing expected source piece', () => {
+  const current = exportPracticeSnapshot(createPractice(multiPlyMate()));
+  current.currentBoard[3][0] = null;
+  assertPracticeError(() => derivePracticeHint(current, 2), 'INCONSISTENT_HINT_MOVE');
+});
+
+test('hint rejects an illegal recorded current move', () => {
+  const current = exportPracticeSnapshot(createPractice(multiPlyMate()));
+  current.solution[0].to = { r: 2, c: 0 };
+  assertPracticeError(() => derivePracticeHint(current, 3), 'INCONSISTENT_HINT_MOVE');
 });
 
 console.log(`\n${passed} puzzle-practice tests passed; ${failed} failed.`);

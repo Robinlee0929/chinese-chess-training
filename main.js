@@ -7,7 +7,7 @@ import {
   ROWS, COLS, RED, BLACK,
   initialBoard, legalMoves, applyMove, inCheck,
   hasAnyLegalMove, name, notation, hashBoard, repetitionVerdict,
-} from './game.js?v=fae10dbd73';
+} from './game.js?v=77efa9c15c';
 import {
   PuzzleEditorError,
   createEditorState,
@@ -17,7 +17,7 @@ import {
   setEditorSideToMove,
   confirmAuthoredPosition,
   exportAuthoredPosition,
-} from './puzzle-editor.js?v=fae10dbd73';
+} from './puzzle-editor.js?v=77efa9c15c';
 import {
   PuzzleRecorderError,
   createRecorder,
@@ -27,16 +27,18 @@ import {
   finishRecording,
   exportRecorderBoard,
   exportRecordedResult,
-} from './puzzle-recorder.js?v=fae10dbd73';
+} from './puzzle-recorder.js?v=77efa9c15c';
 import {
   PuzzlePracticeError,
+  PRACTICE_HINT_MAX_LEVEL,
   createPractice,
   attemptPracticeMove,
   applyOpponentReply,
+  derivePracticeHint,
   restartPractice,
   exportPracticeSnapshot,
-} from './puzzle-practice.js?v=fae10dbd73';
-import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=fae10dbd73';
+} from './puzzle-practice.js?v=77efa9c15c';
+import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=77efa9c15c';
 import {
   PUZZLE_TRANSFER_FORMAT,
   PUZZLE_TRANSFER_SCHEMA_VERSION,
@@ -44,7 +46,7 @@ import {
   PuzzleTransferError,
   serializePuzzleExport,
   parsePuzzleImport,
-} from './puzzle-transfer.js?v=fae10dbd73';
+} from './puzzle-transfer.js?v=77efa9c15c';
 import {
   PHOTO_MAX_ZOOM,
   PHOTO_MIN_ZOOM,
@@ -58,7 +60,7 @@ import {
   validatePhotoMetadata,
   zoomPhotoIn,
   zoomPhotoOut,
-} from './puzzle-photo.js?v=fae10dbd73';
+} from './puzzle-photo.js?v=77efa9c15c';
 import {
   CALIBRATION_CANONICAL_HEIGHT,
   CALIBRATION_CANONICAL_WIDTH,
@@ -74,7 +76,7 @@ import {
   setCorner,
   transformPoint,
   validateQuadrilateral,
-} from './puzzle-photo-calibration.js?v=fae10dbd73';
+} from './puzzle-photo-calibration.js?v=77efa9c15c';
 import {
   PuzzlePhotoRecognitionError,
   RECOGNITION_OCCUPANCY_EMPTY,
@@ -86,7 +88,7 @@ import {
   isRecognitionTokenCurrent,
   recognizeIntersections,
   selectionKey,
-} from './puzzle-photo-recognition.js?v=fae10dbd73';
+} from './puzzle-photo-recognition.js?v=77efa9c15c';
 import {
   addTemplate,
   createPieceTypeSessionToken,
@@ -96,13 +98,13 @@ import {
   normalizePiecePatch,
   removeTemplatesForSource,
   suggestUnresolvedPieceTypes,
-} from './puzzle-photo-piece-types.js?v=fae10dbd73';
+} from './puzzle-photo-piece-types.js?v=77efa9c15c';
 import {
   UNREVIEWED, PuzzlePhotoReviewError,
   createReviewState, buildReviewQueue, selectReviewCandidate, confirmEmpty, confirmPiece,
   nextCandidate, previousCandidate, nextUnresolved, acceptHighConfidenceEmpty,
   undoBulkEmpty, resetReview, rescanReview, reviewProgress, confirmedSelections, buildReviewedBoard,
-} from './puzzle-photo-review.js?v=fae10dbd73';
+} from './puzzle-photo-review.js?v=77efa9c15c';
 
 // ---------------- 常數 ----------------
 const CELL = 1;
@@ -421,6 +423,44 @@ function addFX(mesh) {
   mesh.position.y = 0.02;
   fx.add(mesh);
 }
+
+// Practice hints use their own presentation-only layer. These meshes are not
+// part of piece picking, selection, legal-move FX, or any domain state.
+const practiceHintFX = new THREE.Group();
+scene.add(practiceHintFX);
+function clearPracticeHintMarkers() {
+  for (const marker of [...practiceHintFX.children]) {
+    practiceHintFX.remove(marker);
+    marker.geometry.dispose();
+    marker.material.dispose();
+  }
+}
+function addPracticeHintMarker(coordinate, kind) {
+  const source = kind === 'source';
+  const marker = new THREE.Mesh(
+    source ? new THREE.RingGeometry(0.52, 0.68, 48) : new THREE.PlaneGeometry(1.12, 1.12),
+    new THREE.MeshBasicMaterial({
+      color: source ? 0x69c7d4 : 0xf0a85b,
+      transparent: true,
+      opacity: 0.92,
+      side: THREE.DoubleSide,
+      wireframe: !source,
+      depthWrite: false,
+    }),
+  );
+  marker.rotation.x = -Math.PI / 2;
+  marker.renderOrder = 6;
+  marker.userData.practiceHintMarker = kind;
+  marker.raycast = () => {};
+  const point = to3D(coordinate.r, coordinate.c);
+  marker.position.set(point.x, 0.035, point.z);
+  practiceHintFX.add(marker);
+}
+function syncPracticeHintMarkers() {
+  clearPracticeHintMarkers();
+  if (practiceHint?.from) addPracticeHintMarker(practiceHint.from, 'source');
+  if (practiceHint?.to) addPracticeHintMarker(practiceHint.to, 'target');
+}
 function showMoveDots(moves, sourceBoard = board) {
   clearFX();
   for (const m of moves) {
@@ -534,6 +574,8 @@ let recorderState = null;
 let recordedPuzzleResult = null;
 let practiceState = null;
 let practiceToken = 0;
+let practiceHintLevel = 0;
+let practiceHint = null;
 // Access may throw when browser storage is disabled. Defer it to the store's
 // guarded operations so normal play and unsaved authoring still work.
 const puzzleStore = createPuzzleStore({ storage: {
@@ -591,7 +633,7 @@ let aiMoveStart = 0;
 let aiWorker = null;
 let aiModule = null;   // Worker 不可用時的主執行緒後備
 try {
-  aiWorker = new Worker(new URL('./ai-worker.js?v=fae10dbd73', import.meta.url), { type: 'module' });
+  aiWorker = new Worker(new URL('./ai-worker.js?v=77efa9c15c', import.meta.url), { type: 'module' });
   aiWorker.onmessage = (e) => onAIResult(e.data);
   aiWorker.onerror = () => {
     aiWorker = null;
@@ -613,7 +655,7 @@ function requestAIMove() {
   if (aiWorker) {
     aiWorker.postMessage(payload);
   } else {
-    (aiModule ??= import('./ai.js?v=fae10dbd73')).then(({ findBestMove }) => {
+    (aiModule ??= import('./ai.js?v=77efa9c15c')).then(({ findBestMove }) => {
       setTimeout(() => {
         if (token !== aiToken) return;
         onAIResult({ token, result: findBestMove(payload.board, payload.side, payload.level, payload.recent) });
@@ -663,6 +705,11 @@ window.__chess = {
   get editorResult() { return cloneConfirmedPosition(); },
   get recordedPuzzleResult() { return cloneRecordedPuzzleResult(); },
   get practiceState() { return practiceState ? exportPracticeSnapshot(practiceState) : null; },
+  get practiceHintLevel() { return practiceHintLevel; },
+  get practiceHint() { return practiceHint ? structuredClone(practiceHint) : null; },
+  get practiceHintMarkers() {
+    return practiceHintFX.children.map((marker) => marker.userData.practiceHintMarker);
+  },
   get calibrationState() {
     return calibrationState ? {
       corners: Object.fromEntries(CALIBRATION_CORNER_NAMES.map((key) => [key, { ...calibrationState.corners[key] }])),
@@ -741,6 +788,8 @@ const practiceTurnDot = document.getElementById('practiceTurnDot');
 const practiceProgress = document.getElementById('practiceProgress');
 const practiceMistakes = document.getElementById('practiceMistakes');
 const practiceMessage = document.getElementById('practiceMessage');
+const practiceHintMessage = document.getElementById('practiceHintMessage');
+const btnPracticeHint = document.getElementById('btnPracticeHint');
 const btnPracticeRestart = document.getElementById('btnPracticeRestart');
 const btnPracticeExit = document.getElementById('btnPracticeExit');
 const savePuzzlePanel = document.getElementById('savePuzzlePanel');
@@ -2028,6 +2077,7 @@ function exitEditor() {
   recorderState = null;
   recordedPuzzleResult = null;
   practiceState = null;
+  clearPracticeHint();
   libraryViewPuzzle = null;
   activeSavedPuzzleId = null;
   savedCurrentPuzzleId = null;
@@ -2142,6 +2192,58 @@ function setPracticeMessage(message, kind = '') {
   practiceMessage.classList.toggle('error', kind === 'error');
 }
 
+// Fixed accessibility convention: rows count from the red baseline toward
+// black; files count from the red player's left. It does not change with camera rotation.
+function formatPracticeCoordinate(coordinate) {
+  return `紅方視角，自底線起第 ${coordinate.r + 1} 橫列、自左側起第 ${coordinate.c + 1} 直路`;
+}
+
+function formatPracticeHintMessage(hint) {
+  const lines = [`提示：請考慮「${hint.piece.name}」`];
+  if (hint.from) lines.push(`起點：${formatPracticeCoordinate(hint.from)}`);
+  if (hint.to) lines.push(`目標：${formatPracticeCoordinate(hint.to)}`);
+  if (hint.notation) lines.push(`答案：${hint.notation}`);
+  return lines.join('\n');
+}
+
+function practiceHintAvailable() {
+  return appState === APP_STATE.PUZZLE_PRACTICING
+    && practiceState?.status === 'practicing'
+    && practiceState.currentSide === practiceState.practiceSide
+    && !busy
+    && practiceHintLevel < PRACTICE_HINT_MAX_LEVEL;
+}
+
+function syncPracticeHintUI() {
+  const labels = ['提示', '再提示', '再提示', '顯示答案', '已顯示答案'];
+  btnPracticeHint.textContent = labels[practiceHintLevel];
+  btnPracticeHint.disabled = !practiceHintAvailable();
+  practiceHintMessage.textContent = practiceHint ? formatPracticeHintMessage(practiceHint) : '';
+  practiceHintMessage.classList.toggle('hidden', !practiceHint);
+}
+
+function clearPracticeHint() {
+  practiceHintLevel = 0;
+  practiceHint = null;
+  clearPracticeHintMarkers();
+  syncPracticeHintUI();
+}
+
+function requestPracticeHint() {
+  if (!practiceHintAvailable()) return;
+  const nextLevel = practiceHintLevel + 1;
+  try {
+    practiceHint = derivePracticeHint(practiceState, nextLevel);
+    practiceHintLevel = nextLevel;
+    syncPracticeHintMarkers();
+    syncPracticeHintUI();
+  } catch (error) {
+    if (!(error instanceof PuzzlePracticeError)) throw error;
+    practiceHintMessage.textContent = '目前無法顯示提示，請重新開始本題。';
+    practiceHintMessage.classList.remove('hidden');
+  }
+}
+
 function syncPracticeUI() {
   if (!practiceState) return;
   const complete = appState === APP_STATE.PUZZLE_PRACTICE_COMPLETE;
@@ -2165,6 +2267,7 @@ function syncPracticeUI() {
   practiceMistakes.textContent = `錯誤 ${practiceState.mistakes} 次`;
   btnPracticeRestart.disabled = busy;
   btnPracticeExit.textContent = practiceReturnState === 'library' ? '返回題庫' : '返回答案';
+  syncPracticeHintUI();
 }
 
 function syncRecorderScene() {
@@ -2757,6 +2860,7 @@ function startPractice() {
   practiceToken++;
   appState = APP_STATE.PUZZLE_PRACTICING;
   clearSelection();
+  clearPracticeHint();
   setPracticeMessage('請走出本題的第一步。');
   syncPracticeScene();
   syncRecorderUI();
@@ -2790,6 +2894,7 @@ function startSavedPractice(id) {
   libraryPanel.classList.add('hidden');
   editorPanel.classList.remove('hidden');
   clearSelection();
+  clearPracticeHint();
   setPracticeMessage('請走出本題的第一步。');
   syncPracticeScene();
   syncRecorderUI();
@@ -2806,6 +2911,7 @@ function restartCurrentPractice() {
   practiceCompletionRecorded = false;
   appState = APP_STATE.PUZZLE_PRACTICING;
   clearSelection();
+  clearPracticeHint();
   syncPracticeScene();
   setPracticeMessage('已回到原始局面，請重新開始。');
   syncRecorderUI();
@@ -2817,6 +2923,7 @@ function exitPractice() {
   practiceToken++;
   tweens.length = 0;
   busy = false;
+  clearPracticeHint();
   practiceState = null;
   if (practiceReturnState === 'library') {
     const returnId = activeSavedPuzzleId;
@@ -2855,6 +2962,7 @@ function completePractice() {
   appState = APP_STATE.PUZZLE_PRACTICE_COMPLETE;
   busy = false;
   clearSelection();
+  clearPracticeHint();
   const invariant = checkBoardMeshInvariant(practiceState.currentBoard);
   if (!invariant.ok) throw new Error(`Practice board/mesh invariant failed: ${invariant.errors.join(' ')}`);
   markPracticeCompleted(activeSavedPuzzleId);
@@ -2953,6 +3061,7 @@ function doPracticeMove(from, to) {
     toast(message);
     return;
   }
+  clearPracticeHint();
   setPracticeMessage('回答正確。', 'success');
   animatePracticeMove(result);
 }
@@ -3794,6 +3903,7 @@ document.getElementById('btnOpenLibrary').addEventListener('click', () => enterL
 document.getElementById('btnRecorderCancel').addEventListener('click', cancelRecording);
 document.getElementById('btnRecorderExit').addEventListener('click', exitEditor);
 btnPracticeStart.addEventListener('click', startPractice);
+btnPracticeHint.addEventListener('click', requestPracticeHint);
 btnPracticeRestart.addEventListener('click', restartCurrentPractice);
 btnPracticeExit.addEventListener('click', exitPractice);
 document.getElementById('btnPracticePuzzleExit').addEventListener('click', exitEditor);

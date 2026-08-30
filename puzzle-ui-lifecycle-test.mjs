@@ -22,8 +22,18 @@ function functionSource(name) {
 }
 const noop = () => {};
 function node() {
-  return { classList: { add: noop, remove: noop, toggle: noop }, removeAttribute(key) { delete this[key]; },
-    style: {}, value: '', textContent: '', innerHTML: '' };
+  const classes = new Set();
+  return { classList: {
+    add: (...keys) => keys.forEach((key) => classes.add(key)),
+    remove: (...keys) => keys.forEach((key) => classes.delete(key)),
+    toggle(key, force) {
+      const enabled = force === undefined ? !classes.has(key) : force;
+      if (enabled) classes.add(key); else classes.delete(key);
+      return enabled;
+    },
+    contains: (key) => classes.has(key),
+  }, removeAttribute(key) { delete this[key]; },
+  style: {}, value: '', textContent: '', innerHTML: '', disabled: false };
 }
 const photoCanvasNames = ['calibrationCornerCanvas', 'calibrationRectifiedCanvas',
   'recognitionCanvas', 'recognitionTargetCanvas'];
@@ -52,12 +62,15 @@ function harness() {
     PuzzleStoreError, Blob,
     scene, Y0: 0.18, pieces: [], tweens: [], clock: 0, timers: [], shownResults: [],
     board: game.initialBoard(), turn: game.RED, history: [],
+    selected: null, legal: [],
     posHistory: [game.hashBoard(game.initialBoard())], capturedBy: { red: [], black: [] },
     repHistory: [{ key: game.hashBoard(game.initialBoard()) + '|red', mover: null, check: false }],
     busy: false, over: false, winner: null, aiToken: 0, aiThinking: false, undoCount: 0,
     AI_SIDE: game.BLACK, aiMoveStart: 0,
     practiceToken: 0, appState: 'NORMAL_GAME', editorState: null, recorderState: null,
     practiceState: null, activeSavedPuzzleId: null, practiceCompletionRecorded: false,
+    practiceHintLevel: 0, practiceHint: null, hintMarkerRoles: [],
+    recordedPuzzleResult: null, practiceReturnState: 'recorded', libraryViewPuzzle: null,
     recognitionSession: null, selectedRecognitionKey: null, recognitionUnresolvedOnly: false,
     photoLoadToken: 0, photoRecognitionVersion: 0, calibrationRecognitionVersion: 0,
     pieceTypeRecognitionVersion: 0, photoObjectUrl: null, pendingPhotoObjectUrl: null, createdUrls: [],
@@ -70,11 +83,16 @@ function harness() {
       'PUZZLE_LIBRARY', 'PUZZLE_VIEW'].map((state) => [state, state])),
     sfx: { move: noop, capture: noop, check: noop },
     clearSelection: noop, syncLastMoveMark: noop, refreshHUD: noop, addLog: noop,
+    clearPracticeHintMarkers: () => { context.hintMarkerRoles = []; },
+    syncPracticeHintMarkers: () => {
+      context.hintMarkerRoles = [context.practiceHint?.from && 'source', context.practiceHint?.to && 'target'].filter(Boolean);
+    },
     maybeAIMove: noop, showBanner: noop, stopConfetti: noop, toast: noop,
-    setRecorderMessage: noop, setPracticeMessage: noop, syncRecorderUI: noop,
+    setRecorderMessage: noop, setPracticeMessage: noop,
+    syncRecorderUI: () => { if (context.practiceState && context.syncPracticeUI) context.syncPracticeUI(); },
     syncPhotoUI: noop, syncRecognitionUI: noop, markPracticeCompleted: noop,
     markPracticeStarted: () => true, isAI: () => false, setEditorTool: noop,
-    setEditorMessage: noop, setPhotoImportMessage: noop, renderLibraryList: noop,
+    setEditorMessage: noop, setPhotoImportMessage: noop, renderLibraryList: noop, openLibraryPuzzle: noop,
     decodePhotoObjectUrl: async () => ({ naturalWidth: 4, naturalHeight: 3 }),
     document: { querySelector: () => ({ checked: false }) },
     window: { confirm: () => false },
@@ -83,6 +101,7 @@ function harness() {
     showGameOver: (endReason) => context.shownResults.push(endReason),
     puzzleFlowActive: () => context.appState !== 'NORMAL_GAME',
     libraryActive: () => ['PUZZLE_LIBRARY', 'PUZZLE_VIEW'].includes(context.appState),
+    practiceActive: () => ['PUZZLE_PRACTICING', 'PUZZLE_PRACTICE_COMPLETE'].includes(context.appState),
     URL: { revokeObjectURL: (url) => context.revoked.push(url),
       createObjectURL: () => { const url = `blob:new-${context.createdUrls.length}`; context.createdUrls.push(url); return url; } },
     Date,
@@ -91,7 +110,10 @@ function harness() {
   for (const name of ['appEl', 'editorPanel', 'recorderPanel', 'libraryPanel', 'banner',
     'overlay', 'logEl', 'logEmpty', 'photoPreviewImage', 'photoFileInput', 'puzzleImportFile',
     'libraryTransferStatus', 'libraryImportPreview', 'libraryImportPreviewText',
-    'btnLibraryImportConfirm']) context[name] = node();
+    'btnLibraryImportConfirm', 'recorderTitle', 'recorderSubtitle', 'recorderBadge',
+    'practiceTurnText', 'practiceTurnDot', 'practiceProgress', 'practiceMistakes',
+    'practiceMessage', 'practiceHintMessage', 'btnPracticeHint', 'btnPracticeRestart',
+    'btnPracticeExit']) context[name] = node();
   for (const name of photoCanvasNames) context[name] = name === 'recognitionTargetCanvas'
     ? photoCanvas(112, 112) : photoCanvas();
   context.lastFromMark = { visible: false };
@@ -108,6 +130,9 @@ function harness() {
     'animateCapture', 'doMove', 'finishMove', 'undoPly', 'undo', 'newGame', 'resetTo',
     'doRecorderMove', 'finishRecorderMove', 'resetRecorder', 'undoRecorder',
     'animatePracticeMove', 'afterPracticeMove', 'queueOpponentReply', 'completePractice',
+    'formatPracticeCoordinate', 'formatPracticeHintMessage', 'practiceHintAvailable',
+    'syncPracticeHintUI', 'clearPracticeHint', 'requestPracticeHint', 'setPracticeMessage',
+    'syncPracticeUI', 'startPractice', 'startSavedPractice', 'doPracticeMove', 'exitPractice',
     'restartCurrentPractice', 'resetRecognitionReview', 'invalidateRecognition',
     'invalidateRecognitionForCalibrationChange', 'invalidateCalibration', 'releasePhotoReference',
     'enterEditor', 'exitEditor', 'enterLibrary', 'markEditorDirty', 'onAIResult',
@@ -300,10 +325,12 @@ test('integration retains upstream stage controls and unique puzzle DOM hooks', 
   const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map((match) => match[1]);
   assert.equal(new Set(ids).size, ids.length, 'DOM IDs remain unique');
   for (const id of ['stage', 'btnLock', 'btnLockText', 'turn', 'turnDot', 'turnText',
-    'hudMore', 'btnMore', 'btnHelp', 'editorPanel', 'recorderPanel', 'libraryPanel', 'photoPanel']) {
+    'hudMore', 'btnMore', 'btnHelp', 'editorPanel', 'recorderPanel', 'libraryPanel', 'photoPanel',
+    'btnPracticeHint', 'practiceHintMessage']) {
     assert.ok(ids.includes(id), `${id} retained`);
   }
   assert.match(html, /id="stage">[^]*?id="btnLock"[^]*?id="turn" aria-live="polite"/);
+  assert.match(html, /id="practiceHintMessage"[^>]*role="status"[^>]*aria-live="polite"/);
   assert.match(source, /hasAnyLegalMove, name, notation, hashBoard,/);
   assert.match(source, /camera, renderer, scene, controls,/);
   assert.equal((source.match(/renderer\.setAnimationLoop\(tick\)/g) || []).length, 1);
@@ -366,6 +393,173 @@ test('saved puzzle load, automatic reply capture, user capture and restart retai
   assert.equal(ctx.appState, 'PUZZLE_PRACTICE_COMPLETE');
   ctx.restartCurrentPractice(); invariant(ctx, ctx.practiceState.currentBoard);
   same(ctx.practiceState.currentBoard, loaded.initialBoard);
+});
+
+function beginHintPractice(ctx, puzzle = fixture()) {
+  ctx.practiceState = practice.createPractice(puzzle);
+  ctx.appState = 'PUZZLE_PRACTICING';
+  ctx.syncPracticeScene();
+  ctx.clearPracticeHint();
+  return puzzle;
+}
+
+test('practice hints progress from piece to source, target and notation without early disclosure', () => {
+  const ctx = harness();
+  ctx.recordedPuzzleResult = fixture();
+  ctx.appState = 'PUZZLE_RECORDED';
+  ctx.startPractice();
+  assert.equal(ctx.practiceHintLevel, 0);
+  assert.equal(ctx.practiceHint, null);
+  assert.equal(ctx.practiceHintMessage.textContent, '');
+  assert.equal(ctx.practiceHintMessage.classList.contains('hidden'), true);
+  assert.equal(ctx.btnPracticeHint.textContent, '提示');
+  assert.equal(ctx.btnPracticeHint.disabled, false);
+
+  ctx.requestPracticeHint();
+  assert.equal(ctx.practiceHintLevel, 1);
+  assert.equal(ctx.btnPracticeHint.textContent, '再提示');
+  assert.match(ctx.practiceHintMessage.textContent, /請考慮「兵」/);
+  assert.doesNotMatch(ctx.practiceHintMessage.textContent, /起點|目標|答案|兵九進一/);
+  same(ctx.hintMarkerRoles, []);
+
+  ctx.requestPracticeHint();
+  assert.equal(ctx.practiceHintLevel, 2);
+  assert.match(ctx.practiceHintMessage.textContent, /起點：紅方視角，自底線起第 4 橫列、自左側起第 1 直路/);
+  assert.doesNotMatch(ctx.practiceHintMessage.textContent, /目標|答案|兵九進一/);
+  same(ctx.hintMarkerRoles, ['source']);
+  assert.equal(ctx.selected, null);
+  same(ctx.legal, []);
+
+  ctx.requestPracticeHint();
+  assert.equal(ctx.practiceHintLevel, 3);
+  assert.match(ctx.practiceHintMessage.textContent, /目標：紅方視角，自底線起第 5 橫列、自左側起第 1 直路/);
+  assert.doesNotMatch(ctx.practiceHintMessage.textContent, /答案|兵九進一/);
+  same(ctx.hintMarkerRoles, ['source', 'target']);
+  assert.equal(ctx.btnPracticeHint.textContent, '顯示答案');
+
+  ctx.requestPracticeHint();
+  assert.equal(ctx.practiceHintLevel, 4);
+  assert.match(ctx.practiceHintMessage.textContent, /答案：兵九進一/);
+  assert.equal(ctx.btnPracticeHint.textContent, '已顯示答案');
+  assert.equal(ctx.btnPracticeHint.disabled, true);
+  const shown = ctx.practiceHint;
+  ctx.requestPracticeHint();
+  assert.equal(ctx.practiceHint, shown, 'disabled max-level click is inert');
+});
+
+test('wrong moves preserve the requested hint; a correct move clears it before opponent reply', () => {
+  const ctx = harness();
+  const puzzle = beginHintPractice(ctx);
+  ctx.requestPracticeHint();
+  ctx.requestPracticeHint();
+  const hintText = ctx.practiceHintMessage.textContent;
+  ctx.doPracticeMove({ r: 8, c: 0 }, { r: 7, c: 0 });
+  assert.equal(ctx.practiceState.mistakes, 1);
+  assert.equal(ctx.practiceHintLevel, 2);
+  assert.equal(ctx.practiceHintMessage.textContent, hintText);
+  same(ctx.hintMarkerRoles, ['source']);
+
+  ctx.doPracticeMove(puzzle.solution[0].from, puzzle.solution[0].to);
+  assert.equal(ctx.practiceHintLevel, 0, 'cleared synchronously before animation/reply');
+  assert.equal(ctx.practiceHint, null);
+  same(ctx.hintMarkerRoles, []);
+  assert.equal(ctx.btnPracticeHint.disabled, true);
+  ctx.flushAnimations();
+  assert.equal(ctx.timers.length, 1);
+  assert.equal(ctx.btnPracticeHint.disabled, true, 'opponent turn remains guarded');
+  ctx.requestPracticeHint();
+  assert.equal(ctx.practiceHintLevel, 0, 'disabled opponent-turn click is inert');
+  ctx.flushTimers();
+  ctx.flushAnimations();
+  assert.equal(ctx.practiceState.currentPly, 2);
+  assert.equal(ctx.practiceHintLevel, 0);
+  assert.equal(ctx.btnPracticeHint.textContent, '提示');
+  assert.equal(ctx.btnPracticeHint.disabled, false);
+});
+
+test('restart, completion and exit clear hint text, markers and level', () => {
+  const ctx = harness();
+  beginHintPractice(ctx);
+  ctx.requestPracticeHint(); ctx.requestPracticeHint(); ctx.requestPracticeHint();
+  ctx.restartCurrentPractice();
+  assert.equal(ctx.practiceHintLevel, 0);
+  assert.equal(ctx.practiceHintMessage.textContent, '');
+  same(ctx.hintMarkerRoles, []);
+
+  ctx.requestPracticeHint();
+  ctx.practiceReturnState = 'library';
+  ctx.exitPractice();
+  assert.equal(ctx.practiceHintLevel, 0);
+  assert.equal(ctx.practiceHint, null);
+  same(ctx.hintMarkerRoles, []);
+
+  const captureMate = fixture();
+  captureMate.solution = [captureMate.solution[2]];
+  beginHintPractice(ctx, captureMate);
+  ctx.requestPracticeHint();
+  ctx.doPracticeMove(captureMate.solution[0].from, captureMate.solution[0].to);
+  assert.equal(ctx.practiceHintLevel, 0);
+  ctx.flushAnimations();
+  assert.equal(ctx.appState, 'PUZZLE_PRACTICE_COMPLETE');
+  assert.equal(ctx.btnPracticeHint.disabled, true);
+  assert.equal(ctx.practiceHintMessage.textContent, '');
+  same(ctx.hintMarkerRoles, []);
+});
+
+test('stale opponent callbacks cannot restore hints after restart or a different puzzle start', () => {
+  const ctx = harness();
+  const puzzle = beginHintPractice(ctx);
+  ctx.requestPracticeHint();
+  ctx.doPracticeMove(puzzle.solution[0].from, puzzle.solution[0].to);
+  ctx.flushAnimations();
+  assert.equal(ctx.timers.length, 1);
+  ctx.restartCurrentPractice();
+  ctx.requestPracticeHint();
+  assert.equal(ctx.practiceHintLevel, 1);
+  ctx.flushTimers(); ctx.flushAnimations();
+  assert.equal(ctx.practiceState.currentPly, 0);
+  assert.equal(ctx.practiceHintLevel, 1);
+  assert.match(ctx.practiceHintMessage.textContent, /請考慮「兵」/);
+
+  const replacement = fixture();
+  replacement.initialBoard[9][8] = null;
+  let serialized = null;
+  ctx.puzzleStore = createPuzzleStore({ storage: {
+    getItem: () => serialized,
+    setItem: (_, value) => { serialized = value; },
+  } });
+  const saved = ctx.puzzleStore.savePuzzle({ title: 'replacement', ...replacement });
+  ctx.busy = false;
+  ctx.startSavedPractice(saved.id);
+  assert.equal(ctx.practiceHintLevel, 0);
+  assert.equal(ctx.practiceHint, null);
+  assert.equal(ctx.practiceHintMessage.textContent, '');
+});
+
+test('all four saved-practice hint requests cause zero localStorage writes', () => {
+  const ctx = harness();
+  const memory = new Map();
+  let writes = 0;
+  ctx.puzzleStore = createPuzzleStore({
+    storage: {
+      getItem: (key) => memory.get(key) ?? null,
+      setItem(key, value) { writes++; memory.set(key, value); },
+    },
+    now: () => '2026-08-30T06:00:00.000Z',
+  });
+  const saved = ctx.puzzleStore.savePuzzle({ title: 'hint storage', ...fixture() });
+  ctx.markPracticeStarted = (id) => !!ctx.puzzleStore.markPracticeStarted(id);
+  ctx.startSavedPractice(saved.id);
+  assert.equal(ctx.practiceHintLevel, 0);
+  assert.equal(ctx.practiceHintMessage.textContent, '');
+  const writesAfterStart = writes;
+  const storageAfterStart = memory.get('chinese-chess-training:puzzles:v1');
+  for (let level = 1; level <= practice.PRACTICE_HINT_MAX_LEVEL; level++) ctx.requestPracticeHint();
+  assert.equal(writes, writesAfterStart);
+  assert.equal(memory.get('chinese-chess-training:puzzles:v1'), storageAfterStart);
+  assert.equal('hint' in ctx.puzzleStore.getPuzzle(saved.id), false);
+  const exported = JSON.parse(transfer.serializePuzzleExport([ctx.puzzleStore.getPuzzle(saved.id)])).puzzles[0];
+  for (const key of ['hint', 'hintLevel', 'practiceHint', 'practiceHintLevel']) assert.equal(key in exported, false);
 });
 
 test('restarting or exiting practice cancels a queued opponent capture', () => {

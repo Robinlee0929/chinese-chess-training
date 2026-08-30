@@ -806,7 +806,21 @@ aside h3 {
   gap: 8px;
 }
 .practice-actions button { padding: 8px; font-size: 12.5px; }
+.practice-actions #btnPracticeHint { grid-column: 1 / -1; }
 .practice-actions #btnPracticePuzzleExit { grid-column: 1 / -1; }
+.practice-hint-message {
+  min-width: 0;
+  margin: 0;
+  padding: 9px 10px;
+  color: #d9edf0;
+  background: rgba(105, 199, 212, 0.08);
+  border: 1px solid rgba(105, 199, 212, 0.32);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
 
 .save-puzzle-panel {
   display: flex;

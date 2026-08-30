@@ -1,8 +1,10 @@
-import { ROWS, COLS, RED, BLACK, legalMoves, applyMove, notation } from './game.js?v=fae10dbd73';
-import { validatePuzzle, isCheckmateAfterSolution } from './puzzle-domain.js?v=fae10dbd73';
+import { ROWS, COLS, RED, BLACK, legalMoves, applyMove, name, notation } from './game.js?v=77efa9c15c';
+import { validatePuzzle, isCheckmateAfterSolution } from './puzzle-domain.js?v=77efa9c15c';
 
 const SIDES = new Set([RED, BLACK]);
 const STATUSES = new Set(['practicing', 'complete']);
+
+export const PRACTICE_HINT_MAX_LEVEL = 4;
 
 export class PuzzlePracticeError extends Error {
   constructor(code, message, { path } = {}) {
@@ -89,6 +91,57 @@ export function restartPractice(practice) {
     status: 'practicing',
     mistakes: 0,
   });
+}
+
+// Progressive hints describe only the current move in the recorded solution.
+// They do not search for alternatives or evaluate whether that move is best.
+export function derivePracticeHint(practice, level) {
+  if (!Number.isInteger(level) || level < 1 || level > PRACTICE_HINT_MAX_LEVEL) {
+    fail('INVALID_HINT_LEVEL', `Hint level must be an integer from 1 to ${PRACTICE_HINT_MAX_LEVEL}.`);
+  }
+
+  const current = checkedPractice(practice);
+  if (current.status !== 'practicing' || current.currentSide !== current.practiceSide
+    || current.currentPly >= current.solution.length) {
+    fail('HINT_NOT_AVAILABLE', 'A hint is available only during the player turn of active practice.');
+  }
+
+  const expected = current.solution[current.currentPly];
+  if (!isHintCoordinate(expected?.from) || !isHintCoordinate(expected?.to)
+    || expected.side !== current.currentSide) {
+    fail('INCONSISTENT_HINT_MOVE', 'The recorded hint move does not match the current practice ply.');
+  }
+
+  const sourcePiece = current.currentBoard[expected.from.r]?.[expected.from.c];
+  if (!sourcePiece || sourcePiece.side !== current.currentSide) {
+    fail('INCONSISTENT_HINT_MOVE', 'The recorded hint source does not contain a current-side piece.');
+  }
+
+  let legal = false;
+  try {
+    legal = isLegal(current.currentBoard, expected.from, expected.to);
+  } catch {
+    legal = false;
+  }
+  const pieceName = name(sourcePiece.side, sourcePiece.type);
+  if (!legal || typeof pieceName !== 'string') {
+    fail('INCONSISTENT_HINT_MOVE', 'The recorded hint move is not legal in the current position.');
+  }
+
+  const hint = {
+    level,
+    piece: { side: sourcePiece.side, type: sourcePiece.type, name: pieceName },
+  };
+  if (level >= 2) hint.from = cloneCoordinate(expected.from);
+  if (level >= 3) hint.to = cloneCoordinate(expected.to);
+  if (level >= 4) {
+    try {
+      hint.notation = notation(current.currentBoard, expected.from, expected.to);
+    } catch {
+      fail('INCONSISTENT_HINT_MOVE', 'The recorded hint move cannot be formatted in the current position.');
+    }
+  }
+  return freezeHint(hint);
 }
 
 export function exportPracticeBoard(practice) {
@@ -195,6 +248,13 @@ function validateCoordinate(coordinate, path) {
   }
 }
 
+function isHintCoordinate(coordinate) {
+  return coordinate && typeof coordinate === 'object' && !Array.isArray(coordinate)
+    && Number.isInteger(coordinate.r) && Number.isInteger(coordinate.c)
+    && coordinate.r >= 0 && coordinate.r < ROWS
+    && coordinate.c >= 0 && coordinate.c < COLS;
+}
+
 function isLegal(board, from, to) {
   return legalMoves(board, from.r, from.c).some(({ r, c }) => r === to.r && c === to.c);
 }
@@ -254,6 +314,17 @@ function freezePractice(practice) {
     status: practice.status,
     mistakes: practice.mistakes,
   });
+}
+
+function freezeHint(hint) {
+  const frozen = {
+    level: hint.level,
+    piece: Object.freeze({ ...hint.piece }),
+  };
+  if (hint.from) frozen.from = Object.freeze(cloneCoordinate(hint.from));
+  if (hint.to) frozen.to = Object.freeze(cloneCoordinate(hint.to));
+  if (hint.notation !== undefined) frozen.notation = hint.notation;
+  return Object.freeze(frozen);
 }
 
 function fail(code, message, options) {
