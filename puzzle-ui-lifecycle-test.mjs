@@ -10,6 +10,7 @@ import * as review from './puzzle-photo-review.js';
 import * as photo from './puzzle-photo.js';
 import * as pieceTypes from './puzzle-photo-piece-types.js';
 import * as transfer from './puzzle-transfer.js';
+import * as analytics from './puzzle-analytics.js';
 import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js';
 
 // Execute the real UI lifecycle functions with a deterministic clock and minimal
@@ -55,10 +56,23 @@ function vector(x = 0, y = 0, z = 0) {
     lerpVectors(a, b, k) { this.set(a.x + (b.x - a.x) * k, a.y + (b.y - a.y) * k, a.z + (b.z - a.z) * k); } };
 }
 function harness() {
+  let analyticsSerialized = null;
+  let analyticsWrites = 0;
+  let analyticsTick = 0;
+  const analyticsStorage = {
+    getItem: () => analyticsSerialized,
+    setItem: (_, value) => { analyticsWrites++; analyticsSerialized = value; },
+    get writes() { return analyticsWrites; },
+    get serialized() { return analyticsSerialized; },
+  };
+  const practiceAnalyticsStore = analytics.createPracticeAnalyticsStore({
+    storage: analyticsStorage,
+    now: () => new Date(Date.UTC(2026, 7, 30, 15, 0, analyticsTick++)).toISOString(),
+  });
   const scene = { children: [], add(mesh) { this.children.push(mesh); mesh.parent = this; },
     remove(mesh) { this.children = this.children.filter((entry) => entry !== mesh); mesh.parent = null; } };
   const context = vm.createContext({
-    ...game, ...editor, ...recorder, ...practice, ...review, ...photo, ...pieceTypes, ...transfer,
+    ...game, ...editor, ...recorder, ...practice, ...review, ...photo, ...pieceTypes, ...transfer, ...analytics,
     PuzzleStoreError, Blob,
     scene, Y0: 0.18, pieces: [], tweens: [], clock: 0, timers: [], shownResults: [],
     board: game.initialBoard(), turn: game.RED, history: [],
@@ -69,7 +83,8 @@ function harness() {
     AI_SIDE: game.BLACK, aiMoveStart: 0,
     practiceToken: 0, appState: 'NORMAL_GAME', editorState: null, recorderState: null,
     practiceState: null, activeSavedPuzzleId: null, practiceCompletionRecorded: false,
-    practiceHintLevel: 0, practiceHint: null, hintMarkerRoles: [],
+    practiceHintLevel: 0, practiceHint: null, practiceAttempt: null, hintMarkerRoles: [],
+    practiceAnalyticsStore, analyticsStorage,
     recordedPuzzleResult: null, practiceReturnState: 'recorded', libraryViewPuzzle: null,
     recognitionSession: null, selectedRecognitionKey: null, recognitionUnresolvedOnly: false,
     photoLoadToken: 0, photoRecognitionVersion: 0, calibrationRecognitionVersion: 0,
@@ -132,6 +147,7 @@ function harness() {
     'animatePracticeMove', 'afterPracticeMove', 'queueOpponentReply', 'completePractice',
     'formatPracticeCoordinate', 'formatPracticeHintMessage', 'practiceHintAvailable',
     'syncPracticeHintUI', 'clearPracticeHint', 'requestPracticeHint', 'setPracticeMessage',
+    'beginPracticeAttempt', 'recordPracticeHintRequest', 'finalizePracticeAttempt',
     'syncPracticeUI', 'startPractice', 'startSavedPractice', 'doPracticeMove', 'exitPractice',
     'restartCurrentPractice', 'resetRecognitionReview', 'invalidateRecognition',
     'invalidateRecognitionForCalibrationChange', 'invalidateCalibration', 'releasePhotoReference',
@@ -326,11 +342,15 @@ test('integration retains upstream stage controls and unique puzzle DOM hooks', 
   assert.equal(new Set(ids).size, ids.length, 'DOM IDs remain unique');
   for (const id of ['stage', 'btnLock', 'btnLockText', 'turn', 'turnDot', 'turnText',
     'hudMore', 'btnMore', 'btnHelp', 'editorPanel', 'recorderPanel', 'libraryPanel', 'photoPanel',
-    'btnPracticeHint', 'practiceHintMessage']) {
+    'btnPracticeHint', 'practiceHintMessage', 'libraryAnalyticsHeading', 'libraryAnalyticsStatus',
+    'libraryAnalyticsSummary', 'libraryRecentAttempts']) {
     assert.ok(ids.includes(id), `${id} retained`);
   }
   assert.match(html, /id="stage">[^]*?id="btnLock"[^]*?id="turn" aria-live="polite"/);
   assert.match(html, /id="practiceHintMessage"[^>]*role="status"[^>]*aria-live="polite"/);
+  assert.match(html, /<section class="library-analytics"[^>]*aria-labelledby="libraryAnalyticsHeading"/);
+  assert.match(html, /id="libraryAnalyticsStatus"[^>]*role="status"[^>]*aria-live="polite"/);
+  assert.match(html, /<ol id="libraryRecentAttempts"[^>]*aria-label="[^"]+"/);
   assert.match(source, /hasAnyLegalMove, name, notation, hashBoard,/);
   assert.match(source, /camera, renderer, scene, controls,/);
   assert.equal((source.match(/renderer\.setAnimationLoop\(tick\)/g) || []).length, 1);
@@ -560,6 +580,171 @@ test('all four saved-practice hint requests cause zero localStorage writes', () 
   assert.equal('hint' in ctx.puzzleStore.getPuzzle(saved.id), false);
   const exported = JSON.parse(transfer.serializePuzzleExport([ctx.puzzleStore.getPuzzle(saved.id)])).puzzles[0];
   for (const key of ['hint', 'hintLevel', 'practiceHint', 'practiceHintLevel']) assert.equal(key in exported, false);
+});
+
+function savedAnalyticsHarness() {
+  const ctx = harness();
+  const memory = new Map();
+  const writes = new Map();
+  const storage = {
+    getItem: (key) => memory.get(key) ?? null,
+    setItem(key, value) { writes.set(key, (writes.get(key) || 0) + 1); memory.set(key, value); },
+  };
+  let tick = 0;
+  ctx.puzzleStore = createPuzzleStore({
+    storage,
+    now: () => new Date(Date.UTC(2026, 7, 30, 14, 0, tick++)).toISOString(),
+    idFactory: () => 'saved-analytics',
+  });
+  const analyticsStore = analytics.createPracticeAnalyticsStore({
+    storage,
+    now: () => new Date(Date.UTC(2026, 7, 30, 15, 0, tick++)).toISOString(),
+  });
+  ctx.practiceAnalyticsStore = Object.freeze({
+    ...analyticsStore,
+    recordAttempt: (attempt) => analyticsStore.recordAttempt({ ...attempt }),
+  });
+  ctx.markPracticeStarted = (id) => !!ctx.puzzleStore.markPracticeStarted(id);
+  ctx.markPracticeCompleted = (id) => { if (id) ctx.puzzleStore.markPracticeCompleted(id); };
+  const saved = ctx.puzzleStore.savePuzzle({ title: 'analytics', ...fixture() });
+  return { ctx, saved, memory, writes };
+}
+
+test('saved completion finalizes one compact attempt with canonical mistakes and cross-ply hints', () => {
+  const { ctx, saved, writes } = savedAnalyticsHarness();
+  const analyticsKey = analytics.PRACTICE_ANALYTICS_KEY;
+  ctx.startSavedPractice(saved.id);
+  assert.equal(ctx.puzzleStore.getPuzzle(saved.id).practiceCount, 1, 'existing start counter unchanged');
+  assert.equal(writes.get(analyticsKey) || 0, 0, 'start does not persist analytics');
+  same(ctx.practiceAttempt, {
+    puzzleId: saved.id, startedAt: '2026-08-30T15:00:02.000Z', hintRequests: 0, maxHintLevel: 0,
+  });
+
+  ctx.requestPracticeHint();
+  ctx.requestPracticeHint();
+  assert.equal(ctx.practiceAttempt.hintRequests, 2);
+  assert.equal(ctx.practiceAttempt.maxHintLevel, 2);
+  assert.equal(writes.get(analyticsKey) || 0, 0, 'hint reveal does not persist immediately');
+  ctx.doPracticeMove({ r: 8, c: 0 }, { r: 7, c: 0 });
+  assert.equal(ctx.practiceState.mistakes, 1);
+  ctx.doPracticeMove(saved.solution[0].from, saved.solution[0].to);
+  ctx.flushAnimations(); ctx.flushTimers(); ctx.flushAnimations();
+  ctx.requestPracticeHint();
+  assert.equal(ctx.practiceAttempt.hintRequests, 3);
+  assert.equal(ctx.practiceAttempt.maxHintLevel, 2, 'maximum survives per-ply UI reset');
+  ctx.doPracticeMove(saved.solution[2].from, saved.solution[2].to);
+  ctx.flushAnimations();
+
+  assert.equal(ctx.appState, 'PUZZLE_PRACTICE_COMPLETE');
+  assert.equal(ctx.practiceAttempt, null);
+  assert.equal(writes.get(analyticsKey), 1, 'completion is one analytics write');
+  const entry = ctx.practiceAnalyticsStore.getPuzzleAnalytics(saved.id);
+  assert.equal(entry.aggregate.attemptCount, 1);
+  assert.equal(entry.aggregate.completedCount, 1);
+  assert.equal(entry.aggregate.abandonedCount, 0);
+  assert.equal(entry.aggregate.totalMistakes, 1);
+  assert.equal(entry.aggregate.totalHintRequests, 3);
+  same(entry.recentAttempts[0], {
+    startedAt: '2026-08-30T15:00:02.000Z', endedAt: '2026-08-30T15:00:04.000Z',
+    outcome: 'completed', mistakes: 1, hintRequests: 3, maxHintLevel: 2,
+  });
+  const writesAfterComplete = writes.get(analyticsKey);
+  ctx.exitPractice();
+  assert.equal(writes.get(analyticsKey), writesAfterComplete, 'exit after completion cannot double-finalize');
+});
+
+test('restart and exit finalize separate abandoned attempts while stale reply stays inert', () => {
+  const { ctx, saved, writes } = savedAnalyticsHarness();
+  const analyticsKey = analytics.PRACTICE_ANALYTICS_KEY;
+  ctx.startSavedPractice(saved.id);
+  ctx.requestPracticeHint(); ctx.requestPracticeHint();
+  ctx.doPracticeMove({ r: 8, c: 0 }, { r: 7, c: 0 });
+  ctx.doPracticeMove(saved.solution[0].from, saved.solution[0].to);
+  ctx.flushAnimations();
+  assert.equal(ctx.timers.length, 1);
+  ctx.restartCurrentPractice();
+  assert.equal(writes.get(analyticsKey), 1);
+  assert.equal(ctx.practiceState.currentPly, 0);
+  assert.equal(ctx.practiceAttempt.hintRequests, 0);
+  assert.equal(ctx.practiceAttempt.maxHintLevel, 0);
+  assert.equal(ctx.puzzleStore.getPuzzle(saved.id).practiceCount, 2);
+  ctx.flushTimers(); ctx.flushAnimations();
+  assert.equal(writes.get(analyticsKey), 1, 'stale reply did not finalize or mutate new run');
+  assert.equal(ctx.practiceState.currentPly, 0);
+  ctx.requestPracticeHint();
+  ctx.exitPractice();
+  assert.equal(writes.get(analyticsKey), 2);
+  const entry = ctx.practiceAnalyticsStore.getPuzzleAnalytics(saved.id);
+  assert.equal(entry.aggregate.attemptCount, 2);
+  assert.equal(entry.aggregate.completedCount, 0);
+  assert.equal(entry.aggregate.abandonedCount, 2);
+  assert.equal(entry.recentAttempts[0].hintRequests, 1);
+  assert.equal(entry.recentAttempts[0].maxHintLevel, 1);
+  assert.equal(entry.recentAttempts[1].mistakes, 1);
+  assert.equal(entry.recentAttempts[1].hintRequests, 2);
+  assert.equal(entry.recentAttempts[1].maxHintLevel, 2);
+});
+
+test('unsaved practice creates no tracker and causes no analytics write', () => {
+  const ctx = harness();
+  ctx.recordedPuzzleResult = fixture();
+  ctx.appState = 'PUZZLE_RECORDED';
+  ctx.startPractice();
+  assert.equal(ctx.practiceAttempt, null);
+  ctx.requestPracticeHint();
+  ctx.doPracticeMove({ r: 8, c: 0 }, { r: 7, c: 0 });
+  ctx.exitPractice();
+  assert.equal(ctx.analyticsStorage.writes, 0);
+});
+
+test('disabled and failed hint requests do not increment attempt analytics', () => {
+  const ctx = harness();
+  beginHintPractice(ctx);
+  ctx.beginPracticeAttempt('saved');
+  for (let level = 1; level <= practice.PRACTICE_HINT_MAX_LEVEL; level++) ctx.requestPracticeHint();
+  const beforeDisabled = structuredClone(ctx.practiceAttempt);
+  ctx.requestPracticeHint();
+  same(ctx.practiceAttempt, beforeDisabled);
+  ctx.practiceHintLevel = 0;
+  ctx.practiceHint = null;
+  ctx.practiceState = practice.exportPracticeSnapshot(ctx.practiceState);
+  ctx.practiceState.currentBoard[3][0] = null;
+  const beforeFailed = structuredClone(ctx.practiceAttempt);
+  ctx.requestPracticeHint();
+  same(ctx.practiceAttempt, beforeFailed);
+  assert.equal(ctx.analyticsStorage.writes, 0);
+});
+
+test('corrupt or unwritable analytics never blocks restart, completion or exit', () => {
+  const corrupt = savedAnalyticsHarness();
+  corrupt.memory.set(analytics.PRACTICE_ANALYTICS_KEY, '{');
+  corrupt.ctx.startSavedPractice(corrupt.saved.id);
+  corrupt.ctx.requestPracticeHint();
+  corrupt.ctx.restartCurrentPractice();
+  assert.equal(corrupt.ctx.appState, 'PUZZLE_PRACTICING');
+  assert.equal(corrupt.ctx.practiceState.currentPly, 0);
+  corrupt.ctx.exitPractice();
+  assert.equal(corrupt.ctx.practiceState, null);
+
+  const failing = savedAnalyticsHarness();
+  const baseStore = failing.ctx.practiceAnalyticsStore;
+  failing.ctx.practiceAnalyticsStore = Object.freeze({
+    now: baseStore.now,
+    getPuzzleAnalytics: baseStore.getPuzzleAnalytics,
+    deletePuzzleAnalytics: baseStore.deletePuzzleAnalytics,
+    recordAttempt() { throw new analytics.PracticeAnalyticsError('STORE_WRITE_FAILED', 'quota'); },
+  });
+  const captureMate = fixture();
+  captureMate.solution = [captureMate.solution[2]];
+  failing.ctx.practiceState = practice.createPractice(captureMate);
+  failing.ctx.activeSavedPuzzleId = failing.saved.id;
+  failing.ctx.appState = 'PUZZLE_PRACTICING';
+  failing.ctx.beginPracticeAttempt(failing.saved.id);
+  failing.ctx.syncPracticeScene();
+  failing.ctx.doPracticeMove(captureMate.solution[0].from, captureMate.solution[0].to);
+  failing.ctx.flushAnimations();
+  assert.equal(failing.ctx.appState, 'PUZZLE_PRACTICE_COMPLETE');
+  assert.equal(failing.ctx.practiceAttempt, null);
 });
 
 test('restarting or exiting practice cancels a queued opponent capture', () => {
@@ -812,7 +997,7 @@ test('mesh checker detects off-square, zero-scale and unregistered scene ghosts'
 });
 
 test('blocked localStorage getter does not prevent UI store construction', () => {
-  const match = source.match(/const puzzleStore = createPuzzleStore\([^]*?\);/);
+  const match = source.match(/const browserStorage = \{[^]*?const puzzleStore = createPuzzleStore\([^]*?\);/);
   assert.ok(match);
   const window = Object.defineProperty({}, 'localStorage', { get() { throw new Error('SecurityError'); } });
   const context = vm.createContext({ window, createPuzzleStore });

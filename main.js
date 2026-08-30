@@ -7,7 +7,7 @@ import {
   ROWS, COLS, RED, BLACK,
   initialBoard, legalMoves, applyMove, inCheck,
   hasAnyLegalMove, name, notation, hashBoard, repetitionVerdict,
-} from './game.js?v=77efa9c15c';
+} from './game.js?v=c5216ea920';
 import {
   PuzzleEditorError,
   createEditorState,
@@ -17,7 +17,7 @@ import {
   setEditorSideToMove,
   confirmAuthoredPosition,
   exportAuthoredPosition,
-} from './puzzle-editor.js?v=77efa9c15c';
+} from './puzzle-editor.js?v=c5216ea920';
 import {
   PuzzleRecorderError,
   createRecorder,
@@ -27,7 +27,7 @@ import {
   finishRecording,
   exportRecorderBoard,
   exportRecordedResult,
-} from './puzzle-recorder.js?v=77efa9c15c';
+} from './puzzle-recorder.js?v=c5216ea920';
 import {
   PuzzlePracticeError,
   PRACTICE_HINT_MAX_LEVEL,
@@ -37,8 +37,12 @@ import {
   derivePracticeHint,
   restartPractice,
   exportPracticeSnapshot,
-} from './puzzle-practice.js?v=77efa9c15c';
-import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=77efa9c15c';
+} from './puzzle-practice.js?v=c5216ea920';
+import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=c5216ea920';
+import {
+  PracticeAnalyticsError,
+  createPracticeAnalyticsStore,
+} from './puzzle-analytics.js?v=c5216ea920';
 import {
   PUZZLE_TRANSFER_FORMAT,
   PUZZLE_TRANSFER_SCHEMA_VERSION,
@@ -46,7 +50,7 @@ import {
   PuzzleTransferError,
   serializePuzzleExport,
   parsePuzzleImport,
-} from './puzzle-transfer.js?v=77efa9c15c';
+} from './puzzle-transfer.js?v=c5216ea920';
 import {
   PHOTO_MAX_ZOOM,
   PHOTO_MIN_ZOOM,
@@ -60,7 +64,7 @@ import {
   validatePhotoMetadata,
   zoomPhotoIn,
   zoomPhotoOut,
-} from './puzzle-photo.js?v=77efa9c15c';
+} from './puzzle-photo.js?v=c5216ea920';
 import {
   CALIBRATION_CANONICAL_HEIGHT,
   CALIBRATION_CANONICAL_WIDTH,
@@ -76,7 +80,7 @@ import {
   setCorner,
   transformPoint,
   validateQuadrilateral,
-} from './puzzle-photo-calibration.js?v=77efa9c15c';
+} from './puzzle-photo-calibration.js?v=c5216ea920';
 import {
   PuzzlePhotoRecognitionError,
   RECOGNITION_OCCUPANCY_EMPTY,
@@ -88,7 +92,7 @@ import {
   isRecognitionTokenCurrent,
   recognizeIntersections,
   selectionKey,
-} from './puzzle-photo-recognition.js?v=77efa9c15c';
+} from './puzzle-photo-recognition.js?v=c5216ea920';
 import {
   addTemplate,
   createPieceTypeSessionToken,
@@ -98,13 +102,13 @@ import {
   normalizePiecePatch,
   removeTemplatesForSource,
   suggestUnresolvedPieceTypes,
-} from './puzzle-photo-piece-types.js?v=77efa9c15c';
+} from './puzzle-photo-piece-types.js?v=c5216ea920';
 import {
   UNREVIEWED, PuzzlePhotoReviewError,
   createReviewState, buildReviewQueue, selectReviewCandidate, confirmEmpty, confirmPiece,
   nextCandidate, previousCandidate, nextUnresolved, acceptHighConfidenceEmpty,
   undoBulkEmpty, resetReview, rescanReview, reviewProgress, confirmedSelections, buildReviewedBoard,
-} from './puzzle-photo-review.js?v=77efa9c15c';
+} from './puzzle-photo-review.js?v=c5216ea920';
 
 // ---------------- 常數 ----------------
 const CELL = 1;
@@ -576,12 +580,15 @@ let practiceState = null;
 let practiceToken = 0;
 let practiceHintLevel = 0;
 let practiceHint = null;
+let practiceAttempt = null;
 // Access may throw when browser storage is disabled. Defer it to the store's
 // guarded operations so normal play and unsaved authoring still work.
-const puzzleStore = createPuzzleStore({ storage: {
+const browserStorage = {
   getItem: (key) => window.localStorage.getItem(key),
   setItem: (key, value) => window.localStorage.setItem(key, value),
-} });
+};
+const puzzleStore = createPuzzleStore({ storage: browserStorage });
+const practiceAnalyticsStore = createPracticeAnalyticsStore({ storage: browserStorage });
 let libraryViewPuzzle = null;
 let activeSavedPuzzleId = null;
 let savedCurrentPuzzleId = null;
@@ -633,7 +640,7 @@ let aiMoveStart = 0;
 let aiWorker = null;
 let aiModule = null;   // Worker 不可用時的主執行緒後備
 try {
-  aiWorker = new Worker(new URL('./ai-worker.js?v=77efa9c15c', import.meta.url), { type: 'module' });
+  aiWorker = new Worker(new URL('./ai-worker.js?v=c5216ea920', import.meta.url), { type: 'module' });
   aiWorker.onmessage = (e) => onAIResult(e.data);
   aiWorker.onerror = () => {
     aiWorker = null;
@@ -655,7 +662,7 @@ function requestAIMove() {
   if (aiWorker) {
     aiWorker.postMessage(payload);
   } else {
-    (aiModule ??= import('./ai.js?v=77efa9c15c')).then(({ findBestMove }) => {
+    (aiModule ??= import('./ai.js?v=c5216ea920')).then(({ findBestMove }) => {
       setTimeout(() => {
         if (token !== aiToken) return;
         onAIResult({ token, result: findBestMove(payload.board, payload.side, payload.level, payload.recent) });
@@ -707,6 +714,7 @@ window.__chess = {
   get practiceState() { return practiceState ? exportPracticeSnapshot(practiceState) : null; },
   get practiceHintLevel() { return practiceHintLevel; },
   get practiceHint() { return practiceHint ? structuredClone(practiceHint) : null; },
+  get practiceAttempt() { return practiceAttempt ? structuredClone(practiceAttempt) : null; },
   get practiceHintMarkers() {
     return practiceHintFX.children.map((marker) => marker.userData.practiceHintMarker);
   },
@@ -807,6 +815,9 @@ const libraryDetailTitle = document.getElementById('libraryDetailTitle');
 const libraryDetailMeta = document.getElementById('libraryDetailMeta');
 const libraryDetailNotes = document.getElementById('libraryDetailNotes');
 const libraryDetailSolution = document.getElementById('libraryDetailSolution');
+const libraryAnalyticsStatus = document.getElementById('libraryAnalyticsStatus');
+const libraryAnalyticsSummary = document.getElementById('libraryAnalyticsSummary');
+const libraryRecentAttempts = document.getElementById('libraryRecentAttempts');
 const btnLibraryDetailPractice = document.getElementById('btnLibraryDetailPractice');
 const btnLibraryDetailDelete = document.getElementById('btnLibraryDetailDelete');
 const btnLibraryExportAll = document.getElementById('btnLibraryExportAll');
@@ -2066,6 +2077,7 @@ function enterEditor() {
 
 function exitEditor() {
   if (!puzzleFlowActive()) return;
+  if (appState === APP_STATE.PUZZLE_PRACTICING) finalizePracticeAttempt('abandoned');
   aiToken++;
   practiceToken++;
   aiThinking = false;
@@ -2077,6 +2089,7 @@ function exitEditor() {
   recorderState = null;
   recordedPuzzleResult = null;
   practiceState = null;
+  practiceAttempt = null;
   clearPracticeHint();
   libraryViewPuzzle = null;
   activeSavedPuzzleId = null;
@@ -2235,6 +2248,7 @@ function requestPracticeHint() {
   try {
     practiceHint = derivePracticeHint(practiceState, nextLevel);
     practiceHintLevel = nextLevel;
+    recordPracticeHintRequest(nextLevel);
     syncPracticeHintMarkers();
     syncPracticeHintUI();
   } catch (error) {
@@ -2599,6 +2613,47 @@ function renderLibraryDetail(puzzle) {
     libraryDetailSolution.appendChild(item);
     applyMove(replayBoard, move.from, move.to);
   });
+  renderLibraryAnalytics(puzzle.id);
+}
+
+function appendAnalyticsTerm(label, value) {
+  const term = document.createElement('dt');
+  term.textContent = label;
+  const description = document.createElement('dd');
+  description.textContent = value;
+  libraryAnalyticsSummary.append(term, description);
+}
+
+function renderLibraryAnalytics(puzzleId) {
+  libraryAnalyticsSummary.replaceChildren();
+  libraryRecentAttempts.replaceChildren();
+  try {
+    const analytics = practiceAnalyticsStore.getPuzzleAnalytics(puzzleId);
+    if (!analytics) {
+      libraryAnalyticsStatus.textContent = '尚無練習紀錄';
+      return;
+    }
+    libraryAnalyticsStatus.textContent = '';
+    const { aggregate } = analytics;
+    appendAnalyticsTerm('已記錄', `${aggregate.attemptCount} 次`);
+    appendAnalyticsTerm('完成', `${aggregate.completedCount} 次`);
+    appendAnalyticsTerm('中止', `${aggregate.abandonedCount} 次`);
+    appendAnalyticsTerm('獨立完成', `${aggregate.cleanCompletionCount} 次`);
+    appendAnalyticsTerm('累計錯誤', `${aggregate.totalMistakes} 次`);
+    appendAnalyticsTerm('提示請求', `${aggregate.totalHintRequests} 次`);
+    for (const attempt of analytics.recentAttempts) {
+      const item = document.createElement('li');
+      const outcome = attempt.outcome === 'completed' ? '完成' : '中止';
+      const hint = attempt.hintRequests === 0
+        ? '未使用提示'
+        : `提示 ${attempt.hintRequests} 次（最高第 ${attempt.maxHintLevel} 級）`;
+      item.textContent = `${outcome}・${formatStoredDate(attempt.endedAt)}・錯誤 ${attempt.mistakes}・${hint}`;
+      libraryRecentAttempts.appendChild(item);
+    }
+  } catch (error) {
+    if (!(error instanceof PracticeAnalyticsError)) throw error;
+    libraryAnalyticsStatus.textContent = '練習統計目前無法讀取。';
+  }
 }
 
 function createLibraryCard(puzzle) {
@@ -2711,8 +2766,21 @@ function deleteStoredPuzzle(id) {
   try {
     if (!puzzleStore.deletePuzzle(id)) return;
     if (savedCurrentPuzzleId === id) savedCurrentPuzzleId = null;
-    toast('題目已刪除。');
+    let analyticsWarning = false;
+    try {
+      practiceAnalyticsStore.deletePuzzleAnalytics(id);
+    } catch (error) {
+      if (!(error instanceof PracticeAnalyticsError)) throw error;
+      analyticsWarning = true;
+    }
     showLibraryList();
+    if (analyticsWarning) {
+      libraryIssues.textContent = '題目已刪除，但練習統計目前無法清除。';
+      libraryIssues.classList.remove('hidden');
+      toast('題目已刪除；練習統計清除失敗。');
+    } else {
+      toast('題目已刪除。');
+    }
   } catch (error) {
     const message = storeErrorMessage(error);
     libraryIssues.textContent = message;
@@ -2738,6 +2806,43 @@ function markPracticeCompleted(id) {
     practiceCompletionRecorded = true;
   } catch (error) {
     toast(storeErrorMessage(error));
+  }
+}
+
+function beginPracticeAttempt(puzzleId) {
+  practiceAttempt = null;
+  if (!puzzleId) return;
+  let startedAt;
+  try {
+    startedAt = practiceAnalyticsStore.now();
+  } catch {
+    return;
+  }
+  practiceAttempt = { puzzleId, startedAt, hintRequests: 0, maxHintLevel: 0 };
+}
+
+function recordPracticeHintRequest(level) {
+  if (!practiceAttempt) return;
+  practiceAttempt.hintRequests += 1;
+  practiceAttempt.maxHintLevel = Math.max(practiceAttempt.maxHintLevel, level);
+}
+
+function finalizePracticeAttempt(outcome) {
+  const attempt = practiceAttempt;
+  practiceAttempt = null;
+  if (!attempt) return false;
+  try {
+    const endedAt = practiceAnalyticsStore.now();
+    practiceAnalyticsStore.recordAttempt({
+      ...attempt,
+      endedAt,
+      outcome,
+      mistakes: practiceState?.mistakes ?? 0,
+    });
+    return true;
+  } catch (error) {
+    toast('練習已繼續，但本次練習統計無法儲存。');
+    return false;
   }
 }
 
@@ -2855,6 +2960,7 @@ function startPractice() {
   const savedId = savedCurrentPuzzleId;
   if (savedId && !markPracticeStarted(savedId)) return;
   activeSavedPuzzleId = savedId;
+  beginPracticeAttempt(savedId);
   practiceReturnState = 'recorded';
   practiceCompletionRecorded = false;
   practiceToken++;
@@ -2887,6 +2993,7 @@ function startSavedPractice(id) {
   practiceReturnState = 'library';
   practiceCompletionRecorded = false;
   activeSavedPuzzleId = id;
+  beginPracticeAttempt(id);
   libraryViewPuzzle = puzzle;
   appState = APP_STATE.PUZZLE_PRACTICING;
   appEl.classList.remove('library-active');
@@ -2903,11 +3010,13 @@ function startSavedPractice(id) {
 
 function restartCurrentPractice() {
   if (!practiceState) return;
+  finalizePracticeAttempt('abandoned');
   if (activeSavedPuzzleId && !markPracticeStarted(activeSavedPuzzleId)) return;
   practiceToken++;
   tweens.length = 0;
   busy = false;
   practiceState = restartPractice(practiceState);
+  beginPracticeAttempt(activeSavedPuzzleId);
   practiceCompletionRecorded = false;
   appState = APP_STATE.PUZZLE_PRACTICING;
   clearSelection();
@@ -2920,6 +3029,7 @@ function restartCurrentPractice() {
 
 function exitPractice() {
   if (!practiceActive()) return;
+  if (practiceState?.status === 'practicing') finalizePracticeAttempt('abandoned');
   practiceToken++;
   tweens.length = 0;
   busy = false;
@@ -2966,6 +3076,7 @@ function completePractice() {
   const invariant = checkBoardMeshInvariant(practiceState.currentBoard);
   if (!invariant.ok) throw new Error(`Practice board/mesh invariant failed: ${invariant.errors.join(' ')}`);
   markPracticeCompleted(activeSavedPuzzleId);
+  finalizePracticeAttempt('completed');
   setPracticeMessage('完成！成功走出本題殺局', 'success');
   syncRecorderUI();
   refreshHUD();

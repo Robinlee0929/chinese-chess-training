@@ -5,6 +5,7 @@ import { createPuzzle, isCheckmateAfterSolution } from './puzzle-domain.js';
 import { createEditorState, placeEditorPiece, confirmAuthoredPosition } from './puzzle-editor.js';
 import { createRecorder, recordMove, undoRecordedMove, finishRecording } from './puzzle-recorder.js';
 import { createPuzzleStore, PUZZLE_STORAGE_KEY } from './puzzle-store.js';
+import { createPracticeAnalyticsStore, PRACTICE_ANALYTICS_KEY } from './puzzle-analytics.js';
 import { serializePuzzleExport, parsePuzzleImport } from './puzzle-transfer.js';
 import { createPractice, attemptPracticeMove, applyOpponentReply, restartPractice } from './puzzle-practice.js';
 import { createReviewState, confirmPiece, acceptHighConfidenceEmpty, buildReviewedBoard } from './puzzle-photo-review.js';
@@ -121,11 +122,25 @@ test('stored puzzle → portable export/parse → atomic import → semantic rel
     tags: ['次序二', '次序一'],
     notes: '  <b>純文字</b>\n  ',
   };
+  const sourceAnalytics = createPracticeAnalyticsStore({ storage: sourceStorage });
+  sourceAnalytics.recordAttempt({
+    puzzleId: saved.id,
+    startedAt: '2026-08-30T01:30:00.000Z',
+    endedAt: '2026-08-30T01:31:00.000Z',
+    outcome: 'completed',
+    mistakes: 1,
+    hintRequests: 2,
+    maxHintLevel: 2,
+  });
   const text = serializePuzzleExport([portableSource], {
     now: () => '2026-08-30T02:00:00.000Z',
   });
   assert.equal(text.includes('practiceCount'), false);
   assert.equal(text.includes('createdAt'), false);
+  for (const analyticsField of ['aggregate', 'recentAttempts', 'attemptCount', 'hintRequests', 'maxHintLevel']) {
+    assert.equal(text.includes(analyticsField), false, `${analyticsField} remains outside puzzle transfer JSON`);
+  }
+  assert.ok(sourceMemory.has(PRACTICE_ANALYTICS_KEY), 'local analytics remain in their separate key');
   const parsed = parsePuzzleImport(text);
 
   const targetMemory = new Map();
@@ -152,6 +167,8 @@ test('stored puzzle → portable export/parse → atomic import → semantic rel
   assert.equal(reloaded.lastPracticedAt, null);
   assert.deepEqual(reloaded.tags, ['次序二', '次序一']);
   assert.equal(reloaded.notes, '  <b>純文字</b>\n  ');
+  assert.equal(targetMemory.has(PRACTICE_ANALYTICS_KEY), false, 'import does not create analytics storage');
+  assert.equal(createPracticeAnalyticsStore({ storage: targetStorage }).getPuzzleAnalytics(saved.id), null);
 
   const beforeCollision = targetMemory.get(PUZZLE_STORAGE_KEY);
   writes = 0;
