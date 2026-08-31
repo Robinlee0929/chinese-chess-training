@@ -591,10 +591,11 @@ function savedAnalyticsHarness() {
     setItem(key, value) { writes.set(key, (writes.get(key) || 0) + 1); memory.set(key, value); },
   };
   let tick = 0;
+  let puzzleId = 0;
   ctx.puzzleStore = createPuzzleStore({
     storage,
     now: () => new Date(Date.UTC(2026, 7, 30, 14, 0, tick++)).toISOString(),
-    idFactory: () => 'saved-analytics',
+    idFactory: () => `saved-analytics-${++puzzleId}`,
   });
   const analyticsStore = analytics.createPracticeAnalyticsStore({
     storage,
@@ -608,6 +609,32 @@ function savedAnalyticsHarness() {
   ctx.markPracticeCompleted = (id) => { if (id) ctx.puzzleStore.markPracticeCompleted(id); };
   const saved = ctx.puzzleStore.savePuzzle({ title: 'analytics', ...fixture() });
   return { ctx, saved, memory, writes };
+}
+
+function installAnalyticsStorage(ctx, storage) {
+  let tick = 0;
+  const store = analytics.createPracticeAnalyticsStore({
+    storage,
+    now: () => new Date(Date.UTC(2026, 7, 30, 16, 0, tick++)).toISOString(),
+  });
+  ctx.practiceAnalyticsStore = Object.freeze({
+    ...store,
+    recordAttempt: (attempt) => store.recordAttempt({ ...attempt }),
+  });
+  return store;
+}
+
+function assertPuzzleContentPreserved(before, after) {
+  for (const key of ['id', 'title', 'initialBoard', 'sideToMove', 'solution', 'tags', 'notes', 'createdAt']) {
+    same(after[key], before[key]);
+  }
+}
+
+function finishPractice(ctx, puzzle) {
+  ctx.doPracticeMove(puzzle.solution[0].from, puzzle.solution[0].to);
+  ctx.flushAnimations(); ctx.flushTimers(); ctx.flushAnimations();
+  ctx.doPracticeMove(puzzle.solution[2].from, puzzle.solution[2].to);
+  ctx.flushAnimations();
 }
 
 test('saved completion finalizes one compact attempt with canonical mistakes and cross-ply hints', () => {
@@ -685,6 +712,73 @@ test('restart and exit finalize separate abandoned attempts while stale reply st
   assert.equal(entry.recentAttempts[1].maxHintLevel, 2);
 });
 
+test('two saved puzzles keep lifecycle analytics and stale callbacks isolated by puzzle identity', () => {
+  const { ctx, saved: puzzleA, writes } = savedAnalyticsHarness();
+  const puzzleB = ctx.puzzleStore.savePuzzle({ title: 'analytics B', tags: ['second'], notes: 'unrelated', ...fixture() });
+  const analyticsKey = analytics.PRACTICE_ANALYTICS_KEY;
+
+  ctx.startSavedPractice(puzzleA.id);
+  ctx.requestPracticeHint(); ctx.requestPracticeHint();
+  ctx.doPracticeMove({ r: 8, c: 0 }, { r: 7, c: 0 });
+  ctx.doPracticeMove(puzzleA.solution[0].from, puzzleA.solution[0].to);
+  ctx.flushAnimations();
+  assert.equal(ctx.timers.length, 1, 'puzzle A has one queued opponent callback');
+  ctx.exitPractice();
+  const puzzleAAfterExit = ctx.practiceAnalyticsStore.getPuzzleAnalytics(puzzleA.id);
+  assert.equal(puzzleAAfterExit.puzzleId, puzzleA.id);
+  same(puzzleAAfterExit.aggregate, {
+    attemptCount: 1, completedCount: 0, abandonedCount: 1, cleanCompletionCount: 0,
+    hintedCompletionCount: 0, totalMistakes: 1, totalHintRequests: 2,
+    lastAttemptAt: puzzleAAfterExit.recentAttempts[0].endedAt, lastCompletedAt: null,
+  });
+  assert.equal(puzzleAAfterExit.recentAttempts[0].outcome, 'abandoned');
+  assert.equal(ctx.practiceAnalyticsStore.getPuzzleAnalytics(puzzleB.id), null, 'puzzle A exit cannot create puzzle B analytics');
+
+  ctx.startSavedPractice(puzzleB.id);
+  assert.equal(ctx.practiceAttempt.puzzleId, puzzleB.id);
+  ctx.requestPracticeHint();
+  ctx.restartCurrentPractice();
+  const puzzleBAfterRestart = ctx.practiceAnalyticsStore.getPuzzleAnalytics(puzzleB.id);
+  assert.equal(puzzleBAfterRestart.puzzleId, puzzleB.id);
+  assert.equal(puzzleBAfterRestart.aggregate.attemptCount, 1);
+  assert.equal(puzzleBAfterRestart.aggregate.abandonedCount, 1);
+  assert.equal(puzzleBAfterRestart.aggregate.totalHintRequests, 1);
+  same(ctx.practiceAnalyticsStore.getPuzzleAnalytics(puzzleA.id), puzzleAAfterExit);
+
+  const writesBeforeStaleCallback = writes.get(analyticsKey);
+  ctx.flushTimers(); ctx.flushAnimations();
+  assert.equal(writes.get(analyticsKey), writesBeforeStaleCallback, 'stale puzzle A callback cannot write puzzle B analytics');
+  assert.equal(ctx.practiceAttempt.puzzleId, puzzleB.id);
+  assert.equal(ctx.practiceState.currentPly, 0);
+  same(ctx.practiceAnalyticsStore.getPuzzleAnalytics(puzzleA.id), puzzleAAfterExit);
+  same(ctx.practiceAnalyticsStore.getPuzzleAnalytics(puzzleB.id), puzzleBAfterRestart);
+
+  finishPractice(ctx, puzzleB);
+  assert.equal(ctx.appState, 'PUZZLE_PRACTICE_COMPLETE');
+  const puzzleBAfterCompletion = ctx.practiceAnalyticsStore.getPuzzleAnalytics(puzzleB.id);
+  same(puzzleBAfterCompletion.aggregate, {
+    attemptCount: 2, completedCount: 1, abandonedCount: 1, cleanCompletionCount: 1,
+    hintedCompletionCount: 0, totalMistakes: 0, totalHintRequests: 1,
+    lastAttemptAt: puzzleBAfterCompletion.recentAttempts[0].endedAt,
+    lastCompletedAt: puzzleBAfterCompletion.recentAttempts[0].endedAt,
+  });
+  same(ctx.practiceAnalyticsStore.getPuzzleAnalytics(puzzleA.id), puzzleAAfterExit);
+  const writesAfterCompletion = writes.get(analyticsKey);
+  ctx.exitPractice();
+  assert.equal(writes.get(analyticsKey), writesAfterCompletion, 'exit after puzzle B completion cannot mutate either puzzle');
+  same(ctx.practiceAnalyticsStore.getPuzzleAnalytics(puzzleA.id), puzzleAAfterExit);
+  same(ctx.practiceAnalyticsStore.getPuzzleAnalytics(puzzleB.id), puzzleBAfterCompletion);
+
+  ctx.recordedPuzzleResult = fixture();
+  ctx.savedCurrentPuzzleId = null;
+  ctx.appState = 'PUZZLE_RECORDED';
+  ctx.startPractice();
+  ctx.requestPracticeHint();
+  ctx.exitPractice();
+  assert.equal(writes.get(analyticsKey), writesAfterCompletion, 'unsaved practice creates no analytics write');
+  same(ctx.practiceAnalyticsStore.loadAll().puzzles.map((entry) => entry.puzzleId).sort(), [puzzleA.id, puzzleB.id].sort());
+});
+
 test('unsaved practice creates no tracker and causes no analytics write', () => {
   const ctx = harness();
   ctx.recordedPuzzleResult = fixture();
@@ -715,36 +809,88 @@ test('disabled and failed hint requests do not increment attempt analytics', () 
   assert.equal(ctx.analyticsStorage.writes, 0);
 });
 
-test('corrupt or unwritable analytics never blocks restart, completion or exit', () => {
-  const corrupt = savedAnalyticsHarness();
-  corrupt.memory.set(analytics.PRACTICE_ANALYTICS_KEY, '{');
-  corrupt.ctx.startSavedPractice(corrupt.saved.id);
-  corrupt.ctx.requestPracticeHint();
-  corrupt.ctx.restartCurrentPractice();
-  assert.equal(corrupt.ctx.appState, 'PUZZLE_PRACTICING');
-  assert.equal(corrupt.ctx.practiceState.currentPly, 0);
-  corrupt.ctx.exitPractice();
-  assert.equal(corrupt.ctx.practiceState, null);
-
-  const failing = savedAnalyticsHarness();
-  const baseStore = failing.ctx.practiceAnalyticsStore;
-  failing.ctx.practiceAnalyticsStore = Object.freeze({
-    now: baseStore.now,
-    getPuzzleAnalytics: baseStore.getPuzzleAnalytics,
-    deletePuzzleAnalytics: baseStore.deletePuzzleAnalytics,
-    recordAttempt() { throw new analytics.PracticeAnalyticsError('STORE_WRITE_FAILED', 'quota'); },
+test('analytics read failure leaves core completion and saved-puzzle metadata intact without writing', () => {
+  const { ctx, saved, writes } = savedAnalyticsHarness();
+  const unrelated = ctx.puzzleStore.savePuzzle({ title: 'read failure control', tags: ['keep'], notes: 'untouched', ...fixture() });
+  const savedBefore = ctx.puzzleStore.getPuzzle(saved.id);
+  const unrelatedBefore = ctx.puzzleStore.getPuzzle(unrelated.id);
+  let analyticsReads = 0;
+  let analyticsWrites = 0;
+  const failedStore = installAnalyticsStorage(ctx, {
+    getItem() { analyticsReads++; throw new Error('read denied'); },
+    setItem() { analyticsWrites++; },
   });
-  const captureMate = fixture();
-  captureMate.solution = [captureMate.solution[2]];
-  failing.ctx.practiceState = practice.createPractice(captureMate);
-  failing.ctx.activeSavedPuzzleId = failing.saved.id;
-  failing.ctx.appState = 'PUZZLE_PRACTICING';
-  failing.ctx.beginPracticeAttempt(failing.saved.id);
-  failing.ctx.syncPracticeScene();
-  failing.ctx.doPracticeMove(captureMate.solution[0].from, captureMate.solution[0].to);
-  failing.ctx.flushAnimations();
-  assert.equal(failing.ctx.appState, 'PUZZLE_PRACTICE_COMPLETE');
-  assert.equal(failing.ctx.practiceAttempt, null);
+
+  ctx.startSavedPractice(saved.id);
+  ctx.requestPracticeHint();
+  finishPractice(ctx, saved);
+  assert.equal(ctx.appState, 'PUZZLE_PRACTICE_COMPLETE');
+  assert.equal(ctx.practiceAttempt, null);
+  assert.ok(analyticsReads >= 1);
+  assert.equal(analyticsWrites, 0, 'failed analytics read cannot trigger a write');
+  assert.throws(() => failedStore.getPuzzleAnalytics(saved.id),
+    (error) => error instanceof analytics.PracticeAnalyticsError && error.code === 'STORE_READ_FAILED');
+  const savedAfter = ctx.puzzleStore.getPuzzle(saved.id);
+  assertPuzzleContentPreserved(savedBefore, savedAfter);
+  assert.equal(savedAfter.practiceCount, 1);
+  assert.equal(savedAfter.completedCount, 1);
+  same(ctx.puzzleStore.getPuzzle(unrelated.id), unrelatedBefore);
+  assert.equal(writes.get(analytics.PRACTICE_ANALYTICS_KEY) || 0, 0);
+});
+
+test('corrupt analytics fail closed without rewrite while restart and exit preserve puzzle metadata', () => {
+  const { ctx, saved, memory, writes } = savedAnalyticsHarness();
+  const unrelated = ctx.puzzleStore.savePuzzle({ title: 'corrupt control', tags: ['keep'], notes: 'untouched', ...fixture() });
+  const savedBefore = ctx.puzzleStore.getPuzzle(saved.id);
+  const unrelatedBefore = ctx.puzzleStore.getPuzzle(unrelated.id);
+  const analyticsKey = analytics.PRACTICE_ANALYTICS_KEY;
+  memory.set(analyticsKey, '{');
+
+  assert.throws(() => ctx.practiceAnalyticsStore.getPuzzleAnalytics(saved.id),
+    (error) => error instanceof analytics.PracticeAnalyticsError && error.code === 'INVALID_JSON');
+  assert.equal(memory.get(analyticsKey), '{');
+  assert.equal(writes.get(analyticsKey) || 0, 0);
+  ctx.startSavedPractice(saved.id);
+  ctx.requestPracticeHint();
+  ctx.restartCurrentPractice();
+  assert.equal(ctx.appState, 'PUZZLE_PRACTICING');
+  assert.equal(ctx.practiceState.currentPly, 0);
+  ctx.exitPractice();
+  assert.equal(ctx.practiceState, null);
+  assert.equal(memory.get(analyticsKey), '{', 'corrupt analytics are not destructively rewritten');
+  assert.equal(writes.get(analyticsKey) || 0, 0, 'corrupt-store write count');
+  const savedAfter = ctx.puzzleStore.getPuzzle(saved.id);
+  assertPuzzleContentPreserved(savedBefore, savedAfter);
+  assert.equal(savedAfter.practiceCount, 2);
+  assert.equal(savedAfter.completedCount, 0);
+  same(ctx.puzzleStore.getPuzzle(unrelated.id), unrelatedBefore);
+});
+
+test('analytics quota failure does not retry or damage completed and unrelated saved puzzles', () => {
+  const { ctx, saved, writes } = savedAnalyticsHarness();
+  const unrelated = ctx.puzzleStore.savePuzzle({ title: 'quota control', tags: ['keep'], notes: 'untouched', ...fixture() });
+  const savedBefore = ctx.puzzleStore.getPuzzle(saved.id);
+  const unrelatedBefore = ctx.puzzleStore.getPuzzle(unrelated.id);
+  let analyticsWriteAttempts = 0;
+  installAnalyticsStorage(ctx, {
+    getItem: () => null,
+    setItem() { analyticsWriteAttempts++; throw new Error('quota exceeded'); },
+  });
+
+  ctx.startSavedPractice(saved.id);
+  ctx.requestPracticeHint();
+  finishPractice(ctx, saved);
+  assert.equal(ctx.appState, 'PUZZLE_PRACTICE_COMPLETE');
+  assert.equal(ctx.practiceAttempt, null);
+  assert.equal(analyticsWriteAttempts, 1, 'completion makes one analytics commit attempt');
+  const savedAfter = ctx.puzzleStore.getPuzzle(saved.id);
+  assertPuzzleContentPreserved(savedBefore, savedAfter);
+  assert.equal(savedAfter.practiceCount, 1);
+  assert.equal(savedAfter.completedCount, 1);
+  same(ctx.puzzleStore.getPuzzle(unrelated.id), unrelatedBefore);
+  ctx.exitPractice();
+  assert.equal(analyticsWriteAttempts, 1, 'exit after completion cannot retry failed analytics');
+  assert.equal(writes.get(analytics.PRACTICE_ANALYTICS_KEY) || 0, 0);
 });
 
 test('restarting or exiting practice cancels a queued opponent capture', () => {

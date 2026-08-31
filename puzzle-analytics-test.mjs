@@ -111,19 +111,52 @@ for (const [label, patch, code] of [
   });
 }
 
-test('eleventh attempt evicts oldest while lifetime aggregate reaches eleven', () => {
+test('recent-attempt eviction preserves every lifetime aggregate from mixed attempts', () => {
   const store = createPracticeAnalyticsStore({ storage: memoryStorage() });
-  for (let index = 1; index <= 11; index += 1) {
+  const attempts = [
+    { outcome: 'completed', mistakes: 0, hintRequests: 0, maxHintLevel: 0 },
+    { outcome: 'completed', mistakes: 7, hintRequests: 2, maxHintLevel: 2 },
+    { outcome: 'abandoned', mistakes: 3, hintRequests: 1, maxHintLevel: 1 },
+    { outcome: 'completed', mistakes: 4, hintRequests: 0, maxHintLevel: 0 },
+    { outcome: 'abandoned', mistakes: 5, hintRequests: 0, maxHintLevel: 0 },
+    { outcome: 'completed', mistakes: 6, hintRequests: 3, maxHintLevel: 3 },
+    { outcome: 'completed', mistakes: 0, hintRequests: 0, maxHintLevel: 0 },
+    { outcome: 'abandoned', mistakes: 8, hintRequests: 2, maxHintLevel: 2 },
+    { outcome: 'completed', mistakes: 9, hintRequests: 1, maxHintLevel: 1 },
+    { outcome: 'abandoned', mistakes: 10, hintRequests: 0, maxHintLevel: 0 },
+    { outcome: 'completed', mistakes: 11, hintRequests: 4, maxHintLevel: 4 },
+    { outcome: 'completed', mistakes: 12, hintRequests: 0, maxHintLevel: 0 },
+  ];
+  attempts.forEach((attempt, offset) => {
+    const index = offset + 1;
     const minute = String(index).padStart(2, '0');
-    store.recordAttempt(completed({ startedAt: `2026-08-30T15:${minute}:00.000Z`, endedAt: `2026-08-30T15:${minute}:30.000Z` }));
+    store.recordAttempt(completed({
+      ...attempt,
+      startedAt: `2026-08-30T15:${minute}:00.000Z`,
+      endedAt: `2026-08-30T15:${minute}:30.000Z`,
+    }));
     const current = store.getPuzzleAnalytics('abc');
-    assert.equal(current.recentAttempts.length, Math.min(index, 10));
-  }
+    assert.equal(current.recentAttempts.length, Math.min(index, PRACTICE_ANALYTICS_MAX_RECENT_ATTEMPTS));
+  });
   const current = store.getPuzzleAnalytics('abc');
-  assert.equal(current.aggregate.attemptCount, 11);
-  assert.equal(current.recentAttempts.length, 10);
-  assert.equal(current.recentAttempts[0].endedAt, '2026-08-30T15:11:30.000Z');
-  assert.equal(current.recentAttempts.at(-1).endedAt, '2026-08-30T15:02:30.000Z');
+  assert.deepEqual(current.aggregate, {
+    attemptCount: 12,
+    completedCount: 8,
+    abandonedCount: 4,
+    cleanCompletionCount: 2,
+    hintedCompletionCount: 4,
+    totalMistakes: 75,
+    totalHintRequests: 13,
+    lastAttemptAt: '2026-08-30T15:12:30.000Z',
+    lastCompletedAt: '2026-08-30T15:12:30.000Z',
+  });
+  assert.equal(current.recentAttempts.length, PRACTICE_ANALYTICS_MAX_RECENT_ATTEMPTS);
+  assert.deepEqual(
+    current.recentAttempts.map((attempt) => attempt.endedAt),
+    Array.from({ length: 10 }, (_, offset) => `2026-08-30T15:${String(12 - offset).padStart(2, '0')}:30.000Z`),
+  );
+  assert.equal(current.recentAttempts[0].outcome, 'completed');
+  assert.equal(current.recentAttempts.at(-1).outcome, 'abandoned');
 });
 
 test('successful record performs exactly one write and snapshots caller data', () => {
