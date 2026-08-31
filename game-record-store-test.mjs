@@ -67,6 +67,19 @@ function timestamp(day, minute = 0) {
   return new Date(Date.UTC(2026, 0, day, 0, minute)).toISOString();
 }
 
+function scrambledRank(index) {
+  return (index * 37 + 53) % 100;
+}
+
+function proveInsertionOrderWouldChooseWrongRecord(insertedIds, canonicalOldestId) {
+  assert.notEqual(insertedIds[0], canonicalOldestId, 'fixture must conflict with first-in eviction');
+  assert.throws(
+    () => assert.equal(insertedIds[0], canonicalOldestId),
+    undefined,
+    'insertion-order-only eviction is the committed negative control',
+  );
+}
+
 test('exports the exact independent storage contract', () => {
   assert.equal(GAME_RECORD_STORAGE_KEY, 'chinese-chess-training:game-records:v1');
   assert.equal(GAME_RECORD_STORAGE_VERSION, 1);
@@ -180,38 +193,46 @@ test('saves multiple unique records and deletes only the exact ID', () => {
 test('retains exactly 100 records and the 101st save evicts completedAt-oldest', () => {
   const storage = memoryStorage();
   const store = createGameRecordStore({ storage });
+  const insertedIds = [];
   for (let index = 0; index < 100; index++) {
-    store.saveGameRecord(gameRecord({
-      id: `game-${String(index).padStart(3, '0')}`,
-      createdAt: timestamp(1, index),
-      completedAt: timestamp(2, index),
-    }));
+    const id = `completed-${String(index).padStart(3, '0')}`;
+    insertedIds.push(id);
+    store.saveGameRecord(gameRecord({ id,
+      createdAt: timestamp(1, index), completedAt: timestamp(20, scrambledRank(index)) }));
   }
   const result = store.saveGameRecord(gameRecord({
-    id: 'game-100', createdAt: timestamp(3), completedAt: timestamp(4),
+    id: 'completed-new', createdAt: timestamp(2), completedAt: timestamp(30),
   }));
-  assert.deepEqual(result.evictedIds, ['game-000']);
+  const canonicalOldestId = 'completed-031';
+  proveInsertionOrderWouldChooseWrongRecord(insertedIds, canonicalOldestId);
+  assert.notEqual([...insertedIds, 'completed-new'].sort()[0], canonicalOldestId,
+    'fixture must also reject lexical-ID eviction at the completedAt level');
+  assert.deepEqual(result.evictedIds, [canonicalOldestId]);
   const records = store.listGameRecords();
   assert.equal(records.length, 100);
-  assert.equal(records.some((record) => record.id === 'game-000'), false);
-  assert.equal(records.some((record) => record.id === 'game-100'), true);
+  assert.equal(records.some((record) => record.id === canonicalOldestId), false);
+  assert.equal(records.some((record) => record.id === 'completed-new'), true);
 });
 
 test('retention uses createdAt as the second deterministic tie-break', () => {
   const storage = memoryStorage();
   const store = createGameRecordStore({ storage });
-  const completedAt = timestamp(5);
+  const completedAt = timestamp(200);
+  const insertedIds = [];
   for (let index = 0; index < 100; index++) {
-    store.saveGameRecord(gameRecord({
-      id: `created-${String(index).padStart(3, '0')}`,
-      createdAt: timestamp(1, index),
-      completedAt,
-    }));
+    const id = `created-${String(index).padStart(3, '0')}`;
+    insertedIds.push(id);
+    store.saveGameRecord(gameRecord({ id,
+      createdAt: timestamp(20, scrambledRank(index)), completedAt }));
   }
   const result = store.saveGameRecord(gameRecord({
-    id: 'created-new', createdAt: timestamp(2), completedAt,
+    id: 'created-new', createdAt: timestamp(150), completedAt,
   }));
-  assert.deepEqual(result.evictedIds, ['created-000']);
+  const canonicalOldestId = 'created-031';
+  proveInsertionOrderWouldChooseWrongRecord(insertedIds, canonicalOldestId);
+  assert.notEqual([...insertedIds, 'created-new'].sort()[0], canonicalOldestId,
+    'fixture must also reject lexical-ID eviction at the createdAt level');
+  assert.deepEqual(result.evictedIds, [canonicalOldestId]);
 });
 
 test('retention uses ID as the final deterministic tie-break', () => {
@@ -219,12 +240,14 @@ test('retention uses ID as the final deterministic tie-break', () => {
   const store = createGameRecordStore({ storage });
   const createdAt = timestamp(1);
   const completedAt = timestamp(2);
+  const insertedIds = [];
   for (let index = 0; index < 100; index++) {
-    store.saveGameRecord(gameRecord({
-      id: `id-${String(index).padStart(3, '0')}`, createdAt, completedAt,
-    }));
+    const id = `id-${String(scrambledRank(index)).padStart(3, '0')}`;
+    insertedIds.push(id);
+    store.saveGameRecord(gameRecord({ id, createdAt, completedAt }));
   }
   const result = store.saveGameRecord(gameRecord({ id: 'id-100', createdAt, completedAt }));
+  proveInsertionOrderWouldChooseWrongRecord(insertedIds, 'id-000');
   assert.deepEqual(result.evictedIds, ['id-000']);
 });
 

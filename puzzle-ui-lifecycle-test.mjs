@@ -120,7 +120,8 @@ function harness(options = {}) {
     mode: options.mode ?? 'pvp', normalGameRecordSession: null,
     completedGameRecordSessionId: null, lastCompletedGameRecord: null,
     gameRecordStore, gameRecordStorage, gameRecordNow, gameRecordIdFactory,
-    AI_SIDE: game.BLACK, aiMoveStart: 0,
+    AI_SIDE: game.BLACK, aiMoveStart: 0, aiRequestCount: 0, aiMaybeMoveCalls: 0,
+    aiWorker: { postMessage: () => { context.aiRequestCount++; } }, aiModule: null,
     practiceToken: 0, appState: 'NORMAL_GAME', editorState: null, recorderState: null,
     practiceState: null, activeSavedPuzzleId: null, practiceCompletionRecorded: false,
     practiceHintLevel: 0, practiceHint: null, practiceAttempt: null, hintMarkerRoles: [],
@@ -142,7 +143,7 @@ function harness(options = {}) {
     syncPracticeHintMarkers: () => {
       context.hintMarkerRoles = [context.practiceHint?.from && 'source', context.practiceHint?.to && 'target'].filter(Boolean);
     },
-    maybeAIMove: noop, showBanner: noop, stopConfetti: noop, toast: noop,
+    showBanner: noop, stopConfetti: noop, toast: noop,
     setRecorderMessage: noop, setPracticeMessage: noop,
     syncRecorderUI: () => { if (context.practiceState && context.syncPracticeUI) context.syncPracticeUI(); },
     syncPhotoUI: noop, syncRecognitionUI: noop, markPracticeCompleted: noop,
@@ -182,6 +183,7 @@ function harness(options = {}) {
   context.ease = (k) => k;
   const names = ['tween', 'stepTweens', 'pieceAt', 'releasePieceMesh', 'rebuildPieceMeshes', 'buildScene',
     'checkBoardMeshInvariant', 'syncEditorScene', 'syncRecorderScene', 'syncPracticeScene',
+    'requestAIMove', 'maybeAIMove',
     'animateCapture', 'doMove', 'finishMove', 'cloneNormalGameRecordBoard',
     'beginNormalGameRecordSession', 'normalGameRecordTerminationReason',
     'finalizeNormalGameRecord', 'normalUndoAvailable', 'undoPly', 'undo', 'newGame', 'resetTo',
@@ -198,6 +200,11 @@ function harness(options = {}) {
     'setLibraryTransferStatus', 'preparePuzzleImportPreview', 'clearPendingPuzzleImport',
     'downloadPuzzleTransfer', 'loadPuzzleImportFile', 'cancelPuzzleImport', 'confirmPuzzleImport'];
   vm.runInContext(names.map(functionSource).join('\n'), context);
+  const realMaybeAIMove = context.maybeAIMove;
+  context.maybeAIMove = (...args) => {
+    context.aiMaybeMoveCalls++;
+    return realMaybeAIMove(...args);
+  };
   context.beginNormalGameRecordSession();
   context.flushAnimations = () => {
     let guard = 0;
@@ -242,6 +249,47 @@ function normalCheckmateFixture() {
     turn: game.RED,
     move: [{ r: 2, c: 3 }, { r: 2, c: 4 }],
   };
+}
+
+function normalStalemateFixture() {
+  const board = editor.createEmptyEditorBoard();
+  board[9][5] = { type: 'K', side: game.BLACK };
+  board[0][5] = { type: 'K', side: game.RED };
+  board[4][5] = { type: 'P', side: game.RED };
+  board[7][5] = { type: 'N', side: game.RED };
+  board[7][0] = { type: 'R', side: game.RED };
+  return {
+    board,
+    turn: game.RED,
+    move: [{ r: 7, c: 0 }, { r: 8, c: 0 }],
+  };
+}
+
+function mutualPerpetualFixture() {
+  const board = editor.createEmptyEditorBoard();
+  board[0][3] = { type: 'R', side: game.RED };
+  board[1][4] = { type: 'K', side: game.RED };
+  board[2][4] = { type: 'C', side: game.RED };
+  board[3][4] = { type: 'N', side: game.BLACK };
+  board[5][6] = { type: 'N', side: game.BLACK };
+  board[5][8] = { type: 'R', side: game.RED };
+  board[7][4] = { type: 'C', side: game.BLACK };
+  board[8][3] = { type: 'K', side: game.BLACK };
+  return { board, turn: game.BLACK, cycle: [
+    [{ r: 3, c: 4 }, { r: 5, c: 3 }],
+    [{ r: 2, c: 4 }, { r: 2, c: 3 }],
+    [{ r: 5, c: 3 }, { r: 3, c: 4 }],
+    [{ r: 2, c: 3 }, { r: 2, c: 4 }],
+  ] };
+}
+
+function installPuzzleWriteProbe(ctx) {
+  let writes = 0;
+  ctx.puzzleStore = createPuzzleStore({ storage: {
+    getItem: () => null,
+    setItem: () => { writes++; },
+  } });
+  return () => writes;
 }
 
 test('normal session metadata is stable, deeply isolated and never persisted before terminal', () => {
@@ -408,8 +456,64 @@ for (const perpetual of [false, true]) {
   });
 }
 
+test('normal stalemate follows real adjudication, persists once and remains terminal', () => {
+  const ctx = harness({ gameRecordIds: ['bootstrap', 'stalemate-session'] });
+  const puzzleWrites = installPuzzleWriteProbe(ctx);
+  const setup = normalStalemateFixture();
+  ctx.resetTo(structuredClone(setup.board), setup.turn);
+  const session = structuredClone(ctx.normalGameRecordSession);
+  playNormal(ctx, ...setup.move);
+
+  assert.equal(ctx.over, true);
+  assert.equal(ctx.winner, game.RED);
+  assert.equal(game.inCheck(ctx.board, game.BLACK), false);
+  assert.equal(game.hasAnyLegalMove(ctx.board, game.BLACK), false);
+  assert.equal(validateGameRecord(ctx.lastCompletedGameRecord).ok, true);
+  same(ctx.lastCompletedGameRecord.result, {
+    winner: game.RED, terminationReason: 'stalemate',
+  });
+  same(ctx.lastCompletedGameRecord.initialPosition, session.initialPosition);
+  assert.equal(ctx.gameRecordStorage.writes, 1);
+  same(ctx.gameRecordStore.listGameRecords(), [ctx.lastCompletedGameRecord]);
+  assert.equal(puzzleWrites(), 0);
+  assert.equal(ctx.analyticsStorage.writes, 0);
+
+  const terminalRecord = structuredClone(ctx.lastCompletedGameRecord);
+  ctx.undo();
+  assert.equal(ctx.over, true);
+  same(ctx.lastCompletedGameRecord, terminalRecord);
+  assert.equal(ctx.gameRecordStorage.writes, 1);
+});
+
+test('normal mutual perpetual check follows real repetition adjudication and persists once', () => {
+  const ctx = harness({ gameRecordIds: ['bootstrap', 'mutual-session'] });
+  const setup = mutualPerpetualFixture();
+  ctx.resetTo(structuredClone(setup.board), setup.turn);
+  const session = structuredClone(ctx.normalGameRecordSession);
+  for (const move of [...setup.cycle, ...setup.cycle]) playNormal(ctx, ...move);
+
+  assert.equal(ctx.over, true);
+  assert.equal(ctx.winner, null);
+  assert.equal(ctx.repHistory.slice(1).every((entry) => entry.check), true);
+  assert.equal(new Set(ctx.repHistory.slice(1).map((entry) => entry.mover)).size, 2);
+  assert.equal(ctx.repHistory.filter((entry) => entry.key === ctx.repHistory[0].key).length, 3);
+  assert.equal(validateGameRecord(ctx.lastCompletedGameRecord).ok, true);
+  same(ctx.lastCompletedGameRecord.result, {
+    winner: null, terminationReason: 'mutual-perpetual-check',
+  });
+  same(ctx.lastCompletedGameRecord.moves, [...setup.cycle, ...setup.cycle]
+    .map(([from, to]) => ({ from, to })));
+  assert.equal(ctx.lastCompletedGameRecord.id, session.id);
+  assert.equal(ctx.gameRecordStorage.writes, 1);
+  ctx.finishMove('duplicate', null, session.id);
+  ctx.undo();
+  assert.equal(ctx.over, true);
+  assert.equal(ctx.gameRecordStorage.writes, 1);
+});
+
 test('normal checkmate persists once before presentation and stale callback cannot cross into a new game', () => {
   const ctx = harness({
+    mode: 'medium',
     gameRecordIds: ['bootstrap', 'checkmate-a', 'game-b'],
     gameRecordTimes: [
       '2026-08-31T01:00:00.000Z',
@@ -418,8 +522,9 @@ test('normal checkmate persists once before presentation and stale callback cann
       '2026-08-31T01:03:00.000Z',
     ],
   });
+  ctx.isAI = () => true;
   const setup = normalCheckmateFixture();
-  ctx.resetTo(setup.board, setup.turn);
+  ctx.resetTo(structuredClone(setup.board), setup.turn);
   const session = structuredClone(ctx.normalGameRecordSession);
   playNormal(ctx, ...setup.move);
   assert.equal(ctx.over, true);
@@ -434,11 +539,35 @@ test('normal checkmate persists once before presentation and stale callback cann
     completedAt: '2026-08-31T01:02:00.000Z',
     initialPosition: session.initialPosition,
     moves: [{ from: setup.move[0], to: setup.move[1] }],
-    mode: 'pvp',
+    mode: 'medium',
     result: { winner: game.RED, terminationReason: 'checkmate' },
   });
 
   const recordA = structuredClone(ctx.lastCompletedGameRecord);
+  const terminal = {
+    board: structuredClone(ctx.board), history: structuredClone(ctx.history),
+    posHistory: structuredClone(ctx.posHistory), repHistory: structuredClone(ctx.repHistory),
+    capturedBy: structuredClone(ctx.capturedBy), turn: ctx.turn, winner: ctx.winner,
+    over: ctx.over, record: recordA, aiToken: ctx.aiToken,
+    aiRequestCount: ctx.aiRequestCount, aiMaybeMoveCalls: ctx.aiMaybeMoveCalls,
+    timers: ctx.timers.length,
+  };
+  ctx.undo();
+  same(ctx.board, terminal.board);
+  same(ctx.history, terminal.history);
+  same(ctx.posHistory, terminal.posHistory);
+  same(ctx.repHistory, terminal.repHistory);
+  same(ctx.capturedBy, terminal.capturedBy);
+  assert.equal(ctx.turn, terminal.turn);
+  assert.equal(ctx.winner, terminal.winner);
+  assert.equal(ctx.over, terminal.over);
+  same(ctx.lastCompletedGameRecord, terminal.record);
+  assert.equal(ctx.aiToken, terminal.aiToken);
+  assert.equal(ctx.aiRequestCount, terminal.aiRequestCount);
+  assert.equal(ctx.aiMaybeMoveCalls, terminal.aiMaybeMoveCalls);
+  assert.equal(ctx.timers.length, terminal.timers);
+  assert.equal(ctx.gameRecordStorage.writes, 1);
+
   assert.equal(ctx.timers.length, 1);
   ctx.newGame();
   assert.equal(ctx.normalGameRecordSession.id, 'game-b');
@@ -449,6 +578,106 @@ test('normal checkmate persists once before presentation and stale callback cann
   assert.equal(ctx.lastCompletedGameRecord.id, recordA.id);
   assert.equal(ctx.gameRecordStore.listGameRecords().length, 1);
   assert.equal(ctx.gameRecordStore.listGameRecords()[0].id, recordA.id);
+});
+
+test('stale Game A finish processing is inert after Game B starts and B saves only itself', () => {
+  const ctx = harness({
+    gameRecordIds: ['bootstrap', 'game-a', 'game-b'],
+    gameRecordTimes: [
+      '2026-08-31T01:00:00.000Z', '2026-08-31T01:01:00.000Z',
+      '2026-08-31T01:02:00.000Z', '2026-08-31T01:03:00.000Z',
+      '2026-08-31T01:04:00.000Z',
+    ],
+  });
+  const setup = normalStalemateFixture();
+  ctx.resetTo(structuredClone(setup.board), setup.turn);
+  const sessionA = structuredClone(ctx.normalGameRecordSession);
+  const tweenCountBeforeMove = ctx.tweens.length;
+  ctx.doMove(...setup.move);
+  assert.equal(ctx.tweens.length, tweenCountBeforeMove + 1);
+  const staleAFinish = ctx.tweens.at(-1).done;
+  assert.equal(typeof staleAFinish, 'function');
+
+  ctx.resetTo(structuredClone(setup.board), setup.turn);
+  const sessionB = structuredClone(ctx.normalGameRecordSession);
+  assert.notEqual(sessionB.id, sessionA.id);
+  assert.notEqual(sessionB.createdAt, sessionA.createdAt);
+  same(sessionB.initialPosition, { board: setup.board, sideToMove: setup.turn });
+  assert.equal(sessionB.mode, 'pvp');
+  assert.equal(ctx.completedGameRecordSessionId, null);
+  assert.equal(ctx.lastCompletedGameRecord, null);
+  const beforeStale = {
+    session: sessionB, board: structuredClone(ctx.board), history: structuredClone(ctx.history),
+    posHistory: structuredClone(ctx.posHistory), repHistory: structuredClone(ctx.repHistory),
+    capturedBy: structuredClone(ctx.capturedBy), turn: ctx.turn, winner: ctx.winner,
+    over: ctx.over, completedSessionId: ctx.completedGameRecordSessionId,
+  };
+  staleAFinish();
+  same(ctx.normalGameRecordSession, beforeStale.session);
+  same(ctx.board, beforeStale.board);
+  same(ctx.history, beforeStale.history);
+  same(ctx.posHistory, beforeStale.posHistory);
+  same(ctx.repHistory, beforeStale.repHistory);
+  same(ctx.capturedBy, beforeStale.capturedBy);
+  assert.equal(ctx.turn, beforeStale.turn);
+  assert.equal(ctx.winner, beforeStale.winner);
+  assert.equal(ctx.over, beforeStale.over);
+  assert.equal(ctx.completedGameRecordSessionId, beforeStale.completedSessionId);
+  assert.equal(ctx.lastCompletedGameRecord, null);
+  assert.equal(ctx.gameRecordStorage.writes, 0);
+
+  playNormal(ctx, ...setup.move);
+  assert.equal(ctx.over, true);
+  assert.equal(ctx.lastCompletedGameRecord.id, sessionB.id);
+  assert.equal(ctx.gameRecordStorage.writes, 1);
+  same(ctx.gameRecordStore.listGameRecords().map((record) => record.id), [sessionB.id]);
+});
+
+test('negative control: removing stale session identity guard contaminates Game B', () => {
+  const ctx = harness({ gameRecordIds: ['bootstrap', 'game-a', 'game-b'] });
+  const setup = normalStalemateFixture();
+  ctx.resetTo(structuredClone(setup.board), setup.turn);
+  ctx.doMove(...setup.move);
+  const staleAFinish = ctx.tweens.at(-1).done;
+  assert.equal(typeof staleAFinish, 'function');
+  ctx.resetTo(structuredClone(setup.board), setup.turn);
+  const beforeTurn = ctx.turn;
+  const beforeRepHistory = structuredClone(ctx.repHistory);
+  const guarded = 'if (over || gameRecordSessionId !== normalGameRecordSession?.id) return;';
+  const brokenFinishMove = functionSource('finishMove').replace(guarded, 'if (over) return;');
+  assert.notEqual(brokenFinishMove, functionSource('finishMove'));
+  vm.runInContext(brokenFinishMove, ctx);
+
+  assert.doesNotThrow(staleAFinish);
+  assert.notEqual(ctx.turn, beforeTurn, 'broken stale guard changes Game B turn');
+  assert.notDeepEqual(structuredClone(ctx.repHistory), beforeRepHistory,
+    'broken stale guard changes Game B repetition history');
+  assert.equal(ctx.gameRecordStorage.writes, 0, 'negative control fails by contamination, not an unrelated save error');
+});
+
+test('negative control: removing terminal availability guard makes direct Undo mutate terminal state', () => {
+  const ctx = harness({ mode: 'medium' });
+  ctx.isAI = () => true;
+  const setup = normalCheckmateFixture();
+  ctx.resetTo(setup.board, setup.turn);
+  playNormal(ctx, ...setup.move);
+  const terminal = {
+    board: structuredClone(ctx.board), capturedBy: structuredClone(ctx.capturedBy),
+    historyLength: ctx.history.length, posHistoryLength: ctx.posHistory.length,
+    repHistoryLength: ctx.repHistory.length, aiToken: ctx.aiToken,
+  };
+  const brokenAvailability = functionSource('normalUndoAvailable').replace(' && !over', '');
+  assert.notEqual(brokenAvailability, functionSource('normalUndoAvailable'));
+  vm.runInContext(brokenAvailability, ctx);
+
+  assert.equal(ctx.normalUndoAvailable(), true);
+  ctx.undo();
+  assert.notDeepEqual(structuredClone(ctx.board), terminal.board);
+  assert.notDeepEqual(structuredClone(ctx.capturedBy), terminal.capturedBy);
+  assert.equal(ctx.history.length, terminal.historyLength - 1);
+  assert.equal(ctx.posHistory.length, terminal.posHistoryLength - 1);
+  assert.equal(ctx.repHistory.length, terminal.repHistoryLength - 1);
+  assert.equal(ctx.aiToken, terminal.aiToken + 1);
 });
 
 test('quota failure cannot abort terminal gameplay and in-memory record survives without retry', () => {
