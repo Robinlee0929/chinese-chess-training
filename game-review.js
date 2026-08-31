@@ -1,4 +1,4 @@
-import { createGameRecord, replayGameRecord } from './game-record.js?v=be7ce20871';
+import { createGameRecord, replayGameRecord } from './game-record.js?v=a21155254a';
 
 export const GAME_REVIEW_INITIAL_PLY = 'last';
 

@@ -7,9 +7,9 @@ import {
   ROWS, COLS, RED, BLACK,
   initialBoard, legalMoves, applyMove, inCheck,
   hasAnyLegalMove, name, notation, hashBoard, repetitionVerdict,
-} from './game.js?v=be7ce20871';
-import { createGameRecord } from './game-record.js?v=be7ce20871';
-import { createGameRecordStore } from './game-record-store.js?v=be7ce20871';
+} from './game.js?v=a21155254a';
+import { createGameRecord } from './game-record.js?v=a21155254a';
+import { createGameRecordStore } from './game-record-store.js?v=a21155254a';
 import {
   createGameReview,
   createGameRecordLibraryView,
@@ -18,7 +18,14 @@ import {
   nextGameReviewPly,
   lastGameReviewPly,
   selectGameReviewPly,
-} from './game-review.js?v=be7ce20871';
+} from './game-review.js?v=a21155254a';
+import {
+  createGameAnalysis,
+  gameAnalysisLegalMoves,
+  applyGameAnalysisMove,
+  undoGameAnalysisMove,
+  resetGameAnalysis,
+} from './game-analysis.js?v=a21155254a';
 import {
   PuzzleEditorError,
   createEditorState,
@@ -28,7 +35,7 @@ import {
   setEditorSideToMove,
   confirmAuthoredPosition,
   exportAuthoredPosition,
-} from './puzzle-editor.js?v=be7ce20871';
+} from './puzzle-editor.js?v=a21155254a';
 import {
   PuzzleRecorderError,
   createRecorder,
@@ -38,7 +45,7 @@ import {
   finishRecording,
   exportRecorderBoard,
   exportRecordedResult,
-} from './puzzle-recorder.js?v=be7ce20871';
+} from './puzzle-recorder.js?v=a21155254a';
 import {
   PuzzlePracticeError,
   PRACTICE_HINT_MAX_LEVEL,
@@ -48,12 +55,12 @@ import {
   derivePracticeHint,
   restartPractice,
   exportPracticeSnapshot,
-} from './puzzle-practice.js?v=be7ce20871';
-import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=be7ce20871';
+} from './puzzle-practice.js?v=a21155254a';
+import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=a21155254a';
 import {
   PracticeAnalyticsError,
   createPracticeAnalyticsStore,
-} from './puzzle-analytics.js?v=be7ce20871';
+} from './puzzle-analytics.js?v=a21155254a';
 import {
   PUZZLE_TRANSFER_FORMAT,
   PUZZLE_TRANSFER_SCHEMA_VERSION,
@@ -61,7 +68,7 @@ import {
   PuzzleTransferError,
   serializePuzzleExport,
   parsePuzzleImport,
-} from './puzzle-transfer.js?v=be7ce20871';
+} from './puzzle-transfer.js?v=a21155254a';
 import {
   PHOTO_MAX_ZOOM,
   PHOTO_MIN_ZOOM,
@@ -75,7 +82,7 @@ import {
   validatePhotoMetadata,
   zoomPhotoIn,
   zoomPhotoOut,
-} from './puzzle-photo.js?v=be7ce20871';
+} from './puzzle-photo.js?v=a21155254a';
 import {
   CALIBRATION_CANONICAL_HEIGHT,
   CALIBRATION_CANONICAL_WIDTH,
@@ -91,7 +98,7 @@ import {
   setCorner,
   transformPoint,
   validateQuadrilateral,
-} from './puzzle-photo-calibration.js?v=be7ce20871';
+} from './puzzle-photo-calibration.js?v=a21155254a';
 import {
   PuzzlePhotoRecognitionError,
   RECOGNITION_OCCUPANCY_EMPTY,
@@ -103,7 +110,7 @@ import {
   isRecognitionTokenCurrent,
   recognizeIntersections,
   selectionKey,
-} from './puzzle-photo-recognition.js?v=be7ce20871';
+} from './puzzle-photo-recognition.js?v=a21155254a';
 import {
   addTemplate,
   createPieceTypeSessionToken,
@@ -113,13 +120,13 @@ import {
   normalizePiecePatch,
   removeTemplatesForSource,
   suggestUnresolvedPieceTypes,
-} from './puzzle-photo-piece-types.js?v=be7ce20871';
+} from './puzzle-photo-piece-types.js?v=a21155254a';
 import {
   UNREVIEWED, PuzzlePhotoReviewError,
   createReviewState, buildReviewQueue, selectReviewCandidate, confirmEmpty, confirmPiece,
   nextCandidate, previousCandidate, nextUnresolved, acceptHighConfidenceEmpty,
   undoBulkEmpty, resetReview, rescanReview, reviewProgress, confirmedSelections, buildReviewedBoard,
-} from './puzzle-photo-review.js?v=be7ce20871';
+} from './puzzle-photo-review.js?v=a21155254a';
 
 // ---------------- 常數 ----------------
 const CELL = 1;
@@ -476,7 +483,7 @@ function syncPracticeHintMarkers() {
   if (practiceHint?.from) addPracticeHintMarker(practiceHint.from, 'source');
   if (practiceHint?.to) addPracticeHintMarker(practiceHint.to, 'target');
 }
-function showMoveDots(moves, sourceBoard = board) {
+function showMoveDots(moves, sourceBoard = board, sourceSelection = selected) {
   clearFX();
   for (const m of moves) {
     const p = to3D(m.r, m.c);
@@ -500,7 +507,7 @@ function showMoveDots(moves, sourceBoard = board) {
       dot.position.x = p.x; dot.position.z = p.z;
     }
   }
-  showSelectRingAt(selected);
+  showSelectRingAt(sourceSelection);
 }
 
 // ---------------- 声音 ----------------
@@ -574,6 +581,7 @@ const APP_STATE = Object.freeze({
   NORMAL_GAME: 'NORMAL_GAME',
   GAME_RECORD_LIBRARY: 'GAME_RECORD_LIBRARY',
   GAME_REVIEW: 'GAME_REVIEW',
+  GAME_ANALYSIS: 'GAME_ANALYSIS',
   PUZZLE_EDITOR: 'PUZZLE_EDITOR',
   PUZZLE_CONFIRMED: 'PUZZLE_CONFIRMED',
   PUZZLE_RECORDING: 'PUZZLE_RECORDING',
@@ -639,7 +647,8 @@ const PUZZLE_STATES = new Set([
 ]);
 const puzzleFlowActive = () => PUZZLE_STATES.has(appState);
 const gameRecordFlowActive = () => appState === APP_STATE.GAME_RECORD_LIBRARY
-  || appState === APP_STATE.GAME_REVIEW;
+  || appState === APP_STATE.GAME_REVIEW
+  || appState === APP_STATE.GAME_ANALYSIS;
 const normalGameActive = () => appState === APP_STATE.NORMAL_GAME;
 const authoringActive = () => appState === APP_STATE.PUZZLE_EDITOR
   || appState === APP_STATE.PUZZLE_CONFIRMED;
@@ -677,11 +686,15 @@ let gameReviewReturnState = APP_STATE.NORMAL_GAME;
 let gameReviewInvoker = null;
 let gameReviewStored = false;
 let gameReviewLivePresentation = null;
+let gameAnalysisState = null;
+let gameAnalysisSelected = null;
+let gameAnalysisLegal = [];
+let gameAnalysisNotice = '';
 
 let aiWorker = null;
 let aiModule = null;   // Worker 不可用時的主執行緒後備
 try {
-  aiWorker = new Worker(new URL('./ai-worker.js?v=be7ce20871', import.meta.url), { type: 'module' });
+  aiWorker = new Worker(new URL('./ai-worker.js?v=a21155254a', import.meta.url), { type: 'module' });
   aiWorker.onmessage = (e) => onAIResult(e.data);
   aiWorker.onerror = () => {
     aiWorker = null;
@@ -703,7 +716,7 @@ function requestAIMove() {
   if (aiWorker) {
     aiWorker.postMessage(payload);
   } else {
-    (aiModule ??= import('./ai.js?v=be7ce20871')).then(({ findBestMove }) => {
+    (aiModule ??= import('./ai.js?v=a21155254a')).then(({ findBestMove }) => {
       setTimeout(() => {
         if (token !== aiToken) return;
         onAIResult({ token, result: findBestMove(payload.board, payload.side, payload.level, payload.recent) });
@@ -756,6 +769,7 @@ window.__chess = {
   },
   get appState() { return appState; },
   get gameReview() { return gameReviewSession; },
+  get gameAnalysis() { return gameAnalysisState; },
   get editorActive() { return puzzleFlowActive(); },
   get puzzleState() { return appState; },
   get editorResult() { return cloneConfirmedPosition(); },
@@ -802,6 +816,11 @@ window.__chess = {
   exitGameReview,
   exitGameRecordFlow,
   navigateGameReview,
+  enterGameAnalysis,
+  makeGameAnalysisMove,
+  undoGameAnalysis,
+  resetGameAnalysisToSource,
+  returnToGameReview,
   enterEditor,
   exitEditor,
   checkEditorMeshInvariant: () => checkBoardMeshInvariant(editorState?.board),
@@ -843,7 +862,17 @@ const btnGameReviewFirst = document.getElementById('btnGameReviewFirst');
 const btnGameReviewPrevious = document.getElementById('btnGameReviewPrevious');
 const btnGameReviewNext = document.getElementById('btnGameReviewNext');
 const btnGameReviewLast = document.getElementById('btnGameReviewLast');
+const btnGameReviewAnalyze = document.getElementById('btnGameReviewAnalyze');
 const btnGameReviewDelete = document.getElementById('btnGameReviewDelete');
+const gameAnalysisView = document.getElementById('gameAnalysisView');
+const gameAnalysisHeading = document.getElementById('gameAnalysisHeading');
+const gameAnalysisMeta = document.getElementById('gameAnalysisMeta');
+const gameAnalysisStatus = document.getElementById('gameAnalysisStatus');
+const gameAnalysisMoveCount = document.getElementById('gameAnalysisMoveCount');
+const gameAnalysisMoveList = document.getElementById('gameAnalysisMoveList');
+const btnGameAnalysisUndo = document.getElementById('btnGameAnalysisUndo');
+const btnGameAnalysisReset = document.getElementById('btnGameAnalysisReset');
+const btnGameAnalysisReturn = document.getElementById('btnGameAnalysisReturn');
 const btnReviewGame = document.getElementById('btnReviewGame');
 const editorPanel = document.getElementById('editorPanel');
 const editorMessage = document.getElementById('editorMessage');
@@ -964,6 +993,8 @@ const btnRecognitionApply = document.getElementById('btnRecognitionApply');
 function refreshHUD() {
   const showSide = appState === APP_STATE.GAME_REVIEW
     ? gameReviewSession.snapshot.sideToMove
+    : appState === APP_STATE.GAME_ANALYSIS
+    ? gameAnalysisState.currentSide
     : practiceActive()
     ? practiceState.currentSide
     : (recorderBoardActive()
@@ -980,6 +1011,10 @@ function refreshHUD() {
     turnText.textContent = gameReviewSession.atLast
       ? `複盤・${gameRecordResultLabel(gameReviewSession.record)}`
       : `複盤・第 ${gameReviewSession.selectedPly} / ${gameReviewSession.totalPlies} 著`;
+  } else if (appState === APP_STATE.GAME_ANALYSIS) {
+    turnText.textContent = gameAnalysisState.terminal
+      ? `分析・${gameAnalysisTerminalLabel(gameAnalysisState.terminal)}`
+      : `分析・${isRed ? '紅方' : '黑方'}行棋`;
   } else if (appState === APP_STATE.PUZZLE_EDITOR) {
     turnText.textContent = isRed ? '編輯中・紅方先行' : '編輯中・黑方先行';
   } else if (appState === APP_STATE.PUZZLE_CONFIRMED) {
@@ -2170,12 +2205,12 @@ function formatGameRecordCompletedAt(timestamp) {
   }
 }
 
-function appendGameReviewMeta(label, value) {
+function appendGameReviewMeta(label, value, target = gameReviewMeta) {
   const term = document.createElement('dt');
   const description = document.createElement('dd');
   term.textContent = label;
   description.textContent = value;
-  gameReviewMeta.append(term, description);
+  target.append(term, description);
 }
 
 function createGameRecordCard(record) {
@@ -2276,12 +2311,14 @@ function enterGameRecordLibrary(invoker = btnGameRecords) {
   if (!pauseLiveGameForGameRecords(invoker)) return false;
   appState = APP_STATE.GAME_RECORD_LIBRARY;
   gameReviewSession = null;
+  gameAnalysisState = null;
   gameReviewStored = false;
   gameReviewReturnState = APP_STATE.NORMAL_GAME;
   appEl.classList.add('game-record-active');
   gameRecordPanel.classList.remove('hidden');
   gameRecordLibraryView.classList.remove('hidden');
   gameReviewView.classList.add('hidden');
+  gameAnalysisView.classList.add('hidden');
   renderGameRecordLibrary();
   refreshHUD();
   gameRecordLibraryHeading.focus({ preventScroll: true });
@@ -2290,11 +2327,14 @@ function enterGameRecordLibrary(invoker = btnGameRecords) {
 
 function showGameRecordLibrary() {
   if (!gameRecordFlowActive()) return;
+  clearGameAnalysisSelection();
   appState = APP_STATE.GAME_RECORD_LIBRARY;
   gameReviewSession = null;
+  gameAnalysisState = null;
   gameReviewStored = false;
   gameRecordLibraryView.classList.remove('hidden');
   gameReviewView.classList.add('hidden');
+  gameAnalysisView.classList.add('hidden');
   rebuildPieceMeshes(board, false);
   syncLastMoveMark();
   renderGameRecordLibrary();
@@ -2320,6 +2360,13 @@ function gameReviewAnnouncement() {
   }
   const side = review.snapshot.sideToMove === RED ? '紅方' : '黑方';
   return `第 ${review.selectedPly} / ${review.totalPlies} 著。${move}${side}行棋。`;
+}
+
+function gameAnalysisTerminalLabel(terminal) {
+  const reason = GAME_RECORD_REASON_LABELS[terminal.terminationReason] || terminal.terminationReason;
+  return terminal.winner === null
+    ? `和局・${reason}`
+    : `${terminal.winner === RED ? '紅方' : '黑方'}勝・${reason}`;
 }
 
 function renderGameReview() {
@@ -2356,6 +2403,8 @@ function renderGameReview() {
   btnGameReviewPrevious.disabled = review.atFirst;
   btnGameReviewNext.disabled = review.atLast;
   btnGameReviewLast.disabled = review.atLast;
+  btnGameReviewAnalyze.disabled = !!review.snapshot.terminal;
+  btnGameReviewAnalyze.title = review.snapshot.terminal ? '終局位置不可開始分析' : '';
   btnGameReviewBack.classList.toggle('hidden', gameReviewReturnState !== APP_STATE.GAME_RECORD_LIBRARY);
   btnGameReviewDelete.classList.toggle('hidden', !gameReviewStored);
   rebuildPieceMeshes(review.snapshot.board, false);
@@ -2374,6 +2423,165 @@ function renderGameReview() {
   }
 }
 
+function clearGameAnalysisSelection() {
+  gameAnalysisSelected = null;
+  gameAnalysisLegal = [];
+  clearFX();
+  selRing.visible = false;
+}
+
+function syncGameAnalysisMoveMark() {
+  const move = gameAnalysisState?.moves.at(-1);
+  lastFromMark.visible = lastToMark.visible = !!move;
+  if (!move) return;
+  const from = to3D(move.from.r, move.from.c);
+  const to = to3D(move.to.r, move.to.c);
+  lastFromMark.position.set(from.x, 0.012, from.z);
+  lastToMark.position.set(to.x, 0.012, to.z);
+}
+
+function gameAnalysisAnnouncement() {
+  const analysis = gameAnalysisState;
+  const source = `來源：第 ${analysis.sourcePly} 著。`;
+  const action = gameAnalysisNotice ? `${gameAnalysisNotice} ` : '';
+  if (analysis.terminal) return `${action}${source}分析終止：${gameAnalysisTerminalLabel(analysis.terminal)}。`;
+  const side = analysis.currentSide === RED ? '紅方' : '黑方';
+  return `${action}${source}已試走 ${analysis.moves.length} 著，${side}行棋。`;
+}
+
+function renderGameAnalysis() {
+  if (!gameAnalysisState) return;
+  const analysis = gameAnalysisState;
+  gameAnalysisMeta.replaceChildren();
+  appendGameReviewMeta('原對局', analysis.sourceRecordId, gameAnalysisMeta);
+  appendGameReviewMeta('來源進度', `${analysis.sourcePly} / ${analysis.sourceRecord.moves.length}`, gameAnalysisMeta);
+  appendGameReviewMeta('分析進度', `${analysis.moves.length} 著`, gameAnalysisMeta);
+  gameAnalysisStatus.textContent = gameAnalysisAnnouncement();
+  gameAnalysisStatus.classList.toggle('terminal', !!analysis.terminal);
+  gameAnalysisMoveCount.textContent = `${analysis.moves.length} 著`;
+  gameAnalysisMoveList.replaceChildren(...analysis.moves.map((move, index) => {
+    const item = document.createElement('li');
+    if (index === analysis.moves.length - 1) item.setAttribute('aria-current', 'step');
+    const ply = document.createElement('span');
+    ply.className = 'ply';
+    ply.textContent = String(move.ply);
+    const side = document.createElement('span');
+    side.className = `side ${move.side}`;
+    side.textContent = move.side === RED ? '紅' : '黑';
+    const notationText = document.createElement('span');
+    notationText.textContent = move.notation;
+    item.append(ply, side, notationText);
+    return item;
+  }));
+  btnGameAnalysisUndo.disabled = analysis.moves.length === 0;
+  btnGameAnalysisReset.disabled = analysis.moves.length === 0;
+  rebuildPieceMeshes(analysis.currentBoard, false);
+  syncGameAnalysisMoveMark();
+  if (gameAnalysisSelected && !analysis.terminal) {
+    showMoveDots(gameAnalysisLegal, analysis.currentBoard, gameAnalysisSelected);
+  }
+  const invariant = checkBoardMeshInvariant(analysis.currentBoard);
+  if (!invariant.ok) throw new Error(`Game analysis board/mesh invariant failed: ${invariant.errors.join(' ')}`);
+  refreshHUD();
+  gameAnalysisMoveList.scrollTop = gameAnalysisMoveList.scrollHeight;
+}
+
+function enterGameAnalysis(invoker = btnGameReviewAnalyze) {
+  if (appState !== APP_STATE.GAME_REVIEW || !gameReviewSession || gameReviewSession.snapshot.terminal) return false;
+  try {
+    gameAnalysisState = createGameAnalysis(gameReviewSession.record, gameReviewSession.selectedPly);
+  } catch {
+    toast('目前的複盤位置無法建立分析沙盤。');
+    return false;
+  }
+  clearGameAnalysisSelection();
+  gameAnalysisNotice = '已建立臨時分析沙盤。';
+  appState = APP_STATE.GAME_ANALYSIS;
+  gameReviewView.classList.add('hidden');
+  gameAnalysisView.classList.remove('hidden');
+  gameRecordPanel.scrollTop = 0;
+  renderGameAnalysis();
+  gameAnalysisHeading.focus({ preventScroll: true });
+  return true;
+}
+
+function makeGameAnalysisMove(from, to) {
+  if (appState !== APP_STATE.GAME_ANALYSIS || !gameAnalysisState || gameAnalysisState.terminal) return false;
+  try {
+    gameAnalysisState = applyGameAnalysisMove(gameAnalysisState, from, to);
+  } catch {
+    return false;
+  }
+  clearGameAnalysisSelection();
+  gameAnalysisNotice = '已加入一著分析。';
+  renderGameAnalysis();
+  return true;
+}
+
+function undoGameAnalysis() {
+  if (appState !== APP_STATE.GAME_ANALYSIS || !gameAnalysisState || gameAnalysisState.moves.length === 0) return false;
+  gameAnalysisState = undoGameAnalysisMove(gameAnalysisState);
+  clearGameAnalysisSelection();
+  gameAnalysisNotice = '已悔棋。';
+  renderGameAnalysis();
+  return true;
+}
+
+function resetGameAnalysisToSource() {
+  if (appState !== APP_STATE.GAME_ANALYSIS || !gameAnalysisState) return false;
+  gameAnalysisState = resetGameAnalysis(gameAnalysisState);
+  clearGameAnalysisSelection();
+  gameAnalysisNotice = '已重置到來源局面。';
+  renderGameAnalysis();
+  return true;
+}
+
+function returnToGameReview() {
+  if (appState !== APP_STATE.GAME_ANALYSIS || !gameAnalysisState || !gameReviewSession) return false;
+  clearGameAnalysisSelection();
+  gameAnalysisState = null;
+  gameAnalysisNotice = '';
+  appState = APP_STATE.GAME_REVIEW;
+  gameAnalysisView.classList.add('hidden');
+  gameReviewView.classList.remove('hidden');
+  gameRecordPanel.scrollTop = 0;
+  renderGameReview();
+  btnGameReviewAnalyze.focus({ preventScroll: true });
+  return true;
+}
+
+function selectGameAnalysisPiece(r, c) {
+  if (!gameAnalysisState || gameAnalysisState.terminal) return;
+  gameAnalysisSelected = { r, c };
+  gameAnalysisLegal = [...gameAnalysisLegalMoves(gameAnalysisState, gameAnalysisSelected)];
+  showMoveDots(gameAnalysisLegal, gameAnalysisState.currentBoard, gameAnalysisSelected);
+  refreshHUD();
+}
+
+function handleGameAnalysisBoardClick(hit) {
+  if (!gameAnalysisState || gameAnalysisState.terminal) return;
+  if (!hit) {
+    clearGameAnalysisSelection();
+    refreshHUD();
+    return;
+  }
+  const target = hit.userData?.piece ? hit.userData : hit;
+  const { r, c } = target;
+  if (gameAnalysisSelected && gameAnalysisLegal.some((move) => move.r === r && move.c === c)) {
+    makeGameAnalysisMove(gameAnalysisSelected, { r, c });
+    return;
+  }
+  if (target.piece?.side === gameAnalysisState.currentSide) {
+    if (gameAnalysisSelected?.r === r && gameAnalysisSelected?.c === c) {
+      clearGameAnalysisSelection();
+      refreshHUD();
+    } else selectGameAnalysisPiece(r, c);
+    return;
+  }
+  clearGameAnalysisSelection();
+  refreshHUD();
+}
+
 function openGameReview(record, { returnState, invoker, stored = false } = {}) {
   let opened;
   try {
@@ -2390,12 +2598,14 @@ function openGameReview(record, { returnState, invoker, stored = false } = {}) {
   gameReviewReturnState = returnState
     || (sourceState === APP_STATE.GAME_RECORD_LIBRARY ? APP_STATE.GAME_RECORD_LIBRARY : APP_STATE.NORMAL_GAME);
   gameReviewSession = opened;
+  gameAnalysisState = null;
   gameReviewStored = stored;
   appState = APP_STATE.GAME_REVIEW;
   appEl.classList.add('game-record-active');
   gameRecordPanel.classList.remove('hidden');
   gameRecordLibraryView.classList.add('hidden');
   gameReviewView.classList.remove('hidden');
+  gameAnalysisView.classList.add('hidden');
   renderGameReview();
   gameReviewHeading.focus({ preventScroll: true });
   return true;
@@ -2472,17 +2682,21 @@ function exitGameReview() {
 function exitGameRecordFlow() {
   if (!gameRecordFlowActive()) return;
   const invoker = gameReviewInvoker;
+  clearGameAnalysisSelection();
   aiToken++;
   aiThinking = false;
   tweens.length = 0;
   appState = APP_STATE.NORMAL_GAME;
   gameReviewSession = null;
+  gameAnalysisState = null;
+  gameAnalysisNotice = '';
   gameReviewStored = false;
   gameReviewReturnState = APP_STATE.NORMAL_GAME;
   appEl.classList.remove('game-record-active');
   gameRecordPanel.classList.add('hidden');
   gameRecordLibraryView.classList.remove('hidden');
   gameReviewView.classList.add('hidden');
+  gameAnalysisView.classList.add('hidden');
   restoreLiveGamePresentation();
   refreshHUD();
   maybeAIMove();
@@ -3962,7 +4176,7 @@ function pick(event) {
 }
 
 renderer.domElement.addEventListener('pointermove', (e) => {
-  if (gameRecordFlowActive()) {
+  if (gameRecordFlowActive() && appState !== APP_STATE.GAME_ANALYSIS) {
     renderer.domElement.style.cursor = viewLocked ? 'default' : 'grab';
     return;
   }
@@ -3982,8 +4196,12 @@ renderer.domElement.addEventListener('click', (e) => {
     return;
   }
   downXY = null;
-  if (gameRecordFlowActive()) return;
+  if (appState === APP_STATE.GAME_RECORD_LIBRARY || appState === APP_STATE.GAME_REVIEW) return;
   const hit = pick(e);
+  if (appState === APP_STATE.GAME_ANALYSIS) {
+    handleGameAnalysisBoardClick(hit);
+    return;
+  }
   if (appState === APP_STATE.PUZZLE_PRACTICING) {
     if (!busy && practiceState.currentSide === practiceState.practiceSide) handlePracticeBoardClick(hit);
     return;
@@ -4483,6 +4701,11 @@ btnGameReviewFirst.addEventListener('click', () => navigateGameReview('first'));
 btnGameReviewPrevious.addEventListener('click', () => navigateGameReview('previous'));
 btnGameReviewNext.addEventListener('click', () => navigateGameReview('next'));
 btnGameReviewLast.addEventListener('click', () => navigateGameReview('last'));
+btnGameReviewAnalyze.addEventListener('click', () => enterGameAnalysis(btnGameReviewAnalyze));
+btnGameAnalysisUndo.addEventListener('click', undoGameAnalysis);
+btnGameAnalysisReset.addEventListener('click', resetGameAnalysisToSource);
+btnGameAnalysisReturn.addEventListener('click', returnToGameReview);
+document.getElementById('btnGameAnalysisExit').addEventListener('click', exitGameRecordFlow);
 btnGameReviewDelete.addEventListener('click', () => {
   if (gameReviewSession) deleteGameRecordFromLibrary(gameReviewSession.record.id);
 });
@@ -4622,7 +4845,8 @@ document.addEventListener('pointerdown', (e) => {
 });
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
-    if (appState === APP_STATE.GAME_REVIEW) exitGameReview();
+    if (appState === APP_STATE.GAME_ANALYSIS) returnToGameReview();
+    else if (appState === APP_STATE.GAME_REVIEW) exitGameReview();
     else if (appState === APP_STATE.GAME_RECORD_LIBRARY) exitGameRecordFlow();
     closeHudMenu();
     return;

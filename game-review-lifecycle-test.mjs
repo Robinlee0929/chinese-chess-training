@@ -168,6 +168,7 @@ function harness({
       NORMAL_GAME: 'NORMAL_GAME',
       GAME_RECORD_LIBRARY: 'GAME_RECORD_LIBRARY',
       GAME_REVIEW: 'GAME_REVIEW',
+      GAME_ANALYSIS: 'GAME_ANALYSIS',
     }),
     appState: 'NORMAL_GAME',
     board: liveBoard,
@@ -199,6 +200,10 @@ function harness({
     gameReviewInvoker: null,
     gameReviewStored: false,
     gameReviewLivePresentation: null,
+    gameAnalysisState: null,
+    gameAnalysisSelected: null,
+    gameAnalysisLegal: [],
+    gameAnalysisNotice: '',
     renderedBoard: liveBoard,
     renderCount: 0,
     productionRenderCallCount: 0,
@@ -231,6 +236,7 @@ function harness({
     gameRecordPanel: domNode(true),
     gameRecordLibraryView: domNode(),
     gameReviewView: domNode(true),
+    gameAnalysisView: domNode(true),
     gameRecordLibraryHeading: domNode(),
     gameReviewHeading: domNode(),
     gameReviewMeta: domNode(),
@@ -243,6 +249,7 @@ function harness({
     btnGameReviewPrevious: domNode(),
     btnGameReviewNext: domNode(),
     btnGameReviewLast: domNode(),
+    btnGameReviewAnalyze: domNode(),
     btnGameReviewBack: domNode(),
     btnGameReviewDelete: domNode(true),
     overlay: domNode(true),
@@ -252,8 +259,12 @@ function harness({
     document,
     window: { confirm: () => confirm },
     normalGameActive: () => context.appState === 'NORMAL_GAME',
-    gameRecordFlowActive: () => ['GAME_RECORD_LIBRARY', 'GAME_REVIEW'].includes(context.appState),
+    gameRecordFlowActive: () => ['GAME_RECORD_LIBRARY', 'GAME_REVIEW', 'GAME_ANALYSIS'].includes(context.appState),
     clearSelection: () => { context.selected = null; context.legal = []; },
+    clearGameAnalysisSelection: () => {
+      context.gameAnalysisSelected = null;
+      context.gameAnalysisLegal = [];
+    },
     stopConfetti() {},
     rebuildPieceMeshes(board) {
       context.clearSelection();
@@ -374,10 +385,12 @@ test('just-completed in-memory record opens at the final board with zero persist
   assert.equal(ctx.openLastCompletedGameReview(ctx.btnReviewGame), true);
   assert.equal(ctx.appState, 'GAME_REVIEW');
   assert.equal(ctx.gameReviewSession.selectedPly, completed.moves.length);
+  assert.equal(ctx.btnGameReviewAnalyze.disabled, true);
   assert.deepEqual(ctx.renderedBoard, before.board);
   assert.equal(ctx.productionRenderCallCount, 1);
   assertLiveStateUnchanged(ctx, before, 'just-completed final render');
   assert.equal(ctx.navigateGameReview('previous'), true);
+  assert.equal(ctx.btnGameReviewAnalyze.disabled, false);
   assert.equal(ctx.productionRenderCallCount, 2);
   assert.deepEqual(ctx.renderedBoard, replayGameRecord(completed, 0).board);
   assertLiveStateUnchanged(ctx, before, 'just-completed previous render');
@@ -610,7 +623,8 @@ test('empty, multiple, corrupt and read-failed library loads never rewrite stora
 
 test('source and DOM contain explicit read-only, accessibility and responsive guards', () => {
   assert.match(functionSource('doMove'), /if\s*\(!normalGameActive\(\)\)\s*return/);
-  assert.match(source, /if \(gameRecordFlowActive\(\)\) return;\s*\n\s*const hit = pick\(e\)/);
+  assert.match(source, /if \(appState === APP_STATE\.GAME_RECORD_LIBRARY \|\| appState === APP_STATE\.GAME_REVIEW\) return;\s*\n\s*const hit = pick\(e\)/);
+  assert.match(source, /if \(appState === APP_STATE\.GAME_ANALYSIS\) \{\s*\n\s*handleGameAnalysisBoardClick\(hit\)/);
   assert.doesNotMatch(functionSource('navigateGameReview'), /doMove|maybeAIMove|gameRecordStore/);
   assert.match(source, /createGameReview\(record\)/);
   assert.match(html, /id="gameReviewStatus"[^>]*aria-live="polite"/);
