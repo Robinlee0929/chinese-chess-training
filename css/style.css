@@ -221,6 +221,10 @@ aside {
 #app.library-active #left,
 #app.library-active #right,
 #app.library-active #editorPanel { display: none; }
+#app.game-record-active #left,
+#app.game-record-active #right,
+#app.game-record-active #editorPanel,
+#app.game-record-active #libraryPanel { display: none; }
 
 aside h3 {
   font-size: 12px;
@@ -922,6 +926,143 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
 .library-solution ol { padding-left: 22px; color: var(--text); font-size: 12px; line-height: 1.7; }
 .library-detail-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
 .library-detail-actions button { padding-left: 5px; padding-right: 5px; }
+
+/* ---------- 已完成對局 / 唯讀複盤 ---------- */
+#gameRecordPanel {
+  width: 320px;
+  border-right: 1px solid var(--line);
+  gap: 12px;
+}
+.game-record-library-view,
+.game-review-view {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+.game-record-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.game-record-heading h2 { font-size: 18px; letter-spacing: 3px; }
+.game-record-heading h2:focus-visible { outline: 2px solid var(--gold); outline-offset: 4px; }
+.game-record-heading p { margin-top: 4px; color: var(--muted); font-size: 11.5px; line-height: 1.5; }
+.game-record-library-list { display: flex; flex-direction: column; gap: 8px; }
+.game-record-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel2);
+}
+.game-record-card-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.game-record-card-heading strong { color: var(--text); font-size: 13px; }
+.game-record-card-heading time { color: var(--muted); font-size: 10.5px; text-align: right; }
+.game-record-card-meta { color: var(--muted); font-size: 11.5px; line-height: 1.55; }
+.game-record-card-actions { display: grid; grid-template-columns: 1fr auto; gap: 7px; }
+.game-record-card-actions button { min-height: 40px; padding: 7px 9px; font-size: 12px; }
+.game-record-empty,
+.game-record-issues {
+  color: var(--muted);
+  padding: 12px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.game-record-issues { color: #e8b887; border-color: rgba(217, 164, 65, 0.45); }
+.game-review-topbar { display: flex; justify-content: space-between; gap: 8px; }
+.game-review-topbar button { padding: 7px 9px; font-size: 11.5px; }
+.game-review-meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 5px 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel2);
+  font-size: 11.5px;
+}
+.game-review-meta dt { color: var(--muted); }
+.game-review-meta dd { color: var(--text); text-align: right; }
+.game-review-status {
+  min-height: 48px;
+  padding: 9px 10px;
+  border-left: 3px solid var(--gold);
+  background: rgba(217, 164, 65, 0.08);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.game-review-navigation { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.game-review-navigation button {
+  min-width: 0;
+  min-height: 46px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 3px;
+  font-size: 14px;
+}
+.game-review-navigation button span { color: var(--muted); font-size: 10px; letter-spacing: 0; }
+.game-review-moves {
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel2);
+  overflow: hidden;
+}
+.game-review-moves summary {
+  cursor: pointer;
+  padding: 10px;
+  color: var(--gold);
+  font-size: 12px;
+  letter-spacing: 1px;
+}
+#gameReviewMoveList {
+  max-height: 34vh;
+  overflow-y: auto;
+  padding: 0 8px 9px;
+  list-style: none;
+}
+#gameReviewMoveList li + li { margin-top: 4px; }
+.game-review-move {
+  width: 100%;
+  min-height: 38px;
+  display: grid;
+  grid-template-columns: 34px 28px 1fr;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 8px;
+  text-align: left;
+  font-size: 12px;
+}
+.game-review-move .ply { color: var(--muted); font-variant-numeric: tabular-nums; }
+.game-review-move .side { font-weight: 700; }
+.game-review-move .side.red { color: #ef776a; }
+.game-review-move .side.black { color: #c8cbd0; }
+.game-review-move[aria-current="step"] {
+  color: #241a0c;
+  border-color: #f0c463;
+  background: linear-gradient(180deg, #f0c463, #d9a441);
+  font-weight: 700;
+}
+.game-review-move[aria-current="step"] .ply,
+.game-review-move[aria-current="step"] .side { color: #3a2511; }
+#btnGameReviewDelete { width: 100%; min-height: 40px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .game-review-view *, .game-record-library-view * { scroll-behavior: auto !important; transition: none !important; }
+}
 .library-analytics {
   padding: 10px;
   border: 1px solid var(--line);
@@ -1183,7 +1324,7 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
   /* 棋盤置頂居中，吃子列移到棋盤下方，說明收進選單 */
   #stage { order: 1; flex: 1; }
   /* 殺局面板獨立配置，不改動上游浮動吃子托盤／說明選單。 */
-  #app.editor-active #stage, #app.library-active #stage { min-height: 0; }
+  #app.editor-active #stage, #app.library-active #stage, #app.game-record-active #stage { min-height: 0; }
   #editorPanel {
     order: 2;
     width: 100%;
@@ -1232,6 +1373,18 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
     border-right: none;
     border-top: 1px solid var(--line);
   }
+  #gameRecordPanel {
+    order: 2;
+    width: 100%;
+    max-height: 42dvh;
+    border-right: none;
+    border-top: 1px solid var(--line);
+    padding: 12px;
+  }
+  #gameReviewMoveList { max-height: 24dvh; }
+  .game-record-card-actions button,
+  .game-review-navigation button,
+  #btnGameReviewDelete { min-height: 44px; }
   .library-transfer-actions button,
   .library-import-preview-actions button { min-height: 42px; }
   #right { display: none; }

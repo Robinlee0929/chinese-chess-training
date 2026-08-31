@@ -134,7 +134,8 @@ function harness(options = {}) {
     pendingPuzzleImport: null, puzzleImportToken: 0,
     photoReferenceState: photo.createPhotoReferenceState(), calibrationState: null,
     rectifiedPhotoPixels: null, confirmedCalibration: null, revoked: [],
-    APP_STATE: Object.fromEntries(['NORMAL_GAME', 'PUZZLE_EDITOR', 'PUZZLE_CONFIRMED',
+    APP_STATE: Object.fromEntries(['NORMAL_GAME', 'GAME_RECORD_LIBRARY', 'GAME_REVIEW',
+      'PUZZLE_EDITOR', 'PUZZLE_CONFIRMED',
       'PUZZLE_RECORDING', 'PUZZLE_RECORDED', 'PUZZLE_PRACTICING', 'PUZZLE_PRACTICE_COMPLETE',
       'PUZZLE_LIBRARY', 'PUZZLE_VIEW'].map((state) => [state, state])),
     sfx: { move: noop, capture: noop, check: noop },
@@ -155,7 +156,10 @@ function harness(options = {}) {
     performance: { now: () => context.clock },
     setTimeout: (callback) => context.timers.push(callback),
     showGameOver: (endReason) => context.shownResults.push(endReason),
-    puzzleFlowActive: () => context.appState !== 'NORMAL_GAME',
+    puzzleFlowActive: () => ['PUZZLE_EDITOR', 'PUZZLE_CONFIRMED', 'PUZZLE_RECORDING',
+      'PUZZLE_RECORDED', 'PUZZLE_PRACTICING', 'PUZZLE_PRACTICE_COMPLETE',
+      'PUZZLE_LIBRARY', 'PUZZLE_VIEW'].includes(context.appState),
+    normalGameActive: () => context.appState === 'NORMAL_GAME',
     libraryActive: () => ['PUZZLE_LIBRARY', 'PUZZLE_VIEW'].includes(context.appState),
     practiceActive: () => ['PUZZLE_PRACTICING', 'PUZZLE_PRACTICE_COMPLETE'].includes(context.appState),
     URL: { revokeObjectURL: (url) => context.revoked.push(url),
@@ -168,7 +172,7 @@ function harness(options = {}) {
     'libraryTransferStatus', 'libraryImportPreview', 'libraryImportPreviewText',
     'btnLibraryImportConfirm', 'recorderTitle', 'recorderSubtitle', 'recorderBadge',
     'practiceTurnText', 'practiceTurnDot', 'practiceProgress', 'practiceMistakes',
-    'practiceMessage', 'practiceHintMessage', 'btnPracticeHint', 'btnPracticeRestart',
+    'practiceMessage', 'practiceHintMessage', 'btnPracticeHint', 'btnPracticeRestart', 'btnReviewGame',
     'btnPracticeExit']) context[name] = node();
   for (const name of photoCanvasNames) context[name] = name === 'recognitionTargetCanvas'
     ? photoCanvas(112, 112) : photoCanvas();
@@ -327,6 +331,38 @@ test('Undo control and direct handler share the terminal-aware availability guar
   assert.match(source, /btnUndo\.disabled\s*=\s*!normalUndoAvailable\(\)/);
   assert.match(functionSource('undo'), /if\s*\(!normalUndoAvailable\(\)\)\s*return/);
   assert.match(functionSource('normalUndoAvailable'), /!over/);
+});
+
+test('game review blocks normal move, undo and new-game mutations', () => {
+  const ctx = harness();
+  const before = {
+    board: structuredClone(ctx.board),
+    turn: ctx.turn,
+    history: structuredClone(ctx.history),
+    posHistory: structuredClone(ctx.posHistory),
+    repHistory: structuredClone(ctx.repHistory),
+    capturedBy: structuredClone(ctx.capturedBy),
+    session: structuredClone(ctx.normalGameRecordSession),
+    writes: ctx.gameRecordStorage.writes,
+  };
+
+  ctx.appState = ctx.APP_STATE.GAME_REVIEW;
+  ctx.doMove({ r: 3, c: 4 }, { r: 4, c: 4 });
+  ctx.undo();
+  ctx.newGame();
+
+  same({
+    board: ctx.board,
+    turn: ctx.turn,
+    history: ctx.history,
+    posHistory: ctx.posHistory,
+    repHistory: ctx.repHistory,
+    capturedBy: ctx.capturedBy,
+    session: ctx.normalGameRecordSession,
+    writes: ctx.gameRecordStorage.writes,
+  }, before);
+  assert.equal(ctx.aiRequestCount, 0);
+  assert.equal(ctx.analyticsStorage.writes, 0);
 });
 
 test('normal terminal reasons map explicitly to the exact GameRecord contract', () => {

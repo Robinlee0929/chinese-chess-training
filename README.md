@@ -29,6 +29,7 @@ python -m http.server 8000
 - **手動擺盤**：「建立殺局」→ 選擇紅／黑棋子並擺盤 → 設定先行方 →「確認局面」。可移動、刪除棋子或清空棋盤；確認時要求雙方各有一將／帥。
 - **解答錄製**：依序走出雙方已知解法，可退回一著或重新錄製。所有著法交由既有 `game.js` 規則引擎檢查；只有合法且最後形成將死的答案可儲存。
 - **殺局練習**：玩家操作先行方，對手依已錄製的單一路線回應。合法但不符答案的著法會記為錯誤且不改變棋盤；可重新開始練習。玩家可自行按「提示」，依序只揭示目前錄製著法的棋種 → 起點 → 目標 → 完整棋譜記法；提示不會自動出現，也不是 AI／求解器產生。已儲存題目保留練習／完成次數與最近練習時間；每次開始或重新開始計一次練習，走完答案計一次完成。
+- **已完成棋局複盤**：終局後可直接從最後一手開啟唯讀複盤，也可從「對局紀錄」載入本機保存的棋局；支援第一手／上一手／下一手／最後一手、完整著法清單與直接跳轉。複盤只使用確定性重播快照，不會走子、呼叫 AI、改寫棋局／題目／練習分析，離開後會回復原本的即時棋局畫面。
 - **瀏覽器本機練習紀錄（非遙測）**：已儲存題目的完成或明確中止會留下精簡嘗試摘要與累計數字，每題只保留最近 10 次摘要，較舊摘要淘汰後累計數字仍保留。摘要只有完成／中止、開始／結束時間、錯誤數與提示請求次數／最高提示級別；不保存逐著歷史、棋盤、解答或提示內容，不匯出也不上傳。分頁在未完成時直接關閉或重新載入，該次可能不會留下紀錄；刪除題目後也會嘗試清除其本機練習紀錄。
 
 ## 附加功能
@@ -106,6 +107,8 @@ node fuzz.mjs     # 3000 局隨機模糊測試；終局另驗證 GameRecord 開�
 node ai-test.mjs  # AI 引擎測試（合法性、吃子、解將、一步殺、效能）
 node game-record-test.mjs # GameRecord v1 嚴格驗證、不可變快照、逐著重播與五種終局語意
 node game-record-store-test.mjs # 獨立 GameRecord 儲存、冪等、100 局保留、損毀與失敗隔離
+node game-review-test.mjs # 唯讀複盤導覽、邊界、切換紀錄與資料隔離
+node game-review-lifecycle-test.mjs # 正常棋局／AI／儲存與複盤 UI 的跨流程隔離
 node puzzle-domain-test.mjs
 node puzzle-editor-test.mjs
 node puzzle-recorder-test.mjs
@@ -130,6 +133,7 @@ git diff --check
 
 - `game-record.js`：純邏輯 GameRecord v1 邊界；只接受一份初始盤面、初始行棋方、座標著法、模式、標準 UTC 時間與終局結果。逐著以 `game.js` 重建吃子、棋譜記法、局面雜湊、重複局面與終局，不含儲存、UI、AI 分析或每著盤面快照。
 - `game-record-store.js`：使用獨立 `chinese-chess-training:game-records:v1` key 的 fail-closed 本機儲存，最多保留 100 局；同 ID 同內容冪等、不同內容拒絕覆寫。正常棋局只在終局判定時保存一次，終局後不可再用一般悔棋重開。
+- `game-review.js`：純唯讀複盤控制器；每次選手都委派 `game-record.js` 的確定性重播，輸出凍結快照與由重播產生的棋譜資料，不包含 DOM、儲存、AI 或走棋入口。
 - `puzzle-domain.js`：資料驗證、逐著重播、終局將死檢查。
 - `puzzle-editor.js`、`puzzle-recorder.js`、`puzzle-practice.js`：獨立且防禦性複製的編輯、錄製、練習狀態。
 - `puzzle-store.js`：版本化本機儲存與資料白名單。
@@ -144,6 +148,7 @@ css/style.css   深色棋盘室风格样式
 game.js      纯逻辑规则引擎（不依赖 three.js）
 game-record.js  嚴格且不可變的 GameRecord v1 驗證與確定性重播（無儲存／UI）
 game-record-store.js  獨立、版本化且最多保留 100 局的已完成棋局本機儲存
+game-review.js  唯讀棋局複盤導覽與確定性快照
 ai.js       AI 搜索引擎（negamax + alpha-beta + 靜態搜索 + 位置評估）
 ai-worker.js   AI 的 Web Worker 包裝（搜索不卡 UI）
 main.js      Three.js 场景、棋盘/棋子程序化贴图、交互、动画、人機對弈流程

@@ -7,9 +7,18 @@ import {
   ROWS, COLS, RED, BLACK,
   initialBoard, legalMoves, applyMove, inCheck,
   hasAnyLegalMove, name, notation, hashBoard, repetitionVerdict,
-} from './game.js?v=522295374f';
-import { createGameRecord } from './game-record.js?v=522295374f';
-import { createGameRecordStore } from './game-record-store.js?v=522295374f';
+} from './game.js?v=be7ce20871';
+import { createGameRecord } from './game-record.js?v=be7ce20871';
+import { createGameRecordStore } from './game-record-store.js?v=be7ce20871';
+import {
+  createGameReview,
+  createGameRecordLibraryView,
+  firstGameReviewPly,
+  previousGameReviewPly,
+  nextGameReviewPly,
+  lastGameReviewPly,
+  selectGameReviewPly,
+} from './game-review.js?v=be7ce20871';
 import {
   PuzzleEditorError,
   createEditorState,
@@ -19,7 +28,7 @@ import {
   setEditorSideToMove,
   confirmAuthoredPosition,
   exportAuthoredPosition,
-} from './puzzle-editor.js?v=522295374f';
+} from './puzzle-editor.js?v=be7ce20871';
 import {
   PuzzleRecorderError,
   createRecorder,
@@ -29,7 +38,7 @@ import {
   finishRecording,
   exportRecorderBoard,
   exportRecordedResult,
-} from './puzzle-recorder.js?v=522295374f';
+} from './puzzle-recorder.js?v=be7ce20871';
 import {
   PuzzlePracticeError,
   PRACTICE_HINT_MAX_LEVEL,
@@ -39,12 +48,12 @@ import {
   derivePracticeHint,
   restartPractice,
   exportPracticeSnapshot,
-} from './puzzle-practice.js?v=522295374f';
-import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=522295374f';
+} from './puzzle-practice.js?v=be7ce20871';
+import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=be7ce20871';
 import {
   PracticeAnalyticsError,
   createPracticeAnalyticsStore,
-} from './puzzle-analytics.js?v=522295374f';
+} from './puzzle-analytics.js?v=be7ce20871';
 import {
   PUZZLE_TRANSFER_FORMAT,
   PUZZLE_TRANSFER_SCHEMA_VERSION,
@@ -52,7 +61,7 @@ import {
   PuzzleTransferError,
   serializePuzzleExport,
   parsePuzzleImport,
-} from './puzzle-transfer.js?v=522295374f';
+} from './puzzle-transfer.js?v=be7ce20871';
 import {
   PHOTO_MAX_ZOOM,
   PHOTO_MIN_ZOOM,
@@ -66,7 +75,7 @@ import {
   validatePhotoMetadata,
   zoomPhotoIn,
   zoomPhotoOut,
-} from './puzzle-photo.js?v=522295374f';
+} from './puzzle-photo.js?v=be7ce20871';
 import {
   CALIBRATION_CANONICAL_HEIGHT,
   CALIBRATION_CANONICAL_WIDTH,
@@ -82,7 +91,7 @@ import {
   setCorner,
   transformPoint,
   validateQuadrilateral,
-} from './puzzle-photo-calibration.js?v=522295374f';
+} from './puzzle-photo-calibration.js?v=be7ce20871';
 import {
   PuzzlePhotoRecognitionError,
   RECOGNITION_OCCUPANCY_EMPTY,
@@ -94,7 +103,7 @@ import {
   isRecognitionTokenCurrent,
   recognizeIntersections,
   selectionKey,
-} from './puzzle-photo-recognition.js?v=522295374f';
+} from './puzzle-photo-recognition.js?v=be7ce20871';
 import {
   addTemplate,
   createPieceTypeSessionToken,
@@ -104,13 +113,13 @@ import {
   normalizePiecePatch,
   removeTemplatesForSource,
   suggestUnresolvedPieceTypes,
-} from './puzzle-photo-piece-types.js?v=522295374f';
+} from './puzzle-photo-piece-types.js?v=be7ce20871';
 import {
   UNREVIEWED, PuzzlePhotoReviewError,
   createReviewState, buildReviewQueue, selectReviewCandidate, confirmEmpty, confirmPiece,
   nextCandidate, previousCandidate, nextUnresolved, acceptHighConfidenceEmpty,
   undoBulkEmpty, resetReview, rescanReview, reviewProgress, confirmedSelections, buildReviewedBoard,
-} from './puzzle-photo-review.js?v=522295374f';
+} from './puzzle-photo-review.js?v=be7ce20871';
 
 // ---------------- 常數 ----------------
 const CELL = 1;
@@ -563,6 +572,8 @@ let undoCount = 0;     // 本局悔棋次數（人機模式一次連退兩著仍
 // ---------------- 殺局工作流程 ----------------
 const APP_STATE = Object.freeze({
   NORMAL_GAME: 'NORMAL_GAME',
+  GAME_RECORD_LIBRARY: 'GAME_RECORD_LIBRARY',
+  GAME_REVIEW: 'GAME_REVIEW',
   PUZZLE_EDITOR: 'PUZZLE_EDITOR',
   PUZZLE_CONFIRMED: 'PUZZLE_CONFIRMED',
   PUZZLE_RECORDING: 'PUZZLE_RECORDING',
@@ -616,7 +627,20 @@ let pieceTypeRecognitionVersion = 0;
 let selectedRecognitionKey = null;
 let recognitionUnresolvedOnly = false;
 
-const puzzleFlowActive = () => appState !== APP_STATE.NORMAL_GAME;
+const PUZZLE_STATES = new Set([
+  APP_STATE.PUZZLE_EDITOR,
+  APP_STATE.PUZZLE_CONFIRMED,
+  APP_STATE.PUZZLE_RECORDING,
+  APP_STATE.PUZZLE_RECORDED,
+  APP_STATE.PUZZLE_PRACTICING,
+  APP_STATE.PUZZLE_PRACTICE_COMPLETE,
+  APP_STATE.PUZZLE_LIBRARY,
+  APP_STATE.PUZZLE_VIEW,
+]);
+const puzzleFlowActive = () => PUZZLE_STATES.has(appState);
+const gameRecordFlowActive = () => appState === APP_STATE.GAME_RECORD_LIBRARY
+  || appState === APP_STATE.GAME_REVIEW;
+const normalGameActive = () => appState === APP_STATE.NORMAL_GAME;
 const authoringActive = () => appState === APP_STATE.PUZZLE_EDITOR
   || appState === APP_STATE.PUZZLE_CONFIRMED;
 const recorderVisible = () => appState === APP_STATE.PUZZLE_CONFIRMED
@@ -648,11 +672,16 @@ const gameRecordIdFactory = () => {
 let normalGameRecordSession = null;
 let completedGameRecordSessionId = null;
 let lastCompletedGameRecord = null;
+let gameReviewSession = null;
+let gameReviewReturnState = APP_STATE.NORMAL_GAME;
+let gameReviewInvoker = null;
+let gameReviewStored = false;
+let gameReviewLivePresentation = null;
 
 let aiWorker = null;
 let aiModule = null;   // Worker 不可用時的主執行緒後備
 try {
-  aiWorker = new Worker(new URL('./ai-worker.js?v=522295374f', import.meta.url), { type: 'module' });
+  aiWorker = new Worker(new URL('./ai-worker.js?v=be7ce20871', import.meta.url), { type: 'module' });
   aiWorker.onmessage = (e) => onAIResult(e.data);
   aiWorker.onerror = () => {
     aiWorker = null;
@@ -674,7 +703,7 @@ function requestAIMove() {
   if (aiWorker) {
     aiWorker.postMessage(payload);
   } else {
-    (aiModule ??= import('./ai.js?v=522295374f')).then(({ findBestMove }) => {
+    (aiModule ??= import('./ai.js?v=be7ce20871')).then(({ findBestMove }) => {
       setTimeout(() => {
         if (token !== aiToken) return;
         onAIResult({ token, result: findBestMove(payload.board, payload.side, payload.level, payload.recent) });
@@ -684,7 +713,7 @@ function requestAIMove() {
 }
 
 function maybeAIMove() {
-  if (puzzleFlowActive() || !isAI() || over || busy || turn !== AI_SIDE || aiThinking) return;
+  if (!normalGameActive() || !isAI() || over || busy || turn !== AI_SIDE || aiThinking) return;
   aiThinking = true;
   aiMoveStart = performance.now();
   requestAIMove();
@@ -699,7 +728,7 @@ function onAIResult({ token, result, error }) {
   setTimeout(() => {
     if (token !== aiToken) return;
     aiThinking = false;
-    if (puzzleFlowActive() || over || busy || turn !== AI_SIDE) { refreshHUD(); return; }
+    if (!normalGameActive() || over || busy || turn !== AI_SIDE) { refreshHUD(); return; }
     const { from, to } = result;
     const p = board[from.r] && board[from.r][from.c];
     const ok = p && p.side === turn &&
@@ -725,6 +754,8 @@ window.__chess = {
   get lastCompletedGameRecord() {
     return lastCompletedGameRecord ? createGameRecord(lastCompletedGameRecord) : null;
   },
+  get appState() { return appState; },
+  get gameReview() { return gameReviewSession; },
   get editorActive() { return puzzleFlowActive(); },
   get puzzleState() { return appState; },
   get editorResult() { return cloneConfirmedPosition(); },
@@ -765,6 +796,12 @@ window.__chess = {
   newGame,
   undo,
   doMove,
+  enterGameRecordLibrary,
+  openLastCompletedGameReview,
+  openStoredGameReview,
+  exitGameReview,
+  exitGameRecordFlow,
+  navigateGameReview,
   enterEditor,
   exitEditor,
   checkEditorMeshInvariant: () => checkBoardMeshInvariant(editorState?.board),
@@ -787,6 +824,27 @@ const btnNew = document.getElementById('btnNew');
 const btnEditor = document.getElementById('btnEditor');
 const btnLibrary = document.getElementById('btnLibrary');
 const modeSel = document.getElementById('modeSel');
+const btnGameRecords = document.getElementById('btnGameRecords');
+const gameRecordPanel = document.getElementById('gameRecordPanel');
+const gameRecordLibraryView = document.getElementById('gameRecordLibraryView');
+const gameRecordLibraryHeading = document.getElementById('gameRecordLibraryHeading');
+const gameRecordLibraryCount = document.getElementById('gameRecordLibraryCount');
+const gameRecordLibraryIssues = document.getElementById('gameRecordLibraryIssues');
+const gameRecordLibraryList = document.getElementById('gameRecordLibraryList');
+const gameRecordLibraryEmpty = document.getElementById('gameRecordLibraryEmpty');
+const gameReviewView = document.getElementById('gameReviewView');
+const gameReviewHeading = document.getElementById('gameReviewHeading');
+const gameReviewMeta = document.getElementById('gameReviewMeta');
+const gameReviewStatus = document.getElementById('gameReviewStatus');
+const gameReviewMoveCount = document.getElementById('gameReviewMoveCount');
+const gameReviewMoveList = document.getElementById('gameReviewMoveList');
+const btnGameReviewBack = document.getElementById('btnGameReviewBack');
+const btnGameReviewFirst = document.getElementById('btnGameReviewFirst');
+const btnGameReviewPrevious = document.getElementById('btnGameReviewPrevious');
+const btnGameReviewNext = document.getElementById('btnGameReviewNext');
+const btnGameReviewLast = document.getElementById('btnGameReviewLast');
+const btnGameReviewDelete = document.getElementById('btnGameReviewDelete');
+const btnReviewGame = document.getElementById('btnReviewGame');
 const editorPanel = document.getElementById('editorPanel');
 const editorMessage = document.getElementById('editorMessage');
 const editorToolText = document.getElementById('editorToolText');
@@ -904,7 +962,9 @@ const recognitionPalettes = [...document.querySelectorAll('.recognition-palette'
 const btnRecognitionApply = document.getElementById('btnRecognitionApply');
 
 function refreshHUD() {
-  const showSide = practiceActive()
+  const showSide = appState === APP_STATE.GAME_REVIEW
+    ? gameReviewSession.snapshot.sideToMove
+    : practiceActive()
     ? practiceState.currentSide
     : (recorderBoardActive()
       ? recorderState.currentSide
@@ -914,7 +974,13 @@ function refreshHUD() {
           ? libraryViewPuzzle.sideToMove
           : (over && winner ? winner : turn))));
   const isRed = showSide === RED;
-  if (appState === APP_STATE.PUZZLE_EDITOR) {
+  if (appState === APP_STATE.GAME_RECORD_LIBRARY) {
+    turnText.textContent = '對局紀錄';
+  } else if (appState === APP_STATE.GAME_REVIEW) {
+    turnText.textContent = gameReviewSession.atLast
+      ? `複盤・${gameRecordResultLabel(gameReviewSession.record)}`
+      : `複盤・第 ${gameReviewSession.selectedPly} / ${gameReviewSession.totalPlies} 著`;
+  } else if (appState === APP_STATE.PUZZLE_EDITOR) {
     turnText.textContent = isRed ? '編輯中・紅方先行' : '編輯中・黑方先行';
   } else if (appState === APP_STATE.PUZZLE_CONFIRMED) {
     turnText.textContent = isRed ? '局面已確認・紅方先行' : '局面已確認・黑方先行';
@@ -944,18 +1010,21 @@ function refreshHUD() {
   const col = isRed ? '#c05345' : '#8b93a1';
   turnDot.style.background = col;
   turnDot.style.boxShadow = `0 0 10px ${col}`;
-  turnBox.classList.toggle('thinking', !puzzleFlowActive() && aiThinking && !over);
+  turnBox.classList.toggle('thinking', normalGameActive() && aiThinking && !over);
   capRedEl.innerHTML = capturedBy[RED].map((p) => `<span class="chip ${p.side}">${name(p.side, p.type)}</span>`).join('') || '<em>—</em>';
   capBlackEl.innerHTML = capturedBy[BLACK].map((p) => `<span class="chip ${p.side}">${name(p.side, p.type)}</span>`).join('') || '<em>—</em>';
   btnUndo.disabled = !normalUndoAvailable();
-  btnNew.disabled = puzzleFlowActive();
-  modeSel.disabled = puzzleFlowActive();
+  btnNew.disabled = !normalGameActive();
+  modeSel.disabled = !normalGameActive();
   btnEditor.textContent = libraryActive() ? '建立殺局' : (puzzleFlowActive() ? '退出殺局' : '建立殺局');
-  btnEditor.disabled = libraryActive();
+  btnEditor.disabled = libraryActive() || gameRecordFlowActive();
   btnEditor.setAttribute('aria-pressed', String(puzzleFlowActive() && !libraryActive()));
   btnLibrary.textContent = libraryActive() ? '返回棋局' : '我的殺局';
-  btnLibrary.disabled = puzzleFlowActive() && !libraryActive();
+  btnLibrary.disabled = gameRecordFlowActive() || (puzzleFlowActive() && !libraryActive());
   btnLibrary.setAttribute('aria-pressed', String(libraryActive()));
+  btnGameRecords.textContent = gameRecordFlowActive() ? '返回棋局' : '對局紀錄';
+  btnGameRecords.disabled = puzzleFlowActive() || ((busy || aiThinking) && !gameRecordFlowActive());
+  btnGameRecords.setAttribute('aria-pressed', String(gameRecordFlowActive()));
 }
 
 function addLog(nota, side) {
@@ -2063,8 +2132,366 @@ function handleEditorBoardClick(hit) {
   );
 }
 
+const GAME_RECORD_MODE_LABELS = Object.freeze({
+  pvp: '雙人對弈',
+  easy: '人機・簡單',
+  medium: '人機・中等',
+  hard: '人機・困難',
+});
+const GAME_RECORD_REASON_LABELS = Object.freeze({
+  checkmate: '將死',
+  stalemate: '困斃',
+  'perpetual-check': '長將判負',
+  'threefold-repetition': '三次重複局面',
+  'mutual-perpetual-check': '雙方長將',
+});
+
+function gameRecordModeLabel(modeValue) {
+  return GAME_RECORD_MODE_LABELS[modeValue] || modeValue;
+}
+
+function gameRecordResultLabel(record) {
+  const reason = GAME_RECORD_REASON_LABELS[record.result.terminationReason]
+    || record.result.terminationReason;
+  if (record.result.winner === null) return `和局・${reason}`;
+  return `${record.result.winner === RED ? '紅方' : '黑方'}勝・${reason}`;
+}
+
+function formatGameRecordCompletedAt(timestamp) {
+  try {
+    const value = new Date(timestamp);
+    if (!Number.isFinite(value.getTime())) return timestamp;
+    return new Intl.DateTimeFormat(undefined, {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit',
+    }).format(value);
+  } catch {
+    return timestamp;
+  }
+}
+
+function appendGameReviewMeta(label, value) {
+  const term = document.createElement('dt');
+  const description = document.createElement('dd');
+  term.textContent = label;
+  description.textContent = value;
+  gameReviewMeta.append(term, description);
+}
+
+function createGameRecordCard(record) {
+  const card = document.createElement('article');
+  card.className = 'game-record-card';
+  card.dataset.gameRecordId = record.id;
+
+  const heading = document.createElement('div');
+  heading.className = 'game-record-card-heading';
+  const result = document.createElement('strong');
+  result.textContent = gameRecordResultLabel(record);
+  const completed = document.createElement('time');
+  completed.dateTime = record.completedAt;
+  completed.textContent = formatGameRecordCompletedAt(record.completedAt);
+  heading.append(result, completed);
+
+  const meta = document.createElement('p');
+  meta.className = 'game-record-card-meta';
+  meta.textContent = `${gameRecordModeLabel(record.mode)}・${record.moves.length} 著`;
+
+  const actions = document.createElement('div');
+  actions.className = 'game-record-card-actions';
+  const open = document.createElement('button');
+  open.type = 'button';
+  open.dataset.gameRecordAction = 'open';
+  open.textContent = '開啟複盤';
+  open.setAttribute('aria-label', `開啟 ${completed.textContent} 的對局複盤`);
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'danger';
+  remove.dataset.gameRecordAction = 'delete';
+  remove.textContent = '刪除';
+  remove.setAttribute('aria-label', `刪除 ${completed.textContent} 的對局紀錄`);
+  actions.append(open, remove);
+  card.append(heading, meta, actions);
+  return card;
+}
+
+function renderGameRecordLibrary() {
+  const loaded = createGameRecordLibraryView(gameRecordStore.loadAll());
+  const readFailed = loaded.status === 'unavailable';
+  gameRecordLibraryCount.textContent = `${loaded.records.length} 局`;
+  gameRecordLibraryIssues.classList.toggle('hidden', loaded.issues.length === 0);
+  gameRecordLibraryIssues.textContent = loaded.issues.length === 0
+    ? ''
+    : readFailed
+      ? '無法讀取對局紀錄；正常對弈與本局的記憶體複盤仍可使用，儲存內容未被改寫。'
+      : `有 ${loaded.issues.length} 筆資料無法讀取；有效對局仍可複盤，儲存內容不會被自動修復。`;
+  gameRecordLibraryList.replaceChildren(...loaded.records.map(createGameRecordCard));
+  gameRecordLibraryEmpty.classList.toggle('hidden', loaded.records.length > 0);
+  gameRecordLibraryEmpty.textContent = readFailed
+    ? '目前無法載入已儲存的對局紀錄。'
+    : '尚無可複盤的已完成對局。';
+  return loaded;
+}
+
+function pauseLiveGameForGameRecords(invoker) {
+  if (!normalGameActive() || busy) return false;
+  gameReviewLivePresentation = {
+    selected: selected ? { ...selected } : null,
+    legal: legal.map((move) => ({ ...move })),
+    overlayVisible: !overlay.classList.contains('hidden'),
+    bannerVisible: !banner.classList.contains('hidden'),
+  };
+  gameReviewInvoker = invoker || document.activeElement;
+  aiToken++;
+  aiThinking = false;
+  tweens.length = 0;
+  stopConfetti();
+  overlay.classList.add('hidden');
+  banner.classList.add('hidden');
+  clearSelection();
+  lastFromMark.visible = false;
+  lastToMark.visible = false;
+  return true;
+}
+
+function restoreLiveGamePresentation() {
+  const presentation = gameReviewLivePresentation;
+  rebuildPieceMeshes(board, false);
+  syncLastMoveMark();
+  if (presentation?.selected) {
+    selected = { ...presentation.selected };
+    legal = presentation.legal.map((move) => ({ ...move }));
+    showMoveDots(legal, board);
+  }
+  overlay.classList.toggle('hidden', !(presentation?.overlayVisible && over));
+  banner.classList.toggle('hidden', !presentation?.bannerVisible);
+  gameReviewLivePresentation = null;
+}
+
+function enterGameRecordLibrary(invoker = btnGameRecords) {
+  if (!normalGameActive()) return false;
+  if (busy) {
+    toast('請等待目前棋步動畫完成後再開啟對局紀錄。');
+    return false;
+  }
+  if (!pauseLiveGameForGameRecords(invoker)) return false;
+  appState = APP_STATE.GAME_RECORD_LIBRARY;
+  gameReviewSession = null;
+  gameReviewStored = false;
+  gameReviewReturnState = APP_STATE.NORMAL_GAME;
+  appEl.classList.add('game-record-active');
+  gameRecordPanel.classList.remove('hidden');
+  gameRecordLibraryView.classList.remove('hidden');
+  gameReviewView.classList.add('hidden');
+  renderGameRecordLibrary();
+  refreshHUD();
+  gameRecordLibraryHeading.focus({ preventScroll: true });
+  return true;
+}
+
+function showGameRecordLibrary() {
+  if (!gameRecordFlowActive()) return;
+  appState = APP_STATE.GAME_RECORD_LIBRARY;
+  gameReviewSession = null;
+  gameReviewStored = false;
+  gameRecordLibraryView.classList.remove('hidden');
+  gameReviewView.classList.add('hidden');
+  rebuildPieceMeshes(board, false);
+  syncLastMoveMark();
+  renderGameRecordLibrary();
+  refreshHUD();
+  gameRecordLibraryHeading.focus({ preventScroll: true });
+}
+
+function syncGameReviewMoveMark() {
+  const move = gameReviewSession?.currentMove;
+  lastFromMark.visible = lastToMark.visible = !!move;
+  if (!move) return;
+  const from = to3D(move.from.r, move.from.c);
+  const to = to3D(move.to.r, move.to.c);
+  lastFromMark.position.set(from.x, 0.012, from.z);
+  lastToMark.position.set(to.x, 0.012, to.z);
+}
+
+function gameReviewAnnouncement() {
+  const review = gameReviewSession;
+  const move = review.currentMove ? `上一著：${review.currentMove.notation}。` : '開局位置。';
+  if (review.atLast) {
+    return `第 ${review.selectedPly} / ${review.totalPlies} 著。${move}終局：${gameRecordResultLabel(review.record)}。`;
+  }
+  const side = review.snapshot.sideToMove === RED ? '紅方' : '黑方';
+  return `第 ${review.selectedPly} / ${review.totalPlies} 著。${move}${side}行棋。`;
+}
+
+function renderGameReview() {
+  if (!gameReviewSession) return;
+  const review = gameReviewSession;
+  gameReviewMeta.replaceChildren();
+  appendGameReviewMeta('模式', gameRecordModeLabel(review.record.mode));
+  appendGameReviewMeta('完成時間', formatGameRecordCompletedAt(review.record.completedAt));
+  appendGameReviewMeta('結果', gameRecordResultLabel(review.record));
+  appendGameReviewMeta('進度', `${review.selectedPly} / ${review.totalPlies}`);
+  gameReviewStatus.textContent = gameReviewAnnouncement();
+  gameReviewMoveCount.textContent = `${review.totalPlies} 著`;
+  gameReviewMoveList.replaceChildren(...review.moves.map((move) => {
+    const item = document.createElement('li');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'game-review-move';
+    button.dataset.reviewPly = String(move.ply);
+    button.setAttribute('aria-label', `第 ${move.ply} 著，${move.side === RED ? '紅方' : '黑方'}，${move.notation}`);
+    if (move.ply === review.selectedPly) button.setAttribute('aria-current', 'step');
+    const ply = document.createElement('span');
+    ply.className = 'ply';
+    ply.textContent = String(move.ply);
+    const side = document.createElement('span');
+    side.className = `side ${move.side}`;
+    side.textContent = move.side === RED ? '紅' : '黑';
+    const notationText = document.createElement('span');
+    notationText.textContent = move.notation;
+    button.append(ply, side, notationText);
+    item.append(button);
+    return item;
+  }));
+  btnGameReviewFirst.disabled = review.atFirst;
+  btnGameReviewPrevious.disabled = review.atFirst;
+  btnGameReviewNext.disabled = review.atLast;
+  btnGameReviewLast.disabled = review.atLast;
+  btnGameReviewBack.classList.toggle('hidden', gameReviewReturnState !== APP_STATE.GAME_RECORD_LIBRARY);
+  btnGameReviewDelete.classList.toggle('hidden', !gameReviewStored);
+  rebuildPieceMeshes(review.snapshot.board, false);
+  syncGameReviewMoveMark();
+  const invariant = checkBoardMeshInvariant(review.snapshot.board);
+  if (!invariant.ok) throw new Error(`Game review board/mesh invariant failed: ${invariant.errors.join(' ')}`);
+  refreshHUD();
+  const selectedMove = gameReviewMoveList.querySelector('[aria-current="step"]');
+  if (selectedMove) {
+    const listRect = gameReviewMoveList.getBoundingClientRect();
+    const moveRect = selectedMove.getBoundingClientRect();
+    if (moveRect.top < listRect.top) gameReviewMoveList.scrollTop += moveRect.top - listRect.top;
+    else if (moveRect.bottom > listRect.bottom) {
+      gameReviewMoveList.scrollTop += moveRect.bottom - listRect.bottom;
+    }
+  }
+}
+
+function openGameReview(record, { returnState, invoker, stored = false } = {}) {
+  let opened;
+  try {
+    opened = createGameReview(record);
+  } catch {
+    toast('此筆對局無法建立複盤。');
+    return false;
+  }
+  const sourceState = appState;
+  if (sourceState === APP_STATE.NORMAL_GAME && !pauseLiveGameForGameRecords(invoker)) return false;
+  if (sourceState !== APP_STATE.NORMAL_GAME
+    && sourceState !== APP_STATE.GAME_RECORD_LIBRARY
+    && sourceState !== APP_STATE.GAME_REVIEW) return false;
+  gameReviewReturnState = returnState
+    || (sourceState === APP_STATE.GAME_RECORD_LIBRARY ? APP_STATE.GAME_RECORD_LIBRARY : APP_STATE.NORMAL_GAME);
+  gameReviewSession = opened;
+  gameReviewStored = stored;
+  appState = APP_STATE.GAME_REVIEW;
+  appEl.classList.add('game-record-active');
+  gameRecordPanel.classList.remove('hidden');
+  gameRecordLibraryView.classList.add('hidden');
+  gameReviewView.classList.remove('hidden');
+  renderGameReview();
+  gameReviewHeading.focus({ preventScroll: true });
+  return true;
+}
+
+function openLastCompletedGameReview(invoker = btnReviewGame) {
+  if (!lastCompletedGameRecord) {
+    toast('目前沒有可複盤的已完成對局。');
+    return false;
+  }
+  return openGameReview(lastCompletedGameRecord, {
+    returnState: APP_STATE.NORMAL_GAME,
+    invoker,
+    stored: false,
+  });
+}
+
+function openStoredGameReview(id, invoker) {
+  const record = gameRecordStore.getGameRecord(id);
+  if (!record) {
+    toast('找不到這筆對局，可能已被刪除或目前無法讀取。');
+    if (appState === APP_STATE.GAME_RECORD_LIBRARY) renderGameRecordLibrary();
+    return false;
+  }
+  return openGameReview(record, {
+    returnState: APP_STATE.GAME_RECORD_LIBRARY,
+    invoker,
+    stored: true,
+  });
+}
+
+function navigateGameReview(target) {
+  if (appState !== APP_STATE.GAME_REVIEW || !gameReviewSession) return false;
+  if (target === 'first') gameReviewSession = firstGameReviewPly(gameReviewSession);
+  else if (target === 'previous') gameReviewSession = previousGameReviewPly(gameReviewSession);
+  else if (target === 'next') gameReviewSession = nextGameReviewPly(gameReviewSession);
+  else if (target === 'last') gameReviewSession = lastGameReviewPly(gameReviewSession);
+  else if (Number.isInteger(target)) gameReviewSession = selectGameReviewPly(gameReviewSession, target);
+  else return false;
+  renderGameReview();
+  return true;
+}
+
+function deleteGameRecordFromLibrary(id) {
+  if (!window.confirm('確定要刪除這筆已完成對局嗎？刪除後無法復原。')) return false;
+  try {
+    const deleted = gameRecordStore.deleteGameRecord(id);
+    if (!deleted) {
+      toast('找不到這筆對局，可能已被刪除。');
+      if (appState === APP_STATE.GAME_RECORD_LIBRARY) renderGameRecordLibrary();
+      return false;
+    }
+    if (gameReviewSession?.record.id === id) {
+      gameReviewStored = false;
+      btnGameReviewDelete.classList.add('hidden');
+      toast('紀錄已刪除；目前的唯讀複盤仍可繼續。');
+    } else {
+      toast('對局紀錄已刪除。');
+      renderGameRecordLibrary();
+    }
+    return true;
+  } catch {
+    toast('無法刪除對局紀錄；儲存內容未被改寫。');
+    return false;
+  }
+}
+
+function exitGameReview() {
+  if (appState !== APP_STATE.GAME_REVIEW) return;
+  if (gameReviewReturnState === APP_STATE.GAME_RECORD_LIBRARY) showGameRecordLibrary();
+  else exitGameRecordFlow();
+}
+
+function exitGameRecordFlow() {
+  if (!gameRecordFlowActive()) return;
+  const invoker = gameReviewInvoker;
+  aiToken++;
+  aiThinking = false;
+  tweens.length = 0;
+  appState = APP_STATE.NORMAL_GAME;
+  gameReviewSession = null;
+  gameReviewStored = false;
+  gameReviewReturnState = APP_STATE.NORMAL_GAME;
+  appEl.classList.remove('game-record-active');
+  gameRecordPanel.classList.add('hidden');
+  gameRecordLibraryView.classList.remove('hidden');
+  gameReviewView.classList.add('hidden');
+  restoreLiveGamePresentation();
+  refreshHUD();
+  maybeAIMove();
+  invoker?.focus?.({ preventScroll: true });
+  gameReviewInvoker = null;
+}
+
 function enterEditor() {
-  if (puzzleFlowActive()) return true;
+  if (!normalGameActive()) return true;
   if (busy) {
     toast('請等待目前棋步動畫完成後再進入編輯。');
     return false;
@@ -2750,7 +3177,7 @@ function openLibraryPuzzle(id) {
 }
 
 function enterLibrary(preferredId = null) {
-  if (busy || (puzzleFlowActive() && appState !== APP_STATE.PUZZLE_RECORDED)) return;
+  if (busy || (!normalGameActive() && appState !== APP_STATE.PUZZLE_RECORDED)) return;
   aiToken++;
   practiceToken++;
   aiThinking = false;
@@ -3237,6 +3664,7 @@ function handlePracticeBoardClick(hit) {
 }
 
 function newGame() {
+  if (!normalGameActive()) return;
   tweens.length = 0;
   aiToken++;
   aiThinking = false;
@@ -3301,6 +3729,7 @@ function animateCapture(m, done) {
 }
 
 function doMove(from, to) {
+  if (!normalGameActive()) return;
   const gameRecordSessionId = normalGameRecordSession?.id ?? null;
   const p = pieceAt(from.r, from.c);
   const cap = pieceAt(to.r, to.c);
@@ -3379,7 +3808,7 @@ function finishMove(nota, captured, gameRecordSessionId = normalGameRecordSessio
     refreshHUD();
     const token = aiToken;
     setTimeout(() => {
-      if (token === aiToken && !puzzleFlowActive() && over) showGameOver(endReason);
+      if (token === aiToken && normalGameActive() && over) showGameOver(endReason);
     }, endReason === '將死' ? 900 : 300);
   }
   refreshHUD();
@@ -3486,7 +3915,7 @@ function undoPly() {
 }
 
 function normalUndoAvailable() {
-  return !puzzleFlowActive() && history.length > 0 && !busy && !aiThinking && !over;
+  return normalGameActive() && history.length > 0 && !busy && !aiThinking && !over;
 }
 
 function undo() {
@@ -3533,6 +3962,10 @@ function pick(event) {
 }
 
 renderer.domElement.addEventListener('pointermove', (e) => {
+  if (gameRecordFlowActive()) {
+    renderer.domElement.style.cursor = viewLocked ? 'default' : 'grab';
+    return;
+  }
   const hit = pick(e);
   renderer.domElement.style.cursor = hit ? 'pointer' : (viewLocked ? 'default' : 'grab');
 });
@@ -3549,6 +3982,7 @@ renderer.domElement.addEventListener('click', (e) => {
     return;
   }
   downXY = null;
+  if (gameRecordFlowActive()) return;
   const hit = pick(e);
   if (appState === APP_STATE.PUZZLE_PRACTICING) {
     if (!busy && practiceState.currentSide === practiceState.practiceSide) handlePracticeBoardClick(hit);
@@ -3692,6 +4126,7 @@ function showGameOver(endReason) {
   ovCard.classList.toggle('win', celebrate);
   ovCard.classList.toggle('lose', !celebrate && !draw);
   btnShare.style.display = celebrate ? '' : 'none';
+  btnReviewGame.classList.toggle('hidden', !lastCompletedGameRecord);
   overlay.classList.remove('hidden');
   if (celebrate) {
     sfx.win();
@@ -3910,6 +4345,7 @@ async function shareResult() {
   }
 }
 btnShare.addEventListener('click', shareResult);
+btnReviewGame.addEventListener('click', () => openLastCompletedGameReview(btnReviewGame));
 
 // ---------------- 按鈕 ----------------
 mode = modeSel.value;
@@ -4035,6 +4471,34 @@ btnLibrary.addEventListener('click', () => {
   if (libraryActive()) exitEditor();
   else enterLibrary();
 });
+btnGameRecords.addEventListener('click', () => {
+  if (gameRecordFlowActive()) exitGameRecordFlow();
+  else enterGameRecordLibrary(btnGameRecords);
+  closeHudMenu();
+});
+document.getElementById('btnGameRecordLibraryExit').addEventListener('click', exitGameRecordFlow);
+btnGameReviewBack.addEventListener('click', showGameRecordLibrary);
+document.getElementById('btnGameReviewExit').addEventListener('click', exitGameRecordFlow);
+btnGameReviewFirst.addEventListener('click', () => navigateGameReview('first'));
+btnGameReviewPrevious.addEventListener('click', () => navigateGameReview('previous'));
+btnGameReviewNext.addEventListener('click', () => navigateGameReview('next'));
+btnGameReviewLast.addEventListener('click', () => navigateGameReview('last'));
+btnGameReviewDelete.addEventListener('click', () => {
+  if (gameReviewSession) deleteGameRecordFromLibrary(gameReviewSession.record.id);
+});
+gameRecordLibraryList.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-game-record-action]');
+  const card = button?.closest('[data-game-record-id]');
+  if (!button || !card) return;
+  const { gameRecordId } = card.dataset;
+  if (button.dataset.gameRecordAction === 'open') openStoredGameReview(gameRecordId, button);
+  else if (button.dataset.gameRecordAction === 'delete') deleteGameRecordFromLibrary(gameRecordId);
+});
+gameReviewMoveList.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-review-ply]');
+  if (!button) return;
+  navigateGameReview(Number(button.dataset.reviewPly));
+});
 editorPieceButtons.forEach((button) => {
   button.addEventListener('click', () => {
     setEditorTool({
@@ -4156,7 +4620,27 @@ btnMore.addEventListener('click', () => {
 document.addEventListener('pointerdown', (e) => {
   if (hudMore.classList.contains('open') && !hudMore.contains(e.target) && !btnMore.contains(e.target)) closeHudMenu();
 });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeHudMenu(); });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    if (appState === APP_STATE.GAME_REVIEW) exitGameReview();
+    else if (appState === APP_STATE.GAME_RECORD_LIBRARY) exitGameRecordFlow();
+    closeHudMenu();
+    return;
+  }
+  if (appState !== APP_STATE.GAME_REVIEW) return;
+  const target = e.target;
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement
+    || target instanceof HTMLSelectElement || target?.isContentEditable) return;
+  const action = {
+    ArrowLeft: 'previous',
+    ArrowRight: 'next',
+    Home: 'first',
+    End: 'last',
+  }[e.key];
+  if (!action) return;
+  e.preventDefault();
+  navigateGameReview(action);
+});
 btnHelp.addEventListener('click', () => {
   const on = document.getElementById('left').classList.toggle('show-help');
   btnHelp.setAttribute('aria-pressed', String(on));
