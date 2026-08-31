@@ -105,6 +105,7 @@ node test.mjs     # 規則引擎單元測試（傌象仕走法、塞象眼、蹩
 node fuzz.mjs     # 3000 局隨機模糊測試；終局另驗證 GameRecord 開局／中局／終局重播等價
 node ai-test.mjs  # AI 引擎測試（合法性、吃子、解將、一步殺、效能）
 node game-record-test.mjs # GameRecord v1 嚴格驗證、不可變快照、逐著重播與五種終局語意
+node game-record-store-test.mjs # 獨立 GameRecord 儲存、冪等、100 局保留、損毀與失敗隔離
 node puzzle-domain-test.mjs
 node puzzle-editor-test.mjs
 node puzzle-recorder-test.mjs
@@ -128,6 +129,7 @@ git diff --check
 所有局面共用 `game.js` 的 10×9 `null | { type, side }` 棋盤與走棋規則，AI 演算法／難度未因殺局功能改變。
 
 - `game-record.js`：純邏輯 GameRecord v1 邊界；只接受一份初始盤面、初始行棋方、座標著法、模式、標準 UTC 時間與終局結果。逐著以 `game.js` 重建吃子、棋譜記法、局面雜湊、重複局面與終局，不含儲存、UI、AI 分析或每著盤面快照。
+- `game-record-store.js`：使用獨立 `chinese-chess-training:game-records:v1` key 的 fail-closed 本機儲存，最多保留 100 局；同 ID 同內容冪等、不同內容拒絕覆寫。正常棋局只在終局判定時保存一次，終局後不可再用一般悔棋重開。
 - `puzzle-domain.js`：資料驗證、逐著重播、終局將死檢查。
 - `puzzle-editor.js`、`puzzle-recorder.js`、`puzzle-practice.js`：獨立且防禦性複製的編輯、錄製、練習狀態。
 - `puzzle-store.js`：版本化本機儲存與資料白名單。
@@ -141,6 +143,7 @@ index.html    页面布局与 UI（状态、模式選單、吃子栏、棋谱、
 css/style.css   深色棋盘室风格样式
 game.js      纯逻辑规则引擎（不依赖 three.js）
 game-record.js  嚴格且不可變的 GameRecord v1 驗證與確定性重播（無儲存／UI）
+game-record-store.js  獨立、版本化且最多保留 100 局的已完成棋局本機儲存
 ai.js       AI 搜索引擎（negamax + alpha-beta + 靜態搜索 + 位置評估）
 ai-worker.js   AI 的 Web Worker 包裝（搜索不卡 UI）
 main.js      Three.js 场景、棋盘/棋子程序化贴图、交互、动画、人機對弈流程

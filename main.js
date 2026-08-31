@@ -7,7 +7,9 @@ import {
   ROWS, COLS, RED, BLACK,
   initialBoard, legalMoves, applyMove, inCheck,
   hasAnyLegalMove, name, notation, hashBoard, repetitionVerdict,
-} from './game.js?v=35524d4c3d';
+} from './game.js?v=522295374f';
+import { createGameRecord } from './game-record.js?v=522295374f';
+import { createGameRecordStore } from './game-record-store.js?v=522295374f';
 import {
   PuzzleEditorError,
   createEditorState,
@@ -17,7 +19,7 @@ import {
   setEditorSideToMove,
   confirmAuthoredPosition,
   exportAuthoredPosition,
-} from './puzzle-editor.js?v=35524d4c3d';
+} from './puzzle-editor.js?v=522295374f';
 import {
   PuzzleRecorderError,
   createRecorder,
@@ -27,7 +29,7 @@ import {
   finishRecording,
   exportRecorderBoard,
   exportRecordedResult,
-} from './puzzle-recorder.js?v=35524d4c3d';
+} from './puzzle-recorder.js?v=522295374f';
 import {
   PuzzlePracticeError,
   PRACTICE_HINT_MAX_LEVEL,
@@ -37,12 +39,12 @@ import {
   derivePracticeHint,
   restartPractice,
   exportPracticeSnapshot,
-} from './puzzle-practice.js?v=35524d4c3d';
-import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=35524d4c3d';
+} from './puzzle-practice.js?v=522295374f';
+import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=522295374f';
 import {
   PracticeAnalyticsError,
   createPracticeAnalyticsStore,
-} from './puzzle-analytics.js?v=35524d4c3d';
+} from './puzzle-analytics.js?v=522295374f';
 import {
   PUZZLE_TRANSFER_FORMAT,
   PUZZLE_TRANSFER_SCHEMA_VERSION,
@@ -50,7 +52,7 @@ import {
   PuzzleTransferError,
   serializePuzzleExport,
   parsePuzzleImport,
-} from './puzzle-transfer.js?v=35524d4c3d';
+} from './puzzle-transfer.js?v=522295374f';
 import {
   PHOTO_MAX_ZOOM,
   PHOTO_MIN_ZOOM,
@@ -64,7 +66,7 @@ import {
   validatePhotoMetadata,
   zoomPhotoIn,
   zoomPhotoOut,
-} from './puzzle-photo.js?v=35524d4c3d';
+} from './puzzle-photo.js?v=522295374f';
 import {
   CALIBRATION_CANONICAL_HEIGHT,
   CALIBRATION_CANONICAL_WIDTH,
@@ -80,7 +82,7 @@ import {
   setCorner,
   transformPoint,
   validateQuadrilateral,
-} from './puzzle-photo-calibration.js?v=35524d4c3d';
+} from './puzzle-photo-calibration.js?v=522295374f';
 import {
   PuzzlePhotoRecognitionError,
   RECOGNITION_OCCUPANCY_EMPTY,
@@ -92,7 +94,7 @@ import {
   isRecognitionTokenCurrent,
   recognizeIntersections,
   selectionKey,
-} from './puzzle-photo-recognition.js?v=35524d4c3d';
+} from './puzzle-photo-recognition.js?v=522295374f';
 import {
   addTemplate,
   createPieceTypeSessionToken,
@@ -102,13 +104,13 @@ import {
   normalizePiecePatch,
   removeTemplatesForSource,
   suggestUnresolvedPieceTypes,
-} from './puzzle-photo-piece-types.js?v=35524d4c3d';
+} from './puzzle-photo-piece-types.js?v=522295374f';
 import {
   UNREVIEWED, PuzzlePhotoReviewError,
   createReviewState, buildReviewQueue, selectReviewCandidate, confirmEmpty, confirmPiece,
   nextCandidate, previousCandidate, nextUnresolved, acceptHighConfidenceEmpty,
   undoBulkEmpty, resetReview, rescanReview, reviewProgress, confirmedSelections, buildReviewedBoard,
-} from './puzzle-photo-review.js?v=35524d4c3d';
+} from './puzzle-photo-review.js?v=522295374f';
 
 // ---------------- 常數 ----------------
 const CELL = 1;
@@ -587,6 +589,7 @@ const browserStorage = {
   getItem: (key) => window.localStorage.getItem(key),
   setItem: (key, value) => window.localStorage.setItem(key, value),
 };
+const gameRecordStore = createGameRecordStore({ storage: browserStorage });
 const puzzleStore = createPuzzleStore({ storage: browserStorage });
 const practiceAnalyticsStore = createPracticeAnalyticsStore({ storage: browserStorage });
 let libraryViewPuzzle = null;
@@ -637,10 +640,19 @@ let aiThinking = false;
 let aiToken = 0;       // 用於作廢過期的 AI 計算（開新局、悔棋後）
 let aiMoveStart = 0;
 
+const gameRecordNow = () => new Date().toISOString();
+const gameRecordIdFactory = () => {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return `game-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+};
+let normalGameRecordSession = null;
+let completedGameRecordSessionId = null;
+let lastCompletedGameRecord = null;
+
 let aiWorker = null;
 let aiModule = null;   // Worker 不可用時的主執行緒後備
 try {
-  aiWorker = new Worker(new URL('./ai-worker.js?v=35524d4c3d', import.meta.url), { type: 'module' });
+  aiWorker = new Worker(new URL('./ai-worker.js?v=522295374f', import.meta.url), { type: 'module' });
   aiWorker.onmessage = (e) => onAIResult(e.data);
   aiWorker.onerror = () => {
     aiWorker = null;
@@ -662,7 +674,7 @@ function requestAIMove() {
   if (aiWorker) {
     aiWorker.postMessage(payload);
   } else {
-    (aiModule ??= import('./ai.js?v=35524d4c3d')).then(({ findBestMove }) => {
+    (aiModule ??= import('./ai.js?v=522295374f')).then(({ findBestMove }) => {
       setTimeout(() => {
         if (token !== aiToken) return;
         onAIResult({ token, result: findBestMove(payload.board, payload.side, payload.level, payload.recent) });
@@ -707,6 +719,12 @@ window.__chess = {
   get busy() { return busy; },
   get mode() { return mode; },
   get aiThinking() { return aiThinking; },
+  get normalGameRecordSession() {
+    return normalGameRecordSession ? structuredClone(normalGameRecordSession) : null;
+  },
+  get lastCompletedGameRecord() {
+    return lastCompletedGameRecord ? createGameRecord(lastCompletedGameRecord) : null;
+  },
   get editorActive() { return puzzleFlowActive(); },
   get puzzleState() { return appState; },
   get editorResult() { return cloneConfirmedPosition(); },
@@ -929,7 +947,7 @@ function refreshHUD() {
   turnBox.classList.toggle('thinking', !puzzleFlowActive() && aiThinking && !over);
   capRedEl.innerHTML = capturedBy[RED].map((p) => `<span class="chip ${p.side}">${name(p.side, p.type)}</span>`).join('') || '<em>—</em>';
   capBlackEl.innerHTML = capturedBy[BLACK].map((p) => `<span class="chip ${p.side}">${name(p.side, p.type)}</span>`).join('') || '<em>—</em>';
-  btnUndo.disabled = puzzleFlowActive() || history.length === 0 || busy || aiThinking;
+  btnUndo.disabled = !normalUndoAvailable();
   btnNew.disabled = puzzleFlowActive();
   modeSel.disabled = puzzleFlowActive();
   btnEditor.textContent = libraryActive() ? '建立殺局' : (puzzleFlowActive() ? '退出殺局' : '建立殺局');
@@ -3231,6 +3249,7 @@ function newGame() {
   turn = RED;
   posHistory = [hashBoard(board)];
   repHistory = [{ key: hashBoard(board) + '|' + turn, mover: null, check: false }];
+  beginNormalGameRecordSession();
   gameStartTime = Date.now();
   undoCount = 0;
   stopConfetti();
@@ -3252,6 +3271,7 @@ function resetTo(customBoard, turnSide) {
   if (turnSide) turn = turnSide;
   posHistory = [hashBoard(board)];
   repHistory = [{ key: hashBoard(board) + '|' + turn, mover: null, check: false }];
+  beginNormalGameRecordSession();
   history = [];
   capturedBy = { [RED]: [], [BLACK]: [] };
   over = false;
@@ -3281,6 +3301,7 @@ function animateCapture(m, done) {
 }
 
 function doMove(from, to) {
+  const gameRecordSessionId = normalGameRecordSession?.id ?? null;
   const p = pieceAt(from.r, from.c);
   const cap = pieceAt(to.r, to.c);
   const captured = board[to.r][to.c];
@@ -3308,15 +3329,16 @@ function doMove(from, to) {
         releasePieceMesh(cap);
         const i = pieces.indexOf(cap);
         if (i >= 0) pieces.splice(i, 1);
-        finishMove(nota, captured);
+        finishMove(nota, captured, gameRecordSessionId);
       });
     } else {
-      finishMove(nota, captured);
+      finishMove(nota, captured, gameRecordSessionId);
     }
   });
 }
 
-function finishMove(nota, captured) {
+function finishMove(nota, captured, gameRecordSessionId = normalGameRecordSession?.id) {
+  if (over || gameRecordSessionId !== normalGameRecordSession?.id) return;
   const invariant = checkBoardMeshInvariant(board);
   if (!invariant.ok) throw new Error(`Normal board/mesh invariant failed: ${invariant.errors.join(' ')}`);
   if (captured) capturedBy[turn].push(captured);
@@ -3353,6 +3375,7 @@ function finishMove(nota, captured) {
     showBanner();
   }
   if (over) {
+    finalizeNormalGameRecord(endReason);
     refreshHUD();
     const token = aiToken;
     setTimeout(() => {
@@ -3361,6 +3384,77 @@ function finishMove(nota, captured) {
   }
   refreshHUD();
   maybeAIMove();
+}
+
+function cloneNormalGameRecordBoard(source) {
+  return Object.freeze(source.map((row) => Object.freeze(row.map((piece) => (
+    piece === null ? null : Object.freeze({ type: piece.type, side: piece.side })
+  )))));
+}
+
+function beginNormalGameRecordSession() {
+  const createdAt = gameRecordNow();
+  normalGameRecordSession = Object.freeze({
+    id: gameRecordIdFactory(),
+    createdAt,
+    initialPosition: Object.freeze({
+      board: cloneNormalGameRecordBoard(board),
+      sideToMove: turn,
+    }),
+    mode,
+  });
+  completedGameRecordSessionId = null;
+}
+
+function normalGameRecordTerminationReason(endReason) {
+  if (endReason === '將死') return 'checkmate';
+  if (endReason === '困斃') return 'stalemate';
+  if (endReason === '長將') return 'perpetual-check';
+  if (endReason === '三次重複局面') return 'threefold-repetition';
+  if (endReason === '雙方長將') return 'mutual-perpetual-check';
+  throw new Error(`Unsupported normal-game termination reason: ${endReason}`);
+}
+
+function finalizeNormalGameRecord(endReason) {
+  const session = normalGameRecordSession;
+  if (!over || !session || completedGameRecordSessionId === session.id) {
+    return lastCompletedGameRecord;
+  }
+  const observedCompletedAt = gameRecordNow();
+  const completedAt = observedCompletedAt < session.createdAt
+    ? session.createdAt
+    : observedCompletedAt;
+  let record;
+  try {
+    record = createGameRecord({
+      schemaVersion: 1,
+      id: session.id,
+      createdAt: session.createdAt,
+      completedAt,
+      initialPosition: session.initialPosition,
+      moves: history.map(({ from, to }) => ({
+        from: { r: from.r, c: from.c },
+        to: { r: to.r, c: to.c },
+      })),
+      mode: session.mode,
+      result: {
+        winner,
+        terminationReason: normalGameRecordTerminationReason(endReason),
+      },
+    });
+  } catch {
+    return null;
+  }
+
+  completedGameRecordSessionId = session.id;
+  lastCompletedGameRecord = record;
+  try {
+    gameRecordStore.saveGameRecord(record);
+  } catch {
+    // Persistence is secondary. The canonical terminal state and immutable
+    // in-memory record remain valid, with no retry loop.
+  }
+  return record;
 }
 
 function showBanner() {
@@ -3391,15 +3485,18 @@ function undoPly() {
   if (!invariant.ok) throw new Error(`Undo board/mesh invariant failed: ${invariant.errors.join(' ')}`);
 }
 
+function normalUndoAvailable() {
+  return !puzzleFlowActive() && history.length > 0 && !busy && !aiThinking && !over;
+}
+
 function undo() {
-  if (puzzleFlowActive() || !history.length || busy || aiThinking) return;
+  if (!normalUndoAvailable()) return;
   undoCount++;
   aiToken++; // 作廢進行中的 AI 計算
   undoPly();
   // 人機模式：連 AI 那一步一起退，回到玩家回合
   if (isAI() && turn === AI_SIDE && history.length) undoPly();
   addLog('悔棋', turn);
-  if (over) { over = false; winner = null; }
   stopConfetti();
   overlay.classList.add('hidden');
   clearSelection();

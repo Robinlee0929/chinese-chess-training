@@ -12,6 +12,8 @@ import * as pieceTypes from './puzzle-photo-piece-types.js';
 import * as transfer from './puzzle-transfer.js';
 import * as analytics from './puzzle-analytics.js';
 import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js';
+import { createGameRecord, validateGameRecord } from './game-record.js';
+import { GameRecordStoreError, createGameRecordStore } from './game-record-store.js';
 
 // Execute the real UI lifecycle functions with a deterministic clock and minimal
 // rendering/DOM doubles. No browser globals are injected and no UI logic is copied.
@@ -55,7 +57,7 @@ function vector(x = 0, y = 0, z = 0) {
     clone() { return vector(this.x, this.y, this.z); },
     lerpVectors(a, b, k) { this.set(a.x + (b.x - a.x) * k, a.y + (b.y - a.y) * k, a.z + (b.z - a.z) * k); } };
 }
-function harness() {
+function harness(options = {}) {
   let analyticsSerialized = null;
   let analyticsWrites = 0;
   let analyticsTick = 0;
@@ -69,17 +71,55 @@ function harness() {
     storage: analyticsStorage,
     now: () => new Date(Date.UTC(2026, 7, 30, 15, 0, analyticsTick++)).toISOString(),
   });
+  let gameRecordSerialized = options.gameRecordSerialized ?? null;
+  let gameRecordReads = 0;
+  let gameRecordWrites = 0;
+  const gameRecordStorage = {
+    getItem() {
+      gameRecordReads++;
+      if (options.gameRecordReadError) throw options.gameRecordReadError;
+      return gameRecordSerialized;
+    },
+    setItem(_key, value) {
+      gameRecordWrites++;
+      if (options.gameRecordWriteError) throw options.gameRecordWriteError;
+      gameRecordSerialized = value;
+    },
+    get reads() { return gameRecordReads; },
+    get writes() { return gameRecordWrites; },
+    get serialized() { return gameRecordSerialized; },
+  };
+  const gameRecordStore = createGameRecordStore({ storage: gameRecordStorage });
+  let gameRecordTimeIndex = 0;
+  const gameRecordTimes = options.gameRecordTimes ?? Array.from(
+    { length: 20 },
+    (_, index) => new Date(Date.UTC(2026, 7, 31, 1, index)).toISOString(),
+  );
+  const gameRecordNow = () => gameRecordTimes[gameRecordTimeIndex++]
+    ?? new Date(Date.UTC(2026, 7, 31, 1, gameRecordTimeIndex)).toISOString();
+  let gameRecordIdIndex = 0;
+  const gameRecordIds = options.gameRecordIds ?? [];
+  const gameRecordIdFactory = () => {
+    const index = gameRecordIdIndex++;
+    return gameRecordIds[index] ?? `normal-session-${index + 1}`;
+  };
   const scene = { children: [], add(mesh) { this.children.push(mesh); mesh.parent = this; },
     remove(mesh) { this.children = this.children.filter((entry) => entry !== mesh); mesh.parent = null; } };
   const context = vm.createContext({
     ...game, ...editor, ...recorder, ...practice, ...review, ...photo, ...pieceTypes, ...transfer, ...analytics,
-    PuzzleStoreError, Blob,
+    PuzzleStoreError,
+    createGameRecord: (record) => createGameRecord(structuredClone(record)),
+    validateGameRecord,
+    GameRecordStoreError, createGameRecordStore, Blob,
     scene, Y0: 0.18, pieces: [], tweens: [], clock: 0, timers: [], shownResults: [],
     board: game.initialBoard(), turn: game.RED, history: [],
     selected: null, legal: [],
     posHistory: [game.hashBoard(game.initialBoard())], capturedBy: { red: [], black: [] },
     repHistory: [{ key: game.hashBoard(game.initialBoard()) + '|red', mover: null, check: false }],
     busy: false, over: false, winner: null, aiToken: 0, aiThinking: false, undoCount: 0,
+    mode: options.mode ?? 'pvp', normalGameRecordSession: null,
+    completedGameRecordSessionId: null, lastCompletedGameRecord: null,
+    gameRecordStore, gameRecordStorage, gameRecordNow, gameRecordIdFactory,
     AI_SIDE: game.BLACK, aiMoveStart: 0,
     practiceToken: 0, appState: 'NORMAL_GAME', editorState: null, recorderState: null,
     practiceState: null, activeSavedPuzzleId: null, practiceCompletionRecorded: false,
@@ -142,7 +182,9 @@ function harness() {
   context.ease = (k) => k;
   const names = ['tween', 'stepTweens', 'pieceAt', 'releasePieceMesh', 'rebuildPieceMeshes', 'buildScene',
     'checkBoardMeshInvariant', 'syncEditorScene', 'syncRecorderScene', 'syncPracticeScene',
-    'animateCapture', 'doMove', 'finishMove', 'undoPly', 'undo', 'newGame', 'resetTo',
+    'animateCapture', 'doMove', 'finishMove', 'cloneNormalGameRecordBoard',
+    'beginNormalGameRecordSession', 'normalGameRecordTerminationReason',
+    'finalizeNormalGameRecord', 'normalUndoAvailable', 'undoPly', 'undo', 'newGame', 'resetTo',
     'doRecorderMove', 'finishRecorderMove', 'resetRecorder', 'undoRecorder',
     'animatePracticeMove', 'afterPracticeMove', 'queueOpponentReply', 'completePractice',
     'formatPracticeCoordinate', 'formatPracticeHintMessage', 'practiceHintAvailable',
@@ -156,6 +198,7 @@ function harness() {
     'setLibraryTransferStatus', 'preparePuzzleImportPreview', 'clearPendingPuzzleImport',
     'downloadPuzzleTransfer', 'loadPuzzleImportFile', 'cancelPuzzleImport', 'confirmPuzzleImport'];
   vm.runInContext(names.map(functionSource).join('\n'), context);
+  context.beginNormalGameRecordSession();
   context.flushAnimations = () => {
     let guard = 0;
     while (context.tweens.length) {
@@ -185,6 +228,68 @@ function fixture() {
     { side: 'red', from: { r: 6, c: 8 }, to: { r: 9, c: 8 } },
   ] };
 }
+
+function normalCheckmateFixture() {
+  const board = editor.createEmptyEditorBoard();
+  board[9][4] = { type: 'K', side: game.BLACK };
+  board[0][4] = { type: 'K', side: game.RED };
+  board[2][3] = { type: 'R', side: game.RED };
+  board[2][4] = { type: 'P', side: game.BLACK };
+  board[9][0] = { type: 'R', side: game.RED };
+  board[9][8] = { type: 'R', side: game.RED };
+  return {
+    board,
+    turn: game.RED,
+    move: [{ r: 2, c: 3 }, { r: 2, c: 4 }],
+  };
+}
+
+test('normal session metadata is stable, deeply isolated and never persisted before terminal', () => {
+  const ctx = harness({
+    mode: 'hard',
+    gameRecordIds: ['session-a', 'session-b'],
+    gameRecordTimes: ['2026-08-31T01:00:00.000Z', '2026-08-31T01:01:00.000Z'],
+  });
+  const session = structuredClone(ctx.normalGameRecordSession);
+  assert.equal(session.id, 'session-a');
+  assert.equal(session.createdAt, '2026-08-31T01:00:00.000Z');
+  assert.equal(session.initialPosition.sideToMove, game.RED);
+  assert.equal(session.mode, 'hard');
+  assert.equal(Object.isFrozen(ctx.normalGameRecordSession.initialPosition.board[0][0]), true);
+  assert.equal(ctx.gameRecordStorage.writes, 0);
+
+  ctx.rebuildPieceMeshes(ctx.board);
+  playNormal(ctx, { r: 0, c: 1 }, { r: 2, c: 2 });
+  assert.equal(ctx.normalGameRecordSession.id, session.id);
+  assert.equal(ctx.normalGameRecordSession.createdAt, session.createdAt);
+  same(ctx.normalGameRecordSession.initialPosition, session.initialPosition);
+  assert.equal(ctx.gameRecordStorage.writes, 0);
+  ctx.undo();
+  same(ctx.board, session.initialPosition.board);
+  assert.equal(ctx.history.length, 0);
+  assert.equal(ctx.gameRecordStorage.writes, 0);
+
+  ctx.newGame();
+  assert.equal(ctx.normalGameRecordSession.id, 'session-b');
+  assert.notEqual(ctx.normalGameRecordSession.id, session.id);
+  assert.equal(ctx.gameRecordStorage.writes, 0);
+});
+
+test('Undo control and direct handler share the terminal-aware availability guard', () => {
+  assert.match(source, /btnUndo\.disabled\s*=\s*!normalUndoAvailable\(\)/);
+  assert.match(functionSource('undo'), /if\s*\(!normalUndoAvailable\(\)\)\s*return/);
+  assert.match(functionSource('normalUndoAvailable'), /!over/);
+});
+
+test('normal terminal reasons map explicitly to the exact GameRecord contract', () => {
+  const ctx = harness();
+  same([
+    '將死', '困斃', '長將', '三次重複局面', '雙方長將',
+  ].map((reason) => ctx.normalGameRecordTerminationReason(reason)), [
+    'checkmate', 'stalemate', 'perpetual-check', 'threefold-repetition', 'mutual-perpetual-check',
+  ]);
+  assert.throws(() => ctx.normalGameRecordTerminationReason('unknown'));
+});
 
 test('normal move/capture and both undos preserve the existing mesh invariant', () => {
   const ctx = harness();
@@ -239,32 +344,161 @@ function repetitionFixture(perpetual = false) {
 }
 
 for (const perpetual of [false, true]) {
-  test(`normal ${perpetual ? 'perpetual check' : 'threefold draw'} adjudication, undo and reset`, () => {
+  test(`normal ${perpetual ? 'perpetual check' : 'threefold draw'} persists once and terminal undo is inert`, () => {
     const ctx = harness();
     const setup = repetitionFixture(perpetual);
     ctx.resetTo(setup.board, setup.turn);
+    const session = structuredClone(ctx.normalGameRecordSession);
     same(ctx.repHistory, [{ key: game.hashBoard(ctx.board) + '|' + setup.turn, mover: null, check: false }]);
+
+    playNormal(ctx, ...setup.cycle[0]);
+    assert.equal(ctx.normalUndoAvailable(), true, 'nonterminal undo remains available');
+    ctx.undo();
+    same(ctx.board, session.initialPosition.board);
+    assert.equal(ctx.history.length, 0);
+    assert.equal(ctx.turn, setup.turn);
+    assert.equal(ctx.gameRecordStorage.writes, 0, 'nonterminal undo never persists');
+
     for (const move of setup.cycle) playNormal(ctx, ...move);
     assert.equal(ctx.over, false, 'second occurrence is not terminal');
     for (const move of setup.cycle) playNormal(ctx, ...move);
     assert.equal(ctx.over, true);
     assert.equal(ctx.winner, perpetual ? 'black' : null);
+    assert.equal(ctx.gameRecordStorage.writes, 1);
+    assert.equal(validateGameRecord(ctx.lastCompletedGameRecord).ok, true);
+    assert.equal(ctx.lastCompletedGameRecord.id, session.id);
+    assert.equal(ctx.lastCompletedGameRecord.createdAt, session.createdAt);
+    assert.equal(ctx.lastCompletedGameRecord.mode, 'pvp');
+    same(ctx.lastCompletedGameRecord.initialPosition, session.initialPosition);
+    same(ctx.lastCompletedGameRecord.moves, [...setup.cycle, ...setup.cycle]
+      .map(([from, to]) => ({ from, to })));
+    same(ctx.lastCompletedGameRecord.result, {
+      winner: perpetual ? 'black' : null,
+      terminationReason: perpetual ? 'perpetual-check' : 'threefold-repetition',
+    });
+
+    const terminal = {
+      board: structuredClone(ctx.board), history: structuredClone(ctx.history),
+      repHistory: structuredClone(ctx.repHistory), turn: ctx.turn,
+      winner: ctx.winner, record: structuredClone(ctx.lastCompletedGameRecord),
+    };
+    assert.equal(ctx.normalUndoAvailable(), false);
+    ctx.undo();
+    same(ctx.board, terminal.board);
+    same(ctx.history, terminal.history);
+    same(ctx.repHistory, terminal.repHistory);
+    assert.equal(ctx.turn, terminal.turn);
+    assert.equal(ctx.over, true);
+    assert.equal(ctx.winner, terminal.winner);
+    same(ctx.lastCompletedGameRecord, terminal.record);
+    assert.equal(ctx.gameRecordStorage.writes, 1, 'post-terminal undo adds no write');
+
+    ctx.finishMove('duplicate', null, session.id);
+    assert.equal(ctx.gameRecordStorage.writes, 1, 'duplicate finish processing adds no write');
     ctx.flushTimers();
     same(ctx.shownResults, [perpetual ? '長將' : '三次重複局面']);
-    ctx.undo();
-    assert.equal(ctx.over, false);
-    assert.equal(ctx.winner, null);
-    assert.equal(ctx.repHistory.length, 8);
-    assert.equal(ctx.repHistory.at(-1).key, game.hashBoard(ctx.board) + '|' + ctx.turn);
-    playNormal(ctx, ...setup.cycle.at(-1));
-    assert.equal(ctx.over, true, 'replaying the undone move restores the verdict');
     ctx.newGame();
+    assert.notEqual(ctx.normalGameRecordSession.id, session.id);
+    same(ctx.lastCompletedGameRecord, terminal.record);
+    assert.equal(ctx.gameRecordStorage.writes, 1);
     ctx.flushTimers();
     assert.equal(ctx.over, false);
     same(ctx.shownResults, [perpetual ? '長將' : '三次重複局面'], 'new game cancels the old result');
     same(ctx.repHistory, [{ key: game.hashBoard(ctx.board) + '|red', mover: null, check: false }]);
   });
 }
+
+test('normal checkmate persists once before presentation and stale callback cannot cross into a new game', () => {
+  const ctx = harness({
+    gameRecordIds: ['bootstrap', 'checkmate-a', 'game-b'],
+    gameRecordTimes: [
+      '2026-08-31T01:00:00.000Z',
+      '2026-08-31T01:01:00.000Z',
+      '2026-08-31T01:02:00.000Z',
+      '2026-08-31T01:03:00.000Z',
+    ],
+  });
+  const setup = normalCheckmateFixture();
+  ctx.resetTo(setup.board, setup.turn);
+  const session = structuredClone(ctx.normalGameRecordSession);
+  playNormal(ctx, ...setup.move);
+  assert.equal(ctx.over, true);
+  assert.equal(ctx.winner, game.RED);
+  assert.equal(ctx.gameRecordStorage.writes, 1, 'terminal persistence precedes delayed presentation');
+  assert.equal(ctx.shownResults.length, 0);
+  assert.equal(validateGameRecord(ctx.lastCompletedGameRecord).ok, true);
+  same(ctx.lastCompletedGameRecord, {
+    schemaVersion: 1,
+    id: 'checkmate-a',
+    createdAt: '2026-08-31T01:01:00.000Z',
+    completedAt: '2026-08-31T01:02:00.000Z',
+    initialPosition: session.initialPosition,
+    moves: [{ from: setup.move[0], to: setup.move[1] }],
+    mode: 'pvp',
+    result: { winner: game.RED, terminationReason: 'checkmate' },
+  });
+
+  const recordA = structuredClone(ctx.lastCompletedGameRecord);
+  assert.equal(ctx.timers.length, 1);
+  ctx.newGame();
+  assert.equal(ctx.normalGameRecordSession.id, 'game-b');
+  assert.equal(ctx.gameRecordStorage.writes, 1);
+  ctx.flushTimers();
+  assert.deepEqual(ctx.shownResults, [], 'stale game A presentation is cancelled');
+  assert.equal(ctx.over, false);
+  assert.equal(ctx.lastCompletedGameRecord.id, recordA.id);
+  assert.equal(ctx.gameRecordStore.listGameRecords().length, 1);
+  assert.equal(ctx.gameRecordStore.listGameRecords()[0].id, recordA.id);
+});
+
+test('quota failure cannot abort terminal gameplay and in-memory record survives without retry', () => {
+  const ctx = harness({ gameRecordWriteError: new Error('quota exceeded') });
+  const setup = normalCheckmateFixture();
+  ctx.resetTo(setup.board, setup.turn);
+  assert.doesNotThrow(() => playNormal(ctx, ...setup.move));
+  assert.equal(ctx.over, true);
+  assert.equal(ctx.winner, game.RED);
+  assert.equal(validateGameRecord(ctx.lastCompletedGameRecord).ok, true);
+  assert.equal(ctx.gameRecordStorage.writes, 1);
+  ctx.undo();
+  ctx.finalizeNormalGameRecord('將死');
+  assert.equal(ctx.gameRecordStorage.writes, 1, 'failed save is not retried');
+  ctx.flushTimers();
+  same(ctx.shownResults, ['將死']);
+});
+
+test('corrupt GameRecord storage remains byte-for-byte intact while terminal gameplay completes', () => {
+  const ctx = harness({ gameRecordSerialized: '{' });
+  const setup = normalCheckmateFixture();
+  ctx.resetTo(setup.board, setup.turn);
+  assert.doesNotThrow(() => playNormal(ctx, ...setup.move));
+  assert.equal(ctx.over, true);
+  assert.equal(ctx.winner, game.RED);
+  assert.equal(validateGameRecord(ctx.lastCompletedGameRecord).ok, true);
+  assert.equal(ctx.gameRecordStorage.serialized, '{');
+  assert.equal(ctx.gameRecordStorage.writes, 0);
+  ctx.flushTimers();
+  same(ctx.shownResults, ['將死']);
+});
+
+test('unfinished normal, restart, mode switch, puzzle entry/exit and pagehide never persist GameRecords', () => {
+  const ctx = harness();
+  ctx.rebuildPieceMeshes(ctx.board);
+  playNormal(ctx, { r: 0, c: 1 }, { r: 2, c: 2 });
+  assert.equal(ctx.over, false);
+  assert.equal(ctx.gameRecordStorage.writes, 0);
+  ctx.newGame();
+  assert.equal(ctx.gameRecordStorage.writes, 0);
+  ctx.mode = 'hard';
+  ctx.newGame();
+  assert.equal(ctx.normalGameRecordSession.mode, 'hard');
+  assert.equal(ctx.gameRecordStorage.writes, 0);
+  ctx.enterEditor();
+  ctx.exitEditor();
+  assert.equal(ctx.gameRecordStorage.writes, 0);
+  assert.match(source, /window\.addEventListener\('pagehide', saveViewPrefs\)/);
+  assert.doesNotMatch(source, /(?:beforeunload|unload|pagehide)[^\n]*GameRecord/i);
+});
 
 test('normal repetition history remains isolated across editor, recorder, practice and library', () => {
   const ctx = harness();
@@ -665,6 +899,7 @@ test('saved completion finalizes one compact attempt with canonical mistakes and
   assert.equal(ctx.appState, 'PUZZLE_PRACTICE_COMPLETE');
   assert.equal(ctx.practiceAttempt, null);
   assert.equal(writes.get(analyticsKey), 1, 'completion is one analytics write');
+  assert.equal(ctx.gameRecordStorage.writes, 0, 'puzzle completion never writes a normal GameRecord');
   const entry = ctx.practiceAnalyticsStore.getPuzzleAnalytics(saved.id);
   assert.equal(entry.aggregate.attemptCount, 1);
   assert.equal(entry.aggregate.completedCount, 1);
@@ -678,6 +913,7 @@ test('saved completion finalizes one compact attempt with canonical mistakes and
   const writesAfterComplete = writes.get(analyticsKey);
   ctx.exitPractice();
   assert.equal(writes.get(analyticsKey), writesAfterComplete, 'exit after completion cannot double-finalize');
+  assert.equal(ctx.gameRecordStorage.writes, 0);
 });
 
 test('restart and exit finalize separate abandoned attempts while stale reply stays inert', () => {
@@ -928,8 +1164,8 @@ test('restarting or exiting practice cancels a queued opponent capture', () => {
   }
 });
 
-test('delayed game-over result cannot cross new-game, undo or puzzle-entry boundaries', () => {
-  for (const action of ['newGame', 'undo', 'enterEditor']) {
+test('delayed game-over result cannot cross new-game or puzzle-entry boundaries', () => {
+  for (const action of ['newGame', 'enterEditor']) {
     const ctx = harness();
     const puzzle = fixture();
     ctx.board = structuredClone(puzzle.initialBoard);
@@ -938,10 +1174,6 @@ test('delayed game-over result cannot cross new-game, undo or puzzle-entry bound
     ctx.turn = 'red';
     ctx.finishMove('mate', null);
     assert.equal(ctx.over, true);
-    if (action === 'undo') {
-      const move = puzzle.solution[2];
-      ctx.history = [{ ...move, nota: 'mate', captured: { type: 'P', side: 'black' } }];
-    }
     ctx[action]();
     ctx.flushTimers();
     assert.equal(ctx.shownResults.length, 0, `${action} must cancel old result`);
@@ -1163,9 +1395,10 @@ test('blocked localStorage getter does not prevent UI store construction', () =>
   const match = source.match(/const browserStorage = \{[^]*?const puzzleStore = createPuzzleStore\([^]*?\);/);
   assert.ok(match);
   const window = Object.defineProperty({}, 'localStorage', { get() { throw new Error('SecurityError'); } });
-  const context = vm.createContext({ window, createPuzzleStore });
-  vm.runInContext(`${match[0]}\nthis.store = puzzleStore;`, context);
-  assert.equal(context.store.loadAll().issues[0].code, 'STORE_READ_FAILED');
+  const context = vm.createContext({ window, createGameRecordStore, createPuzzleStore });
+  vm.runInContext(`${match[0]}\nthis.gameRecordStoreResult = gameRecordStore; this.puzzleStoreResult = puzzleStore;`, context);
+  assert.equal(context.gameRecordStoreResult.loadAll().issues[0].code, 'STORE_READ_FAILED');
+  assert.equal(context.puzzleStoreResult.loadAll().issues[0].code, 'STORE_READ_FAILED');
 });
 
 test('rebuild and capture release per-piece GPU resources, preserving shared materials', () => {
