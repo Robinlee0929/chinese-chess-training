@@ -745,15 +745,32 @@ test('two saved puzzles keep lifecycle analytics and stale callbacks isolated by
   assert.equal(puzzleBAfterRestart.aggregate.totalHintRequests, 1);
   same(ctx.practiceAnalyticsStore.getPuzzleAnalytics(puzzleA.id), puzzleAAfterExit);
 
+  ctx.doPracticeMove(puzzleB.solution[0].from, puzzleB.solution[0].to);
+  ctx.flushAnimations();
+  assert.equal(ctx.practiceState.currentPly, 1);
+  assert.equal(ctx.practiceState.currentSide, 'black');
+  assert.equal(ctx.timers.length, 2, 'queued callbacks are stale puzzle A first, current puzzle B second');
+  const puzzleBStateBeforeStale = structuredClone(ctx.practiceState);
+  const puzzleBAttemptBeforeStale = structuredClone(ctx.practiceAttempt);
+  const puzzleBMetadataBeforeStale = ctx.puzzleStore.getPuzzle(puzzleB.id);
   const writesBeforeStaleCallback = writes.get(analyticsKey);
-  ctx.flushTimers(); ctx.flushAnimations();
+  const stalePuzzleACallback = ctx.timers.shift();
+  stalePuzzleACallback();
+  ctx.flushAnimations();
   assert.equal(writes.get(analyticsKey), writesBeforeStaleCallback, 'stale puzzle A callback cannot write puzzle B analytics');
+  assert.equal(ctx.activeSavedPuzzleId, puzzleB.id);
   assert.equal(ctx.practiceAttempt.puzzleId, puzzleB.id);
-  assert.equal(ctx.practiceState.currentPly, 0);
+  same(ctx.practiceState, puzzleBStateBeforeStale);
+  same(ctx.practiceAttempt, puzzleBAttemptBeforeStale);
+  same(ctx.puzzleStore.getPuzzle(puzzleB.id), puzzleBMetadataBeforeStale);
+  assert.equal(ctx.timers.length, 1, 'current puzzle B callback remains pending');
   same(ctx.practiceAnalyticsStore.getPuzzleAnalytics(puzzleA.id), puzzleAAfterExit);
   same(ctx.practiceAnalyticsStore.getPuzzleAnalytics(puzzleB.id), puzzleBAfterRestart);
 
-  finishPractice(ctx, puzzleB);
+  ctx.flushTimers(); ctx.flushAnimations();
+  assert.equal(ctx.practiceState.currentPly, 2, 'puzzle B callback still follows its normal lifecycle');
+  ctx.doPracticeMove(puzzleB.solution[2].from, puzzleB.solution[2].to);
+  ctx.flushAnimations();
   assert.equal(ctx.appState, 'PUZZLE_PRACTICE_COMPLETE');
   const puzzleBAfterCompletion = ctx.practiceAnalyticsStore.getPuzzleAnalytics(puzzleB.id);
   same(puzzleBAfterCompletion.aggregate, {
