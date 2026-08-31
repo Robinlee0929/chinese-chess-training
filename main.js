@@ -7,7 +7,7 @@ import {
   ROWS, COLS, RED, BLACK,
   initialBoard, legalMoves, applyMove, inCheck,
   hasAnyLegalMove, name, notation, hashBoard, repetitionVerdict,
-} from './game.js?v=c5216ea920';
+} from './game.js?v=35524d4c3d';
 import {
   PuzzleEditorError,
   createEditorState,
@@ -17,7 +17,7 @@ import {
   setEditorSideToMove,
   confirmAuthoredPosition,
   exportAuthoredPosition,
-} from './puzzle-editor.js?v=c5216ea920';
+} from './puzzle-editor.js?v=35524d4c3d';
 import {
   PuzzleRecorderError,
   createRecorder,
@@ -27,7 +27,7 @@ import {
   finishRecording,
   exportRecorderBoard,
   exportRecordedResult,
-} from './puzzle-recorder.js?v=c5216ea920';
+} from './puzzle-recorder.js?v=35524d4c3d';
 import {
   PuzzlePracticeError,
   PRACTICE_HINT_MAX_LEVEL,
@@ -37,12 +37,12 @@ import {
   derivePracticeHint,
   restartPractice,
   exportPracticeSnapshot,
-} from './puzzle-practice.js?v=c5216ea920';
-import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=c5216ea920';
+} from './puzzle-practice.js?v=35524d4c3d';
+import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=35524d4c3d';
 import {
   PracticeAnalyticsError,
   createPracticeAnalyticsStore,
-} from './puzzle-analytics.js?v=c5216ea920';
+} from './puzzle-analytics.js?v=35524d4c3d';
 import {
   PUZZLE_TRANSFER_FORMAT,
   PUZZLE_TRANSFER_SCHEMA_VERSION,
@@ -50,7 +50,7 @@ import {
   PuzzleTransferError,
   serializePuzzleExport,
   parsePuzzleImport,
-} from './puzzle-transfer.js?v=c5216ea920';
+} from './puzzle-transfer.js?v=35524d4c3d';
 import {
   PHOTO_MAX_ZOOM,
   PHOTO_MIN_ZOOM,
@@ -64,7 +64,7 @@ import {
   validatePhotoMetadata,
   zoomPhotoIn,
   zoomPhotoOut,
-} from './puzzle-photo.js?v=c5216ea920';
+} from './puzzle-photo.js?v=35524d4c3d';
 import {
   CALIBRATION_CANONICAL_HEIGHT,
   CALIBRATION_CANONICAL_WIDTH,
@@ -80,7 +80,7 @@ import {
   setCorner,
   transformPoint,
   validateQuadrilateral,
-} from './puzzle-photo-calibration.js?v=c5216ea920';
+} from './puzzle-photo-calibration.js?v=35524d4c3d';
 import {
   PuzzlePhotoRecognitionError,
   RECOGNITION_OCCUPANCY_EMPTY,
@@ -92,7 +92,7 @@ import {
   isRecognitionTokenCurrent,
   recognizeIntersections,
   selectionKey,
-} from './puzzle-photo-recognition.js?v=c5216ea920';
+} from './puzzle-photo-recognition.js?v=35524d4c3d';
 import {
   addTemplate,
   createPieceTypeSessionToken,
@@ -102,13 +102,13 @@ import {
   normalizePiecePatch,
   removeTemplatesForSource,
   suggestUnresolvedPieceTypes,
-} from './puzzle-photo-piece-types.js?v=c5216ea920';
+} from './puzzle-photo-piece-types.js?v=35524d4c3d';
 import {
   UNREVIEWED, PuzzlePhotoReviewError,
   createReviewState, buildReviewQueue, selectReviewCandidate, confirmEmpty, confirmPiece,
   nextCandidate, previousCandidate, nextUnresolved, acceptHighConfidenceEmpty,
   undoBulkEmpty, resetReview, rescanReview, reviewProgress, confirmedSelections, buildReviewedBoard,
-} from './puzzle-photo-review.js?v=c5216ea920';
+} from './puzzle-photo-review.js?v=35524d4c3d';
 
 // ---------------- 常數 ----------------
 const CELL = 1;
@@ -640,7 +640,7 @@ let aiMoveStart = 0;
 let aiWorker = null;
 let aiModule = null;   // Worker 不可用時的主執行緒後備
 try {
-  aiWorker = new Worker(new URL('./ai-worker.js?v=c5216ea920', import.meta.url), { type: 'module' });
+  aiWorker = new Worker(new URL('./ai-worker.js?v=35524d4c3d', import.meta.url), { type: 'module' });
   aiWorker.onmessage = (e) => onAIResult(e.data);
   aiWorker.onerror = () => {
     aiWorker = null;
@@ -662,7 +662,7 @@ function requestAIMove() {
   if (aiWorker) {
     aiWorker.postMessage(payload);
   } else {
-    (aiModule ??= import('./ai.js?v=c5216ea920')).then(({ findBestMove }) => {
+    (aiModule ??= import('./ai.js?v=35524d4c3d')).then(({ findBestMove }) => {
       setTimeout(() => {
         if (token !== aiToken) return;
         onAIResult({ token, result: findBestMove(payload.board, payload.side, payload.level, payload.recent) });
