@@ -25,6 +25,10 @@ import { createGameReviewEvidence } from './game-review-evidence.js';
 const source = readFileSync(new URL('./main.js', import.meta.url), 'utf8');
 const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
 const css = readFileSync(new URL('./css/style.css', import.meta.url), 'utf8');
+const R3B_FORBIDDEN_UI_TERMS = Object.freeze([
+  '最佳著', '比較好', '比較差', '失誤', '大漏著', '白送', '掉子', '懸子',
+  '優勢', '勝率', '評分', '評估值', '分數', 'score', 'evaluation', 'PV',
+]);
 
 function functionSource(name) {
   const match = source.match(new RegExp(`^(?:async )?function ${name}\\([^]*?^}`, 'm'));
@@ -175,7 +179,10 @@ function harness({
       this.onerror = null;
       reviewAiWorkers.push(this);
     }
-    postMessage(message) { this.messages.push(structuredClone(message)); }
+    postMessage(message) {
+      context.reviewAiRequestCount++;
+      this.messages.push(structuredClone(message));
+    }
     terminate() { this.terminated = true; }
     emit(data) { this.onmessage?.({ data }); }
     fail() { this.onerror?.({ preventDefault() {} }); }
@@ -232,6 +239,8 @@ function harness({
     gameReviewAiWorker: null,
     gameReviewEvidenceState: null,
     reviewAiWorkers,
+    reviewAiRequestCount: 0,
+    engineSearches: 0,
     renderedBoard: liveBoard,
     renderCount: 0,
     productionRenderCallCount: 0,
@@ -341,6 +350,10 @@ function harness({
       if (workerCreationError) throw new Error('worker unavailable');
       return new FakeReviewAiWorker();
     },
+    findBestMove() {
+      context.engineSearches++;
+      return null;
+    },
     doMove() { context.normalDoMoveCalls++; },
     maybeAIMove() {
       context.aiMaybeMoveCalls++;
@@ -393,6 +406,12 @@ function harness({
     mainFunctions[index] = mainFunctions[index].replace(
       'gameReviewAiState = settled.state;',
       "gameReviewAiState = settled.state;\n  storage.setItem('r3b-forbidden', '1');",
+    );
+  } else if (reviewAiMutation === 'direct-search') {
+    const index = names.indexOf('handleGameReviewAiResponse');
+    mainFunctions[index] = mainFunctions[index].replace(
+      '  renderGameReviewAi();',
+      "  findBestMove(gameReviewSession.snapshot.board, gameReviewSession.snapshot.sideToMove, 'review-v1');\n  renderGameReviewAi();",
     );
   }
   vm.runInContext([...rendererHelpers, rendererSource, ...mainFunctions].filter(Boolean).join('\n'), context);
@@ -470,6 +489,24 @@ function successfulReviewAiResponse(worker, result = {}) {
       ...result,
     },
   };
+}
+
+function renderedR3bText(ctx) {
+  return [
+    ctx.gameReviewAiHeading.textContent,
+    ctx.gameReviewAiDetail.textContent,
+    ctx.gameReviewEvidencePlayed.textContent,
+    ctx.gameReviewEvidenceCandidate.textContent,
+    ctx.gameReviewEvidenceMatch.textContent,
+    ...ctx.gameReviewEvidenceFacts.children.map((item) => item.textContent),
+  ].filter(Boolean).join('\n');
+}
+
+function assertFactualR3bLanguage(text, label = 'R3B user-visible text') {
+  for (const term of R3B_FORBIDDEN_UI_TERMS) {
+    assert.equal(text.toLowerCase().includes(term.toLowerCase()), false,
+      `${label} must not contain forbidden term: ${term}`);
+  }
 }
 
 test('just-completed in-memory record opens at the final board with zero persistence writes', () => {
@@ -778,6 +815,52 @@ test('explicit Review AI request uses only canonical Review context and renders 
   assert.equal(ctx.analyticsWrites, 0);
 });
 
+test('accepted R3A success adds zero Review workers, requests or direct engine searches', () => {
+  const exercise = (reviewAiMutation = null) => {
+    const saved = record(`review-ai-search-count-${reviewAiMutation || 'canonical'}`);
+    const ctx = harness({ records: [saved], realRenderer: true, reviewAiMutation });
+    ctx.enterGameRecordLibrary();
+    ctx.openStoredGameReview(saved.id);
+    ctx.navigateGameReview('first');
+    ctx.requestGameReviewAiCandidate();
+    const worker = ctx.reviewAiWorkers.at(-1);
+    const before = {
+      workers: ctx.reviewAiWorkers.length,
+      requests: ctx.reviewAiRequestCount,
+      searches: ctx.engineSearches,
+    };
+    worker.emit(successfulReviewAiResponse(worker));
+    return {
+      ctx,
+      additionalWorkers: ctx.reviewAiWorkers.length - before.workers,
+      additionalRequests: ctx.reviewAiRequestCount - before.requests,
+      additionalSearches: ctx.engineSearches - before.searches,
+    };
+  };
+
+  const canonical = exercise();
+  assert.ok(canonical.ctx.gameReviewEvidenceState);
+  assert.equal(canonical.additionalWorkers, 0);
+  assert.equal(canonical.additionalRequests, 0);
+  assert.equal(canonical.additionalSearches, 0);
+
+  const broken = exercise('direct-search');
+  assert.equal(broken.additionalWorkers, 0,
+    'direct-search mutation deliberately creates no additional Worker');
+  assert.equal(broken.additionalRequests, 0,
+    'direct-search mutation deliberately creates no additional R3A request');
+  assert.equal(broken.additionalSearches, 1,
+    'isolated mutation performs exactly one forbidden direct engine search');
+  let detected = null;
+  try {
+    assert.equal(broken.additionalSearches, 0, 'BROKEN_R3B_DIRECT_ENGINE_SEARCH');
+  } catch (error) {
+    detected = error;
+  }
+  assert.equal(detected?.code, 'ERR_ASSERTION');
+  assert.match(detected.message, /BROKEN_R3B_DIRECT_ENGINE_SEARCH/);
+});
+
 test('Review AI error is retryable and worker construction has no main-thread fallback', () => {
   const saved = record('review-ai-error');
   const ctx = harness({ records: [saved], workerCreationError: true, realRenderer: true });
@@ -925,6 +1008,51 @@ test('negative control detects any R3B-triggered storage write', () => {
   assert.match(detected.message, /R3B_STORAGE_WRITE_COUNT/);
 });
 
+test('MATCH and DIFFERENT panels retain factual language and reject heuristic wording mutations', () => {
+  const renderCandidate = (id, result = {}) => {
+    const saved = record(id);
+    const ctx = harness({ records: [saved], realRenderer: true });
+    ctx.enterGameRecordLibrary();
+    ctx.openStoredGameReview(saved.id);
+    ctx.navigateGameReview('first');
+    ctx.requestGameReviewAiCandidate();
+    const worker = ctx.reviewAiWorkers.at(-1);
+    worker.emit(successfulReviewAiResponse(worker, result));
+    assert.ok(ctx.gameReviewEvidenceState);
+    return renderedR3bText(ctx);
+  };
+
+  const matchText = renderCandidate('review-language-match');
+  assert.match(matchText, /實戰/);
+  assert.match(matchText, /AI 候選/);
+  assert.match(matchText, /你的實戰著法與 AI 候選相同/);
+  assertFactualR3bLanguage(matchText, 'MATCH panel');
+
+  const differentText = renderCandidate('review-language-different', {
+    to: { r: 3, c: 3 },
+  });
+  for (const allowedFact of ['實戰', 'AI 候選', '吃到', '將軍', '將死']) {
+    assert.match(differentText, new RegExp(allowedFact));
+  }
+  assertFactualR3bLanguage(differentText, 'DIFFERENT panel');
+
+  for (const injected of [
+    'AI 候選比較好',
+    '這步白送一車',
+    '目前有明顯優勢',
+    '評分較高',
+  ]) {
+    let detected = null;
+    try {
+      assertFactualR3bLanguage(`${differentText}\n${injected}`, 'mutated R3B panel');
+    } catch (error) {
+      detected = error;
+    }
+    assert.equal(detected?.code, 'ERR_ASSERTION');
+    assert.match(detected.message, /must not contain forbidden term/);
+  }
+});
+
 test('source and DOM contain explicit read-only, accessibility and responsive guards', () => {
   assert.match(functionSource('doMove'), /if\s*\(!normalGameActive\(\)\)\s*return/);
   assert.match(source, /if \(appState === APP_STATE\.GAME_RECORD_LIBRARY \|\| appState === APP_STATE\.GAME_REVIEW\) return;\s*\n\s*const hit = pick\(e\)/);
@@ -938,7 +1066,7 @@ test('source and DOM contain explicit read-only, accessibility and responsive gu
   assert.match(html, /id="gameReviewAiPanel"[^>]*role="status"[^>]*aria-live="polite"/);
   assert.match(html, /id="gameReviewEvidence"[^>]*aria-label="實戰著法與 AI 候選的事實比較"/);
   assert.equal((html.match(/id="btnGameReviewAiAnalyze"/g) || []).length, 1, 'R3B adds no second action');
-  assert.doesNotMatch(html, /最佳著|你走錯了|失誤|大漏著/);
+  assert.doesNotMatch(html, /最佳著|比較好|比較差|你走錯了|失誤|大漏著|白送|掉子|懸子|優勢|勝率|評分/);
   assert.match(source, /setAttribute\('aria-current', 'step'\)/);
   assert.match(source, /ArrowLeft: 'previous'/);
   assert.match(source, /ArrowRight: 'next'/);

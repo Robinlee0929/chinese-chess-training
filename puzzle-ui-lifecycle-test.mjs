@@ -16,6 +16,12 @@ import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js';
 import { createGameRecord, validateGameRecord } from './game-record.js';
 import { GameRecordStoreError, createGameRecordStore } from './game-record-store.js';
 import { createGameReview, selectGameReviewPly } from './game-review.js';
+import {
+  createGameReviewAiState,
+  beginGameReviewAiRequest,
+  settleGameReviewAiResponse,
+} from './game-review-ai.js';
+import { createGameReviewEvidence } from './game-review-evidence.js';
 
 // Execute the real UI lifecycle functions with a deterministic clock and minimal
 // rendering/DOM doubles. No browser globals are injected and no UI logic is copied.
@@ -126,6 +132,7 @@ function harness(options = {}) {
     aiWorker: { postMessage: () => { context.aiRequestCount++; } }, aiModule: null,
     practiceToken: 0, appState: 'NORMAL_GAME', editorState: null, recorderState: null,
     gameReviewSession: null, gameReviewPuzzleReturnContext: null, reviewAiInvalidations: 0,
+    gameReviewEvidenceState: null, r4StaleEvidence: null,
     practiceState: null, activeSavedPuzzleId: null, practiceCompletionRecorded: false,
     practiceHintLevel: 0, practiceHint: null, practiceAttempt: null, hintMarkerRoles: [],
     practiceAnalyticsStore, analyticsStorage,
@@ -154,7 +161,10 @@ function harness(options = {}) {
     markPracticeStarted: () => true, isAI: () => false, setEditorTool: noop,
     setEditorMessage: noop, setPhotoImportMessage: noop, renderLibraryList: noop, openLibraryPuzzle: noop,
     renderGameReview: noop, createGameReviewPuzzleHandoff,
-    invalidateGameReviewAi: () => { context.reviewAiInvalidations++; },
+    invalidateGameReviewAi: () => {
+      context.reviewAiInvalidations++;
+      context.gameReviewEvidenceState = null;
+    },
     decodePhotoObjectUrl: async () => ({ naturalWidth: 4, naturalHeight: 3 }),
     document: { querySelector: () => ({ checked: false }) },
     window: { confirm: () => false },
@@ -221,6 +231,15 @@ function harness(options = {}) {
       );
       assert.doesNotMatch(candidate, /\n    handoff\.editorState,\n/,
         'live-turn negative control replaces the production handoff argument');
+    }
+    if (name === 'exitEditor' && options.r4EvidenceResurrection) {
+      const restoreReview = 'gameReviewSession = reviewReturn.reviewSession;';
+      candidate = candidate.replace(
+        restoreReview,
+        `${restoreReview}\n    gameReviewEvidenceState = r4StaleEvidence;`,
+      );
+      assert.match(candidate, /gameReviewEvidenceState = r4StaleEvidence/,
+        'R4 resurrection negative control reinjects stale evidence');
     }
     return candidate;
   });
@@ -330,6 +349,23 @@ function assertTurnDivergenceHandoff(ctx, reviewSession, invoker = node()) {
   assert.notEqual(ctx.editorState.sideToMove, ctx.turn,
     'Puzzle Editor must not use the live normal turn');
   return invoker;
+}
+
+function acceptedR3bEvidence(reviewSession) {
+  const started = beginGameReviewAiRequest(createGameReviewAiState(), reviewSession);
+  const playedMove = reviewSession.record.moves[reviewSession.selectedPly];
+  const settled = settleGameReviewAiResponse(started.state, reviewSession, {
+    kind: 'review-candidate',
+    recordId: started.request.recordId,
+    ply: started.request.ply,
+    revision: started.request.revision,
+    result: { ...playedMove, depth: 2, score: 99998, pv: ['must-not-surface'] },
+  });
+  assert.equal(settled.accepted, true);
+  assert.equal(settled.state.status, 'success');
+  const evidence = createGameReviewEvidence(reviewSession, settled.state);
+  assert.ok(evidence, 'accepted R3A success derives the R3B fixture evidence');
+  return evidence;
 }
 
 function normalStalemateFixture() {
@@ -478,6 +514,51 @@ test('Review handoff enters the existing editor and exit restores the exact reco
   }, { ...liveBefore, aiToken: liveBefore.aiToken + 2 });
   assert.equal(ctx.gameRecordStorage.writes, 0);
   assert.equal(ctx.analyticsStorage.writes, 0);
+});
+
+test('R4 entry clears accepted R3B evidence and exact Review return never resurrects it', () => {
+  const reviewSession = r4TurnDivergenceReviewFixture('r4-r3b-no-resurrection');
+  const reviewBefore = structuredClone(reviewSession);
+  const staleEvidence = acceptedR3bEvidence(reviewSession);
+  const invoker = node();
+  const ctx = harness();
+  ctx.appState = ctx.APP_STATE.GAME_REVIEW;
+  ctx.gameReviewSession = reviewSession;
+  ctx.gameReviewEvidenceState = staleEvidence;
+  ctx.r4StaleEvidence = staleEvidence;
+
+  assert.equal(ctx.createPuzzleFromGameReview(invoker), true);
+  assert.equal(ctx.appState, ctx.APP_STATE.PUZZLE_EDITOR);
+  assert.equal(ctx.gameReviewEvidenceState, null, 'R4 entry clears accepted R3B evidence');
+  ctx.exitEditor();
+  assert.equal(ctx.appState, ctx.APP_STATE.GAME_REVIEW);
+  assert.equal(ctx.gameReviewSession.record.id, reviewSession.record.id);
+  assert.equal(ctx.gameReviewSession.selectedPly, reviewSession.selectedPly);
+  same(ctx.gameReviewSession.snapshot.board, reviewBefore.snapshot.board);
+  assert.equal(ctx.gameReviewEvidenceState, null,
+    'exact Review restoration does not recreate or reuse the old evidence');
+  assert.equal(invoker.focused, true);
+
+  const broken = harness({ r4EvidenceResurrection: true });
+  broken.appState = broken.APP_STATE.GAME_REVIEW;
+  broken.gameReviewSession = reviewSession;
+  broken.gameReviewEvidenceState = staleEvidence;
+  broken.r4StaleEvidence = staleEvidence;
+  assert.equal(broken.createPuzzleFromGameReview(), true);
+  assert.equal(broken.gameReviewEvidenceState, null,
+    'even the isolated mutation clears evidence at R4 entry');
+  broken.exitEditor();
+  assert.equal(broken.gameReviewEvidenceState.source.recordId, reviewSession.record.id,
+    'isolated mutation visibly restores the distinguishable stale evidence identity');
+  let detected = null;
+  try {
+    assert.equal(broken.gameReviewEvidenceState, null,
+      'BROKEN_R4_RETURN_RESURRECTS_R3B_EVIDENCE');
+  } catch (error) {
+    detected = error;
+  }
+  assert.equal(detected?.code, 'ERR_ASSERTION');
+  assert.match(detected.message, /BROKEN_R4_RETURN_RESURRECTS_R3B_EVIDENCE/);
 });
 
 test('negative control: using live turn for Review handoff fails the divergence regression', () => {

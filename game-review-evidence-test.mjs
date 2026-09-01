@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { RED, BLACK, applyMove, hashBoard, inCheck, legalMoves, repetitionVerdict } from './game.js';
+import {
+  RED,
+  BLACK,
+  applyMove,
+  getMoves,
+  hashBoard,
+  inCheck,
+  legalMoves,
+  repetitionVerdict,
+} from './game.js';
 import { createGameRecord } from './game-record.js';
 import { createGameReview, selectGameReviewPly } from './game-review.js';
 import {
@@ -87,6 +96,29 @@ function cycleRecord({ id, perpetual = false }) {
     result: perpetual
       ? { winner: BLACK, terminationReason: 'perpetual-check' }
       : { winner: null, terminationReason: 'threefold-repetition' },
+  });
+}
+
+function pseudoLegalCaptureRecord() {
+  const board = emptyBoard();
+  board[0][0] = { type: 'K', side: RED };
+  board[4][3] = { type: 'R', side: RED };
+  board[5][4] = { type: 'R', side: RED };
+  board[5][6] = { type: 'N', side: RED };
+  board[7][4] = { type: 'R', side: BLACK };
+  board[9][4] = { type: 'K', side: BLACK };
+  const cycle = [
+    [{ r: 9, c: 4 }, { r: 9, c: 5 }],
+    [{ r: 4, c: 3 }, { r: 5, c: 3 }],
+    [{ r: 9, c: 5 }, { r: 9, c: 4 }],
+    [{ r: 5, c: 3 }, { r: 4, c: 3 }],
+  ];
+  return baseRecord({
+    id: 'r3b-pseudo-legal-capture',
+    board,
+    sideToMove: BLACK,
+    moves: [...cycle, ...cycle].map(([from, to]) => ({ from, to })),
+    result: { winner: null, terminationReason: 'threefold-repetition' },
   });
 }
 
@@ -299,6 +331,68 @@ test('nonterminal branches enumerate replies and only factual moved-piece captur
   assert.ok(evidence.candidate.movedPieceCaptureReplies.every((reply) => (
     Object.keys(reply).join(',') === 'move,notation'
   )));
+});
+
+test('self-check makes a geometric moved-piece capture pseudo-legal and excludes it from evidence', () => {
+  const record = pseudoLegalCaptureRecord();
+  const review = reviewAt(record, 3);
+  const candidate = { from: { r: 5, c: 6 }, to: { r: 7, c: 5 } };
+  const evidence = createGameReviewEvidence(review, acceptedR3a(review, candidate));
+  assert.ok(evidence, 'current production accepts the canonical nonterminal branch');
+
+  const postMoveBoard = structuredClone(review.snapshot.board);
+  applyMove(postMoveBoard, candidate.from, candidate.to);
+  const pinnedCapture = { from: { r: 7, c: 4 }, to: { r: 7, c: 5 } };
+  const isPinnedCapture = (reply) => {
+    const move = reply.move ?? reply;
+    return move.from.r === pinnedCapture.from.r
+      && move.from.c === pinnedCapture.from.c
+      && move.to.r === pinnedCapture.to.r
+      && move.to.c === pinnedCapture.to.c;
+  };
+  const geometricTargets = getMoves(postMoveBoard, pinnedCapture.from.r, pinnedCapture.from.c);
+  assert.ok(geometricTargets.some((to) => (
+    to.r === pinnedCapture.to.r && to.c === pinnedCapture.to.c
+  )), 'the black rook geometrically reaches the just-moved knight');
+  const canonicalTargets = legalMoves(postMoveBoard, pinnedCapture.from.r, pinnedCapture.from.c);
+  assert.equal(canonicalTargets.some((to) => (
+    to.r === pinnedCapture.to.r && to.c === pinnedCapture.to.c
+  )), false, 'moving the pinned rook would expose the black general to check');
+
+  let canonicalReplyCount = 0;
+  for (let r = 0; r < postMoveBoard.length; r++) {
+    for (let c = 0; c < postMoveBoard[r].length; c++) {
+      if (postMoveBoard[r][c]?.side === BLACK) {
+        canonicalReplyCount += legalMoves(postMoveBoard, r, c).length;
+      }
+    }
+  }
+  assert.equal(evidence.candidate.legalReplyCount, canonicalReplyCount);
+  assert.equal(evidence.candidate.movedPieceCaptureReplies.some(isPinnedCapture), false,
+    'canonical evidence excludes the self-check capture');
+
+  const brokenPseudoLegalReplies = [];
+  for (let r = 0; r < postMoveBoard.length; r++) {
+    for (let c = 0; c < postMoveBoard[r].length; c++) {
+      if (postMoveBoard[r][c]?.side !== BLACK) continue;
+      for (const to of getMoves(postMoveBoard, r, c)) {
+        if (to.r === candidate.to.r && to.c === candidate.to.c) {
+          brokenPseudoLegalReplies.push({ move: { from: { r, c }, to } });
+        }
+      }
+    }
+  }
+  assert.ok(brokenPseudoLegalReplies.some(isPinnedCapture),
+    'isolated mutation using geometric moves incorrectly includes the pinned capture');
+  let detected = null;
+  try {
+    assert.equal(brokenPseudoLegalReplies.some(isPinnedCapture), false,
+      'BROKEN_R3B_COUNTS_PSEUDO_LEGAL_CAPTURE');
+  } catch (error) {
+    detected = error;
+  }
+  assert.equal(detected?.code, 'ERR_ASSERTION');
+  assert.match(detected.message, /BROKEN_R3B_COUNTS_PSEUDO_LEGAL_CAPTURE/);
 });
 
 test('source objects remain unchanged and every returned object is deeply frozen', () => {
