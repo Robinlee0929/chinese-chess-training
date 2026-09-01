@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
-import { RED, BLACK, initialBoard } from './game.js';
+import { RED, BLACK, initialBoard, legalMoves, applyMove } from './game.js';
 import { createGameRecord, replayGameRecord } from './game-record.js';
 import { createGameReview, selectGameReviewPly } from './game-review.js';
 import {
@@ -21,6 +21,14 @@ function functionSource(name) {
   const match = source.match(new RegExp(`^(?:async )?function ${name}\\([^]*?^}`, 'm'));
   assert.ok(match, `main.js function ${name} exists`);
   return match[0];
+}
+
+function boardClickHandlerSource() {
+  const match = source.match(
+    /renderer\.domElement\.addEventListener\('click', \(e\) => \{([^]*?)\r?\n\}\);\r?\n\r?\n\/\/ ---------------- 終局/,
+  );
+  assert.ok(match, 'main.js production canvas click handler exists');
+  return `function dispatchBoardClick(e) {${match[1]}\n}`;
 }
 
 function emptyBoard() {
@@ -100,14 +108,27 @@ function domNode(hidden = false) {
   };
 }
 
-function harness(record, ply, { moveMutation = null } = {}) {
+function harness(record, ply, {
+  moveMutation = null,
+  undoMutation = false,
+  routerMutation = false,
+} = {}) {
   const review = selectGameReviewPly(createGameReview(record), ply);
   const liveBoard = initialBoard();
   const context = vm.createContext({
     RED,
     BLACK,
     structuredClone,
-    APP_STATE: Object.freeze({ GAME_REVIEW: 'GAME_REVIEW', GAME_ANALYSIS: 'GAME_ANALYSIS' }),
+    APP_STATE: Object.freeze({
+      NORMAL_GAME: 'NORMAL_GAME',
+      GAME_RECORD_LIBRARY: 'GAME_RECORD_LIBRARY',
+      GAME_REVIEW: 'GAME_REVIEW',
+      GAME_ANALYSIS: 'GAME_ANALYSIS',
+      PUZZLE_PRACTICING: 'PUZZLE_PRACTICING',
+      PUZZLE_PRACTICE_COMPLETE: 'PUZZLE_PRACTICE_COMPLETE',
+      PUZZLE_RECORDING: 'PUZZLE_RECORDING',
+      PUZZLE_RECORDED: 'PUZZLE_RECORDED',
+    }),
     appState: 'GAME_REVIEW',
     gameReviewSession: review,
     gameAnalysisState: null,
@@ -127,8 +148,14 @@ function harness(record, ply, { moveMutation = null } = {}) {
     mode: 'medium',
     aiToken: 17,
     aiThinking: true,
+    AI_SIDE: BLACK,
+    busy: false,
+    selected: null,
+    legal: [],
+    inputHits: [],
     normalDoMoveCalls: 0,
     normalUndoCalls: 0,
+    analysisApplyCalls: 0,
     aiRequests: 0,
     renderedBoard: null,
     reviewRenderCount: 0,
@@ -136,7 +163,10 @@ function harness(record, ply, { moveMutation = null } = {}) {
     resultAudioCalls: 0,
     createGameAnalysis,
     gameAnalysisLegalMoves,
-    applyGameAnalysisMove,
+    applyGameAnalysisMove(...args) {
+      context.analysisApplyCalls++;
+      return applyGameAnalysisMove(...args);
+    },
     undoGameAnalysisMove,
     resetGameAnalysis,
     GAME_RECORD_REASON_LABELS: Object.freeze({
@@ -162,7 +192,7 @@ function harness(record, ply, { moveMutation = null } = {}) {
     lastToMark: { visible: false, position: { set() {} } },
     selRing: { visible: false },
     clearFX() {},
-    clearSelection() {},
+    clearSelection() { context.selected = null; context.legal = []; },
     to3D: (r, c) => ({ x: c, z: r }),
     rebuildPieceMeshes(board) { context.renderedBoard = structuredClone(board); },
     showMoveDots() {},
@@ -173,14 +203,40 @@ function harness(record, ply, { moveMutation = null } = {}) {
       context.renderedBoard = structuredClone(context.gameReviewSession.snapshot.board);
     },
     toast() {},
-    doMove() { context.normalDoMoveCalls++; },
+    pick() { return context.inputHits.shift() ?? null; },
+    libraryActive: () => false,
+    authoringActive: () => false,
+    isAI: () => false,
+    practiceState: null,
+    handlePracticeBoardClick() {},
+    handleRecorderBoardClick() {},
+    handleEditorBoardClick() {},
+    select(r, c) {
+      context.selected = { r, c };
+      context.legal = legalMoves(context.board, r, c).map(({ r: toR, c: toC }) => ({ r: toR, c: toC }));
+    },
+    doMove(from, to) {
+      context.normalDoMoveCalls++;
+      const piece = context.board[from.r]?.[from.c];
+      const legal = piece?.side === context.turn
+        && legalMoves(context.board, from.r, from.c).some(({ r, c }) => r === to.r && c === to.c);
+      if (!legal) return false;
+      const captured = applyMove(context.board, from, to);
+      context.history.push({ from: { ...from }, to: { ...to }, captured });
+      context.turn = context.turn === RED ? BLACK : RED;
+      context.selected = null;
+      context.legal = [];
+      return true;
+    },
     undo() { context.normalUndoCalls++; },
+    downXY: null,
   });
   const names = [
     'appendGameReviewMeta', 'gameAnalysisTerminalLabel', 'clearGameAnalysisSelection',
     'syncGameAnalysisMoveMark', 'gameAnalysisAnnouncement', 'renderGameAnalysis',
     'enterGameAnalysis', 'makeGameAnalysisMove', 'undoGameAnalysis',
-    'resetGameAnalysisToSource', 'returnToGameReview',
+    'resetGameAnalysisToSource', 'returnToGameReview', 'selectGameAnalysisPiece',
+    'handleGameAnalysisBoardClick',
   ];
   let functions = names.map(functionSource);
   if (moveMutation) {
@@ -195,8 +251,35 @@ function harness(record, ply, { moveMutation = null } = {}) {
       mutations[moveMutation],
     );
   }
+  if (undoMutation) {
+    const index = names.indexOf('undoGameAnalysis');
+    functions[index] = functions[index].replace(
+      'gameAnalysisState = undoGameAnalysisMove(gameAnalysisState);',
+      'gameAnalysisState = undoGameAnalysisMove(gameAnalysisState);\n  undo();',
+    );
+  }
+  let router = boardClickHandlerSource();
+  if (routerMutation) {
+    router = router.replace(
+      'handleGameAnalysisBoardClick(hit);',
+      'handleGameAnalysisBoardClick(hit);\n    doMove({ r: 3, c: 0 }, { r: 4, c: 0 });',
+    );
+  }
+  functions.push(router);
   vm.runInContext(functions.join('\n'), context);
   return context;
+}
+
+function dispatchBoardMove(context, from, to, sourceBoard) {
+  const sourcePiece = sourceBoard[from.r][from.c];
+  const destinationPiece = sourceBoard[to.r][to.c];
+  assert.ok(sourcePiece, `source ${from.r},${from.c} contains a piece`);
+  context.inputHits.push({ userData: { r: from.r, c: from.c, piece: structuredClone(sourcePiece) } });
+  context.inputHits.push(destinationPiece
+    ? { userData: { r: to.r, c: to.c, piece: structuredClone(destinationPiece) } }
+    : { r: to.r, c: to.c });
+  context.dispatchBoardClick({ clientX: 10, clientY: 10 });
+  context.dispatchBoardClick({ clientX: 10, clientY: 10 });
 }
 
 function liveSnapshot(context) {
@@ -256,8 +339,11 @@ test('production entry rejects a canonical terminal review ply without state cha
 test('production undo, reset and terminal rendering are local and play no result presentation', () => {
   const record = repetitionRecord();
   const context = harness(record, 4);
+  const live = liveSnapshot(context);
   context.enterGameAnalysis();
-  for (const move of cycle) assert.equal(context.makeGameAnalysisMove(...move), true);
+  for (const move of cycle.slice(0, 3)) assert.equal(context.makeGameAnalysisMove(...move), true);
+  const expectedAfterUndo = context.gameAnalysisState;
+  assert.equal(context.makeGameAnalysisMove(...cycle[3]), true);
 
   assert.deepEqual(context.gameAnalysisState.terminal, {
     winner: null,
@@ -268,14 +354,59 @@ test('production undo, reset and terminal rendering are local and play no result
   assert.equal(context.makeGameAnalysisMove(...cycle[0]), false);
   assert.equal(context.resultAudioCalls, 0);
 
+  const normalUndoCountBefore = context.normalUndoCalls;
   assert.equal(context.undoGameAnalysis(), true);
   assert.equal(context.gameAnalysisState.moves.length, 3);
+  assert.deepEqual(context.gameAnalysisState.currentBoard, expectedAfterUndo.currentBoard);
+  assert.equal(context.gameAnalysisState.currentSide, expectedAfterUndo.currentSide);
+  assert.deepEqual(context.gameAnalysisState.repetitionHistory, expectedAfterUndo.repetitionHistory);
   assert.equal(context.gameAnalysisState.terminal, null);
+  assert.equal(context.normalUndoCalls, normalUndoCountBefore);
+  assert.equal(context.normalUndoCalls, 0);
+  assert.deepEqual(liveSnapshot(context), live);
   assert.match(context.gameAnalysisStatus.textContent, /已悔棋/);
   assert.equal(context.resetGameAnalysisToSource(), true);
   assert.equal(context.gameAnalysisState.moves.length, 0);
   assert.deepEqual(context.gameAnalysisState.currentBoard, replayGameRecord(record, 4).board);
   assert.match(context.gameAnalysisStatus.textContent, /已重置到來源局面/);
+});
+
+test('production canvas click dispatch separates normal, review and analysis routes at runtime', () => {
+  const record = repetitionRecord();
+  const normalFrom = { r: 3, c: 0 };
+  const normalTo = { r: 4, c: 0 };
+
+  const normal = harness(record, 4);
+  normal.appState = 'NORMAL_GAME';
+  normal.aiThinking = false;
+  normal.mode = 'pvp';
+  const normalHistoryLength = normal.history.length;
+  dispatchBoardMove(normal, normalFrom, normalTo, normal.board);
+  assert.equal(normal.normalDoMoveCalls, 1);
+  assert.equal(normal.analysisApplyCalls, 0);
+  assert.equal(normal.history.length, normalHistoryLength + 1);
+  assert.deepEqual(normal.board[normalTo.r][normalTo.c], { type: 'P', side: RED });
+
+  const review = harness(record, 4);
+  const reviewBefore = review.gameReviewSession;
+  dispatchBoardMove(review, normalFrom, normalTo, review.board);
+  assert.equal(review.normalDoMoveCalls, 0);
+  assert.equal(review.analysisApplyCalls, 0);
+  assert.equal(review.gameReviewSession, reviewBefore);
+
+  const analysis = harness(record, 4);
+  const live = liveSnapshot(analysis);
+  assert.equal(analysis.enterGameAnalysis(), true);
+  dispatchBoardMove(analysis, ...cycle[0], analysis.gameAnalysisState.currentBoard);
+  assert.equal(analysis.gameAnalysisState.moves.length, 1);
+  assert.equal(analysis.analysisApplyCalls, 1);
+  assert.equal(analysis.normalDoMoveCalls, 0);
+  assert.deepEqual(liveSnapshot(analysis), live);
+  dispatchBoardMove(analysis, ...cycle[1], analysis.gameAnalysisState.currentBoard);
+  assert.equal(analysis.gameAnalysisState.moves.length, 2);
+  assert.equal(analysis.analysisApplyCalls, 2);
+  assert.equal(analysis.normalDoMoveCalls, 0);
+  assert.deepEqual(liveSnapshot(analysis), live);
 });
 
 test('returning restores the exact review source and a later record opens uncontaminated', () => {
