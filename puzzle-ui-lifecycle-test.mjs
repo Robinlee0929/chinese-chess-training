@@ -11,9 +11,11 @@ import * as photo from './puzzle-photo.js';
 import * as pieceTypes from './puzzle-photo-piece-types.js';
 import * as transfer from './puzzle-transfer.js';
 import * as analytics from './puzzle-analytics.js';
+import { createGameReviewPuzzleHandoff } from './game-review-puzzle-handoff.js';
 import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js';
 import { createGameRecord, validateGameRecord } from './game-record.js';
 import { GameRecordStoreError, createGameRecordStore } from './game-record-store.js';
+import { createGameReview, selectGameReviewPly } from './game-review.js';
 
 // Execute the real UI lifecycle functions with a deterministic clock and minimal
 // rendering/DOM doubles. No browser globals are injected and no UI logic is copied.
@@ -35,7 +37,7 @@ function node() {
       return enabled;
     },
     contains: (key) => classes.has(key),
-  }, removeAttribute(key) { delete this[key]; },
+  }, removeAttribute(key) { delete this[key]; }, focus() { this.focused = true; },
   style: {}, value: '', textContent: '', innerHTML: '', disabled: false };
 }
 const photoCanvasNames = ['calibrationCornerCanvas', 'calibrationRectifiedCanvas',
@@ -123,6 +125,7 @@ function harness(options = {}) {
     AI_SIDE: game.BLACK, aiMoveStart: 0, aiRequestCount: 0, aiMaybeMoveCalls: 0,
     aiWorker: { postMessage: () => { context.aiRequestCount++; } }, aiModule: null,
     practiceToken: 0, appState: 'NORMAL_GAME', editorState: null, recorderState: null,
+    gameReviewSession: null, gameReviewPuzzleReturnContext: null,
     practiceState: null, activeSavedPuzzleId: null, practiceCompletionRecorded: false,
     practiceHintLevel: 0, practiceHint: null, practiceAttempt: null, hintMarkerRoles: [],
     practiceAnalyticsStore, analyticsStorage,
@@ -134,7 +137,7 @@ function harness(options = {}) {
     pendingPuzzleImport: null, puzzleImportToken: 0,
     photoReferenceState: photo.createPhotoReferenceState(), calibrationState: null,
     rectifiedPhotoPixels: null, confirmedCalibration: null, revoked: [],
-    APP_STATE: Object.fromEntries(['NORMAL_GAME', 'GAME_RECORD_LIBRARY', 'GAME_REVIEW',
+    APP_STATE: Object.fromEntries(['NORMAL_GAME', 'GAME_RECORD_LIBRARY', 'GAME_REVIEW', 'GAME_ANALYSIS',
       'PUZZLE_EDITOR', 'PUZZLE_CONFIRMED',
       'PUZZLE_RECORDING', 'PUZZLE_RECORDED', 'PUZZLE_PRACTICING', 'PUZZLE_PRACTICE_COMPLETE',
       'PUZZLE_LIBRARY', 'PUZZLE_VIEW'].map((state) => [state, state])),
@@ -150,6 +153,7 @@ function harness(options = {}) {
     syncPhotoUI: noop, syncRecognitionUI: noop, markPracticeCompleted: noop,
     markPracticeStarted: () => true, isAI: () => false, setEditorTool: noop,
     setEditorMessage: noop, setPhotoImportMessage: noop, renderLibraryList: noop, openLibraryPuzzle: noop,
+    renderGameReview: noop, createGameReviewPuzzleHandoff,
     decodePhotoObjectUrl: async () => ({ naturalWidth: 4, naturalHeight: 3 }),
     document: { querySelector: () => ({ checked: false }) },
     window: { confirm: () => false },
@@ -167,7 +171,9 @@ function harness(options = {}) {
     Date,
     to3D: (r, c) => vector(c - 4, 0, 4.5 - r),
   });
-  for (const name of ['appEl', 'editorPanel', 'recorderPanel', 'libraryPanel', 'banner',
+  for (const name of ['appEl', 'editorPanel', 'recorderPanel', 'libraryPanel', 'gameRecordPanel',
+    'gameRecordLibraryView', 'gameReviewView', 'gameAnalysisView', 'editorHeading',
+    'btnGameReviewCreatePuzzle', 'banner',
     'overlay', 'logEl', 'logEmpty', 'photoPreviewImage', 'photoFileInput', 'puzzleImportFile',
     'libraryTransferStatus', 'libraryImportPreview', 'libraryImportPreviewText',
     'btnLibraryImportConfirm', 'recorderTitle', 'recorderSubtitle', 'recorderBadge',
@@ -199,7 +205,8 @@ function harness(options = {}) {
     'syncPracticeUI', 'startPractice', 'startSavedPractice', 'doPracticeMove', 'exitPractice',
     'restartCurrentPractice', 'resetRecognitionReview', 'invalidateRecognition',
     'invalidateRecognitionForCalibrationChange', 'invalidateCalibration', 'releasePhotoReference',
-    'enterEditor', 'exitEditor', 'enterLibrary', 'markEditorDirty', 'onAIResult',
+    'activatePuzzleEditor', 'enterEditor', 'createPuzzleFromGameReview', 'exitEditor',
+    'enterLibrary', 'markEditorDirty', 'onAIResult',
     'loadSelectedPhoto', 'photoErrorMessage', 'storeErrorMessage', 'transferErrorMessage',
     'setLibraryTransferStatus', 'preparePuzzleImportPreview', 'clearPendingPuzzleImport',
     'downloadPuzzleTransfer', 'loadPuzzleImportFile', 'cancelPuzzleImport', 'confirmPuzzleImport'];
@@ -253,6 +260,20 @@ function normalCheckmateFixture() {
     turn: game.RED,
     move: [{ r: 2, c: 3 }, { r: 2, c: 4 }],
   };
+}
+
+function r4ReviewFixture(id = 'r4-review') {
+  const setup = normalCheckmateFixture();
+  return selectGameReviewPly(createGameReview({
+    schemaVersion: 1,
+    id,
+    createdAt: '2026-09-01T01:00:00.000Z',
+    completedAt: '2026-09-01T01:01:00.000Z',
+    initialPosition: { board: setup.board, sideToMove: setup.turn },
+    moves: [{ from: setup.move[0], to: setup.move[1] }],
+    mode: 'pvp',
+    result: { winner: game.RED, terminationReason: 'checkmate' },
+  }), 0);
 }
 
 function normalStalemateFixture() {
@@ -363,6 +384,102 @@ test('game review blocks normal move, undo and new-game mutations', () => {
   }, before);
   assert.equal(ctx.aiRequestCount, 0);
   assert.equal(ctx.analyticsStorage.writes, 0);
+});
+
+test('Review handoff enters the existing editor and exit restores the exact record and ply', () => {
+  const ctx = harness();
+  const reviewSession = r4ReviewFixture();
+  const reviewBefore = structuredClone(reviewSession);
+  const liveBefore = {
+    board: structuredClone(ctx.board), turn: ctx.turn, history: structuredClone(ctx.history),
+    posHistory: structuredClone(ctx.posHistory), repHistory: structuredClone(ctx.repHistory),
+    capturedBy: structuredClone(ctx.capturedBy), session: structuredClone(ctx.normalGameRecordSession),
+    mode: ctx.mode, aiToken: ctx.aiToken,
+  };
+  const invoker = node();
+  ctx.appState = ctx.APP_STATE.GAME_REVIEW;
+  ctx.gameReviewSession = reviewSession;
+
+  assert.equal(ctx.createPuzzleFromGameReview(invoker), true);
+  assert.equal(ctx.appState, ctx.APP_STATE.PUZZLE_EDITOR);
+  same(ctx.editorState.board, reviewSession.snapshot.board);
+  assert.equal(ctx.editorState.sideToMove, reviewSession.snapshot.sideToMove);
+  same(ctx.gameReviewPuzzleReturnContext, {
+    reviewSession,
+    sourceRecordId: reviewSession.record.id,
+    sourcePly: reviewSession.selectedPly,
+    invoker,
+  });
+  assert.equal(ctx.recorderState, null, 'handoff does not auto-populate a solution recorder');
+  ctx.editorState = editor.moveEditorPiece(ctx.editorState, { r: 9, c: 0 }, { r: 8, c: 0 });
+  assert.notDeepEqual(structuredClone(ctx.editorState.board), reviewSession.snapshot.board);
+
+  ctx.exitEditor();
+  assert.equal(ctx.appState, ctx.APP_STATE.GAME_REVIEW);
+  assert.equal(ctx.gameReviewSession.record.id, reviewSession.record.id);
+  assert.equal(ctx.gameReviewSession.selectedPly, reviewSession.selectedPly);
+  same(ctx.gameReviewSession, reviewBefore);
+  assert.equal(ctx.gameReviewPuzzleReturnContext, null);
+  assert.equal(invoker.focused, true);
+  same({
+    board: ctx.board, turn: ctx.turn, history: ctx.history, posHistory: ctx.posHistory,
+    repHistory: ctx.repHistory, capturedBy: ctx.capturedBy,
+    session: ctx.normalGameRecordSession, mode: ctx.mode, aiToken: liveBefore.aiToken + 2,
+  }, { ...liveBefore, aiToken: liveBefore.aiToken + 2 });
+  assert.equal(ctx.gameRecordStorage.writes, 0);
+  assert.equal(ctx.analyticsStorage.writes, 0);
+});
+
+test('terminal and Analysis states reject R4 handoff without lifecycle mutation', () => {
+  const ctx = harness();
+  const terminal = createGameReview(r4ReviewFixture().record);
+  ctx.appState = ctx.APP_STATE.GAME_REVIEW;
+  ctx.gameReviewSession = terminal;
+  assert.equal(ctx.createPuzzleFromGameReview(), false);
+  assert.equal(ctx.appState, ctx.APP_STATE.GAME_REVIEW);
+  assert.equal(ctx.editorState, null);
+  assert.equal(ctx.gameReviewPuzzleReturnContext, null);
+
+  ctx.appState = ctx.APP_STATE.GAME_ANALYSIS;
+  ctx.gameReviewSession = r4ReviewFixture();
+  assert.equal(ctx.createPuzzleFromGameReview(), false);
+  assert.equal(ctx.appState, ctx.APP_STATE.GAME_ANALYSIS);
+  assert.equal(ctx.editorState, null);
+});
+
+test('R4 source context is replaced across records and cannot restore a prior record', () => {
+  const ctx = harness();
+  ctx.appState = ctx.APP_STATE.GAME_REVIEW;
+  ctx.gameReviewSession = r4ReviewFixture('record-a');
+  ctx.createPuzzleFromGameReview();
+  ctx.exitEditor();
+  assert.equal(ctx.gameReviewSession.record.id, 'record-a');
+
+  ctx.gameReviewSession = r4ReviewFixture('record-b');
+  ctx.createPuzzleFromGameReview();
+  assert.equal(ctx.gameReviewPuzzleReturnContext.sourceRecordId, 'record-b');
+  ctx.exitEditor();
+  assert.equal(ctx.gameReviewSession.record.id, 'record-b');
+  assert.equal(ctx.gameReviewSession.selectedPly, 0);
+});
+
+test('negative control: recomputing Review at its default ply would violate exact cancel return', () => {
+  const ctx = harness();
+  ctx.createGameReview = createGameReview;
+  ctx.appState = ctx.APP_STATE.GAME_REVIEW;
+  ctx.gameReviewSession = r4ReviewFixture('wrong-ply-control');
+  ctx.createPuzzleFromGameReview();
+  const exactRestore = 'gameReviewSession = reviewReturn.reviewSession;';
+  const brokenExit = functionSource('exitEditor').replace(
+    exactRestore,
+    'gameReviewSession = createGameReview(reviewReturn.reviewSession.record);',
+  );
+  assert.notEqual(brokenExit, functionSource('exitEditor'));
+  vm.runInContext(brokenExit, ctx);
+  ctx.exitEditor();
+  assert.equal(ctx.gameReviewSession.selectedPly, 1);
+  assert.notEqual(ctx.gameReviewSession.selectedPly, 0,
+    'the negative control demonstrates that the exact source session is required');
 });
 
 test('normal terminal reasons map explicitly to the exact GameRecord contract', () => {

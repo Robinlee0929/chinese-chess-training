@@ -69,7 +69,7 @@
   "isBasedOn": "https://github.com/doggy8088/chinese-chess"
 }
 </script>
-<link rel="stylesheet" href="./css/style.css?v=a21155254a">
+<link rel="stylesheet" href="./css/style.css?v=0808f103cf">
 <script type="importmap">
 {
   "imports": {
@@ -136,7 +136,7 @@
     <aside id="editorPanel" class="hidden" aria-label="殺局局面編輯器">
       <div class="editor-heading">
         <div>
-          <h2>建立殺局</h2>
+          <h2 id="editorHeading" tabindex="-1">建立殺局</h2>
           <p>手動配置棋子與先行方</p>
         </div>
         <span class="editor-badge">局面編輯</span>
@@ -512,7 +512,10 @@
           <button id="btnGameReviewNext" type="button" aria-label="下一著">▶<span>下一著</span></button>
           <button id="btnGameReviewLast" type="button" aria-label="前往終局">▶|<span>終局</span></button>
         </div>
-        <button id="btnGameReviewAnalyze" type="button" class="game-analysis-primary">從這裡分析</button>
+        <div class="game-review-actions" aria-label="複盤操作">
+          <button id="btnGameReviewAnalyze" type="button" class="game-analysis-primary">從這裡分析</button>
+          <button id="btnGameReviewCreatePuzzle" type="button" class="game-review-puzzle-primary">建立殺局題</button>
+        </div>
         <details id="gameReviewMoveDetails" class="game-review-moves" open>
           <summary>完整著法 <span id="gameReviewMoveCount"></span></summary>
           <ol id="gameReviewMoveList" aria-label="完整複盤著法"></ol>
@@ -587,6 +590,6 @@
   <div id="toast" class="hidden" role="status"></div>
 </div>
 
-<script type="module" src="./main.js?v=a21155254a"></script>
+<script type="module" src="./main.js?v=0808f103cf"></script>
 </body>
 </html>

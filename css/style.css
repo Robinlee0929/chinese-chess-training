@@ -623,6 +623,7 @@ aside h3 {
   border-bottom: 1px solid var(--line);
 }
 .editor-heading h2 { font-size: 18px; letter-spacing: 3px; }
+.editor-heading h2:focus-visible { outline: 2px solid var(--gold); outline-offset: 4px; }
 .editor-heading p { margin-top: 4px; color: var(--muted); font-size: 11.5px; }
 .editor-badge {
   flex: none;
@@ -1060,6 +1061,8 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
 .game-review-move[aria-current="step"] .ply,
 .game-review-move[aria-current="step"] .side { color: #3a2511; }
 #btnGameReviewDelete { width: 100%; min-height: 40px; }
+.game-review-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.game-review-actions button { min-width: 0; min-height: 44px; padding: 7px 8px; font-size: 12px; }
 .game-analysis-primary {
   min-height: 44px;
   color: #102a25;
@@ -1068,6 +1071,13 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
   font-weight: 700;
 }
 .game-analysis-primary:hover:not(:disabled) { background: linear-gradient(180deg, #afe5d5, #73c3af); }
+.game-review-puzzle-primary {
+  color: #2e210c;
+  border-color: #d9a441;
+  background: linear-gradient(180deg, #f0c463, #d9a441);
+  font-weight: 700;
+}
+.game-review-puzzle-primary:hover:not(:disabled) { background: linear-gradient(180deg, #f6d17a, #e6b552); }
 .game-analysis-badge { color: #9adbc8; border-color: rgba(101, 183, 164, 0.5); background: rgba(101, 183, 164, 0.1); }
 .game-analysis-status {
   min-height: 54px;
@@ -1432,7 +1442,7 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
   .game-review-navigation button,
   .game-analysis-view .game-review-topbar button,
   .game-analysis-actions button,
-  #btnGameReviewAnalyze,
+  .game-review-actions button,
   #btnGameReviewDelete { min-height: 44px; }
   .library-transfer-actions button,
   .library-import-preview-actions button { min-height: 42px; }

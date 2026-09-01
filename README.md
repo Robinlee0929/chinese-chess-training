@@ -111,6 +111,7 @@ node game-review-test.mjs # 唯讀複盤導覽、邊界、切換紀錄與資料�
 node game-review-lifecycle-test.mjs # 正常棋局／AI／儲存與複盤 UI 的跨流程隔離
 node game-analysis-test.mjs # 臨時分析狀態、走棋／吃子／記法、悔棋／重置、終局與歷史重複前綴
 node game-analysis-lifecycle-test.mjs # 真實分析入口／渲染／返回流程、正常棋局隔離與突變負向控制
+node game-review-puzzle-handoff-test.mjs # 複盤局面轉殺局編輯器、終局阻擋、深層隔離與既有錄製／儲存契約
 node puzzle-domain-test.mjs
 node puzzle-editor-test.mjs
 node puzzle-recorder-test.mjs

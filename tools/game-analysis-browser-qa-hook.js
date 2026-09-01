@@ -16,6 +16,23 @@ probe.hidden = true;
 probe.setAttribute('aria-hidden', 'true');
 document.body.append(probe);
 
+let r4FixtureSeeded = false;
+
+function seedR4Fixture(chess) {
+  if (r4FixtureSeeded || new URLSearchParams(location.search).get('qa') !== 'r4') return;
+  r4FixtureSeeded = true;
+  const board = Array.from({ length: 10 }, () => Array(9).fill(null));
+  board[0][4] = { type: 'K', side: 'red' };
+  board[2][3] = { type: 'R', side: 'red' };
+  board[2][4] = { type: 'P', side: 'black' };
+  board[9][0] = { type: 'R', side: 'red' };
+  board[9][4] = { type: 'K', side: 'black' };
+  board[9][8] = { type: 'R', side: 'red' };
+  chess.setMode('pvp');
+  chess.resetTo(board, 'red');
+  chess.doMove({ r: 2, c: 3 }, { r: 2, c: 4 });
+}
+
 function project(world) {
   const canvas = document.querySelector('#stage canvas');
   if (!canvas || !activeCamera) return null;
@@ -41,6 +58,7 @@ function readProbe() {
   if (!chess || !canvas || !activeCamera) {
     return { ready: false, chess: !!chess, canvas: !!canvas, camera: !!activeCamera };
   }
+  seedR4Fixture(chess);
   const squares = {};
   for (let r = 0; r < 10; r++) {
     for (let c = 0; c < 9; c++) squares[`${r},${c}`] = project(squareWorld(r, c));
@@ -76,6 +94,9 @@ function readProbe() {
       terminal: analysis.terminal,
       boardEqualsAnchor: JSON.stringify(analysis.currentBoard) === JSON.stringify(analysis.anchorBoard),
     } : null,
+    editor: chess.editorDraft,
+    reviewPuzzleReturn: chess.gameReviewPuzzleReturnContext,
+    recordedPuzzle: chess.recordedPuzzleResult,
     storage: localStorage.getItem('chinese-chess-training:game-records:v1'),
     canvas: canvas.getBoundingClientRect().toJSON(),
     projections: { squares, pieces },

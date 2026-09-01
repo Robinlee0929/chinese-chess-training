@@ -250,6 +250,7 @@ function harness({
     btnGameReviewNext: domNode(),
     btnGameReviewLast: domNode(),
     btnGameReviewAnalyze: domNode(),
+    btnGameReviewCreatePuzzle: domNode(),
     btnGameReviewBack: domNode(),
     btnGameReviewDelete: domNode(true),
     overlay: domNode(true),
