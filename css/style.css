@@ -1109,6 +1109,53 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
   background: rgba(224, 125, 113, 0.08);
 }
 .game-review-ai-panel.error strong { color: #f1b5ae; }
+.game-review-evidence {
+  min-width: 0;
+  margin-top: 5px;
+  padding-top: 9px;
+  border-top: 1px solid rgba(142, 168, 232, 0.3);
+}
+.game-review-evidence-moves {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+}
+.game-review-evidence-moves > div {
+  min-width: 0;
+  padding: 6px 7px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+}
+.game-review-evidence-moves dt {
+  color: var(--muted);
+  font-size: 11px;
+}
+.game-review-evidence-moves dd {
+  margin: 1px 0 0;
+  color: var(--text);
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.game-review-evidence-match {
+  margin: 8px 0 0;
+  color: #c8d7fb;
+  font-weight: 700;
+}
+.game-review-evidence-facts h3 {
+  margin: 8px 0 3px;
+  color: #dce6ff;
+  font-size: 12px;
+}
+.game-review-evidence-facts ul {
+  margin: 0;
+  padding-left: 19px;
+  color: var(--text);
+}
+.game-review-evidence-facts li + li { margin-top: 2px; }
+@media (max-width: 420px) {
+  .game-review-evidence-moves { grid-template-columns: 1fr; }
+}
 .game-analysis-badge { color: #9adbc8; border-color: rgba(101, 183, 164, 0.5); background: rgba(101, 183, 164, 0.1); }
 .game-analysis-status {
   min-height: 54px;

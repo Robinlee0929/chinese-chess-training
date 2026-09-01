@@ -20,6 +20,7 @@ import {
   beginGameReviewAiRequest,
   settleGameReviewAiResponse,
 } from './game-review-ai.js';
+import { createGameReviewEvidence } from './game-review-evidence.js';
 
 const source = readFileSync(new URL('./main.js', import.meta.url), 'utf8');
 const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
@@ -229,6 +230,7 @@ function harness({
     gameAnalysisNotice: '',
     gameReviewAiState: createGameReviewAiState(),
     gameReviewAiWorker: null,
+    gameReviewEvidenceState: null,
     reviewAiWorkers,
     renderedBoard: liveBoard,
     renderCount: 0,
@@ -251,6 +253,7 @@ function harness({
     invalidateGameReviewAiState,
     beginGameReviewAiRequest,
     settleGameReviewAiResponse,
+    createGameReviewEvidence,
     GAME_RECORD_MODE_LABELS: Object.freeze({
       pvp: '雙人對弈', easy: '人機・簡單', medium: '人機・中等', hard: '人機・困難',
     }),
@@ -283,6 +286,12 @@ function harness({
     gameReviewAiPanel: domNode(true),
     gameReviewAiHeading: domNode(),
     gameReviewAiDetail: domNode(),
+    gameReviewEvidence: domNode(true),
+    gameReviewEvidencePlayed: domNode(),
+    gameReviewEvidenceCandidate: domNode(),
+    gameReviewEvidenceMatch: domNode(true),
+    gameReviewEvidenceFactsSection: domNode(),
+    gameReviewEvidenceFacts: domNode(),
     btnGameReviewCreatePuzzle: domNode(),
     btnGameReviewBack: domNode(),
     btnGameReviewDelete: domNode(true),
@@ -343,7 +352,9 @@ function harness({
     },
   });
   const names = [
-    'terminateGameReviewAiWorker', 'invalidateGameReviewAi', 'renderGameReviewAi',
+    'terminateGameReviewAiWorker', 'invalidateGameReviewAi',
+    'gameReviewEvidenceTerminalText', 'gameReviewEvidenceFactTexts',
+    'renderGameReviewEvidence', 'renderGameReviewAi',
     'handleGameReviewAiResponse', 'requestGameReviewAiCandidate',
     'pauseLiveGameForGameRecords', 'restoreLiveGamePresentation',
     'enterGameRecordLibrary', 'showGameRecordLibrary', 'openGameReview',
@@ -376,6 +387,12 @@ function harness({
     mainFunctions[index] = mainFunctions[index].replace(
       'gameReviewAiState = settled.state;',
       'gameReviewAiState = settled.state;\n  doMove({ r: 0, c: 0 }, { r: 0, c: 1 });',
+    );
+  } else if (reviewAiMutation === 'storage') {
+    const index = names.indexOf('handleGameReviewAiResponse');
+    mainFunctions[index] = mainFunctions[index].replace(
+      'gameReviewAiState = settled.state;',
+      "gameReviewAiState = settled.state;\n  storage.setItem('r3b-forbidden', '1');",
     );
   }
   vm.runInContext([...rendererHelpers, rendererSource, ...mainFunctions].filter(Boolean).join('\n'), context);
@@ -714,8 +731,10 @@ test('explicit Review AI request uses only canonical Review context and renders 
   const normalWorker = ctx.aiWorker;
 
   assert.equal(ctx.reviewAiWorkers.length, 0, 'analysis is explicit, never automatic on Review render/navigation');
+  assert.equal(ctx.gameReviewEvidenceState, null, 'evidence is absent before R3A success');
   assert.equal(ctx.requestGameReviewAiCandidate(), true);
   assert.equal(ctx.gameReviewAiState.status, 'loading');
+  assert.equal(ctx.gameReviewEvidenceState, null, 'evidence remains absent while R3A is loading');
   assert.equal(ctx.gameReviewAiHeading.textContent, '電腦搜尋中…');
   assert.equal(ctx.reviewAiWorkers.length, 1);
   const worker = ctx.reviewAiWorkers[0];
@@ -733,6 +752,18 @@ test('explicit Review AI request uses only canonical Review context and renders 
   assert.equal(ctx.gameReviewAiState.status, 'success');
   assert.equal(ctx.gameReviewAiState.candidate.notation, '俥六平五');
   assert.equal(ctx.gameReviewAiState.candidate.depth, 2);
+  assert.ok(ctx.gameReviewEvidenceState, 'eligible R3A success automatically derives R3B evidence');
+  assert.equal(ctx.gameReviewEvidenceState.kind, 'review-move-comparison');
+  assert.equal(ctx.gameReviewEvidenceState.source.recordId, saved.id);
+  assert.equal(ctx.gameReviewEvidenceState.source.ply, 0);
+  assert.deepEqual(ctx.gameReviewEvidenceState.played.move, saved.moves[0]);
+  assert.equal(ctx.gameReviewEvidenceState.comparison.status, 'MATCH');
+  assert.equal(ctx.gameReviewEvidencePlayed.textContent, '俥六平五');
+  assert.equal(ctx.gameReviewEvidenceCandidate.textContent, '俥六平五');
+  assert.equal(ctx.gameReviewEvidenceMatch.textContent, '你的實戰著法與 AI 候選相同');
+  assert.equal(ctx.gameReviewEvidenceFactsSection.classList.contains('hidden'), true);
+  assert.equal(ctx.gameReviewEvidence.classList.contains('hidden'), false);
+  assert.equal(ctx.reviewAiWorkers.length, 1, 'R3B creates no additional worker or search');
   assert.equal(worker.terminated, true);
   assert.equal(ctx.gameReviewAiWorker, null);
   assert.match(ctx.gameReviewAiHeading.textContent, /^AI 候選著法：/);
@@ -756,6 +787,7 @@ test('Review AI error is retryable and worker construction has no main-thread fa
 
   assert.equal(ctx.requestGameReviewAiCandidate(), true);
   assert.equal(ctx.gameReviewAiState.status, 'error');
+  assert.equal(ctx.gameReviewEvidenceState, null);
   assert.match(ctx.gameReviewAiHeading.textContent, /請再試一次/);
   assert.equal(ctx.btnGameReviewAiAnalyze.disabled, false);
   assert.equal(ctx.reviewAiWorkers.length, 0);
@@ -784,12 +816,15 @@ test('new request, ply navigation and record switch reject stale revision and ol
   assert.equal(ctx.gameReviewAiState.status, 'loading', 'wrong revision remains ignored');
   secondWorker.emit(successfulReviewAiResponse(secondWorker));
   assert.equal(ctx.gameReviewAiState.status, 'success');
+  assert.ok(ctx.gameReviewEvidenceState);
 
   ctx.requestGameReviewAiCandidate();
+  assert.equal(ctx.gameReviewEvidenceState, null, 'a new R3A request clears prior evidence');
   const plyWorker = ctx.reviewAiWorkers.at(-1);
   ctx.navigateGameReview('last');
   assert.equal(plyWorker.terminated, true);
   assert.equal(ctx.gameReviewAiState.status, 'idle');
+  assert.equal(ctx.gameReviewEvidenceState, null);
   assert.equal(ctx.gameReviewAiPanel.classList.contains('hidden'), true);
   plyWorker.emit(successfulReviewAiResponse(plyWorker, { from: { r: 0, c: 4 }, to: { r: 0, c: 5 } }));
   assert.equal(ctx.gameReviewAiState.status, 'idle', 'stale ply response remains ignored');
@@ -802,6 +837,7 @@ test('new request, ply navigation and record switch reject stale revision and ol
   recordWorker.emit(successfulReviewAiResponse(recordWorker));
   assert.equal(ctx.gameReviewSession.record.id, recordB.id);
   assert.equal(ctx.gameReviewAiState.status, 'idle', 'stale Record A response cannot surface on Record B');
+  assert.equal(ctx.gameReviewEvidenceState, null, 'stale Record A evidence cannot surface on Record B');
   assert.equal(ctx.normalDoMoveCalls, 0);
   assert.equal(ctx.storage.writes, 0);
 });
@@ -818,6 +854,7 @@ test('Review exit invalidates pending results and normal AI resumes through its 
   assert.equal(ctx.aiToken, tokenAfterReviewEntry);
   ctx.exitGameRecordFlow();
   assert.equal(worker.terminated, true);
+  assert.equal(ctx.gameReviewEvidenceState, null);
   assert.equal(ctx.appState, 'NORMAL_GAME');
   assert.equal(ctx.aiToken, tokenAfterReviewEntry + 1, 'only the existing Review exit invalidation advances normal token');
   assert.equal(ctx.aiRequests, 1, 'normal scheduler resumes one normal AI request');
@@ -840,6 +877,9 @@ test('terminal and GAME_ANALYSIS contexts gate Review AI, while R2/R4 production
   assert.equal(ctx.reviewAiWorkers.length, 0);
   assert.match(functionSource('enterGameAnalysis'), /invalidateGameReviewAi\(\)/);
   assert.match(functionSource('createPuzzleFromGameReview'), /invalidateGameReviewAi\(\)/);
+  ctx.gameReviewEvidenceState = Object.freeze({ kind: 'stale-evidence' });
+  ctx.invalidateGameReviewAi();
+  assert.equal(ctx.gameReviewEvidenceState, null, 'the shared R2/R4 invalidation clears R3B evidence');
   assert.doesNotMatch(
     html.match(/<section id="gameAnalysisView"[^]*?<\/section>/)?.[0] || '',
     /btnGameReviewAiAnalyze|AI 分析/,
@@ -865,6 +905,26 @@ test('negative control detects forbidden doMove reuse in the real Review AI resu
   assert.match(detected.message, /REVIEW_AI_DO_MOVE_COUNT/);
 });
 
+test('negative control detects any R3B-triggered storage write', () => {
+  const saved = record('review-evidence-storage-mutation');
+  const ctx = harness({ records: [saved], realRenderer: true, reviewAiMutation: 'storage' });
+  ctx.enterGameRecordLibrary();
+  ctx.openStoredGameReview(saved.id);
+  ctx.navigateGameReview('first');
+  const writesBefore = ctx.storage.writes;
+  ctx.requestGameReviewAiCandidate();
+  const worker = ctx.reviewAiWorkers.at(-1);
+  worker.emit(successfulReviewAiResponse(worker));
+  let detected = null;
+  try {
+    assert.equal(ctx.storage.writes, writesBefore, 'R3B_STORAGE_WRITE_COUNT');
+  } catch (error) {
+    detected = error;
+  }
+  assert.equal(detected?.code, 'ERR_ASSERTION');
+  assert.match(detected.message, /R3B_STORAGE_WRITE_COUNT/);
+});
+
 test('source and DOM contain explicit read-only, accessibility and responsive guards', () => {
   assert.match(functionSource('doMove'), /if\s*\(!normalGameActive\(\)\)\s*return/);
   assert.match(source, /if \(appState === APP_STATE\.GAME_RECORD_LIBRARY \|\| appState === APP_STATE\.GAME_REVIEW\) return;\s*\n\s*const hit = pick\(e\)/);
@@ -876,6 +936,9 @@ test('source and DOM contain explicit read-only, accessibility and responsive gu
   assert.match(html, /id="btnGameReviewPrevious"[^>]*type="button"/);
   assert.match(html, /id="btnGameReviewAiAnalyze"[^>]*type="button"[^>]*aria-label="分析目前複盤局面"/);
   assert.match(html, /id="gameReviewAiPanel"[^>]*role="status"[^>]*aria-live="polite"/);
+  assert.match(html, /id="gameReviewEvidence"[^>]*aria-label="實戰著法與 AI 候選的事實比較"/);
+  assert.equal((html.match(/id="btnGameReviewAiAnalyze"/g) || []).length, 1, 'R3B adds no second action');
+  assert.doesNotMatch(html, /最佳著|你走錯了|失誤|大漏著/);
   assert.match(source, /setAttribute\('aria-current', 'step'\)/);
   assert.match(source, /ArrowLeft: 'previous'/);
   assert.match(source, /ArrowRight: 'next'/);

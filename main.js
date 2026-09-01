@@ -7,9 +7,9 @@ import {
   ROWS, COLS, RED, BLACK,
   initialBoard, legalMoves, applyMove, inCheck,
   hasAnyLegalMove, name, notation, hashBoard, repetitionVerdict,
-} from './game.js?v=75fe963924';
-import { createGameRecord } from './game-record.js?v=75fe963924';
-import { createGameRecordStore } from './game-record-store.js?v=75fe963924';
+} from './game.js?v=16f0f90eac';
+import { createGameRecord } from './game-record.js?v=16f0f90eac';
+import { createGameRecordStore } from './game-record-store.js?v=16f0f90eac';
 import {
   createGameReview,
   createGameRecordLibraryView,
@@ -18,21 +18,22 @@ import {
   nextGameReviewPly,
   lastGameReviewPly,
   selectGameReviewPly,
-} from './game-review.js?v=75fe963924';
+} from './game-review.js?v=16f0f90eac';
 import {
   createGameReviewAiState,
   invalidateGameReviewAiState,
   beginGameReviewAiRequest,
   settleGameReviewAiResponse,
-} from './game-review-ai.js?v=75fe963924';
+} from './game-review-ai.js?v=16f0f90eac';
+import { createGameReviewEvidence } from './game-review-evidence.js?v=16f0f90eac';
 import {
   createGameAnalysis,
   gameAnalysisLegalMoves,
   applyGameAnalysisMove,
   undoGameAnalysisMove,
   resetGameAnalysis,
-} from './game-analysis.js?v=75fe963924';
-import { createGameReviewPuzzleHandoff } from './game-review-puzzle-handoff.js?v=75fe963924';
+} from './game-analysis.js?v=16f0f90eac';
+import { createGameReviewPuzzleHandoff } from './game-review-puzzle-handoff.js?v=16f0f90eac';
 import {
   PuzzleEditorError,
   createEditorState,
@@ -42,7 +43,7 @@ import {
   setEditorSideToMove,
   confirmAuthoredPosition,
   exportAuthoredPosition,
-} from './puzzle-editor.js?v=75fe963924';
+} from './puzzle-editor.js?v=16f0f90eac';
 import {
   PuzzleRecorderError,
   createRecorder,
@@ -52,7 +53,7 @@ import {
   finishRecording,
   exportRecorderBoard,
   exportRecordedResult,
-} from './puzzle-recorder.js?v=75fe963924';
+} from './puzzle-recorder.js?v=16f0f90eac';
 import {
   PuzzlePracticeError,
   PRACTICE_HINT_MAX_LEVEL,
@@ -62,12 +63,12 @@ import {
   derivePracticeHint,
   restartPractice,
   exportPracticeSnapshot,
-} from './puzzle-practice.js?v=75fe963924';
-import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=75fe963924';
+} from './puzzle-practice.js?v=16f0f90eac';
+import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=16f0f90eac';
 import {
   PracticeAnalyticsError,
   createPracticeAnalyticsStore,
-} from './puzzle-analytics.js?v=75fe963924';
+} from './puzzle-analytics.js?v=16f0f90eac';
 import {
   PUZZLE_TRANSFER_FORMAT,
   PUZZLE_TRANSFER_SCHEMA_VERSION,
@@ -75,7 +76,7 @@ import {
   PuzzleTransferError,
   serializePuzzleExport,
   parsePuzzleImport,
-} from './puzzle-transfer.js?v=75fe963924';
+} from './puzzle-transfer.js?v=16f0f90eac';
 import {
   PHOTO_MAX_ZOOM,
   PHOTO_MIN_ZOOM,
@@ -89,7 +90,7 @@ import {
   validatePhotoMetadata,
   zoomPhotoIn,
   zoomPhotoOut,
-} from './puzzle-photo.js?v=75fe963924';
+} from './puzzle-photo.js?v=16f0f90eac';
 import {
   CALIBRATION_CANONICAL_HEIGHT,
   CALIBRATION_CANONICAL_WIDTH,
@@ -105,7 +106,7 @@ import {
   setCorner,
   transformPoint,
   validateQuadrilateral,
-} from './puzzle-photo-calibration.js?v=75fe963924';
+} from './puzzle-photo-calibration.js?v=16f0f90eac';
 import {
   PuzzlePhotoRecognitionError,
   RECOGNITION_OCCUPANCY_EMPTY,
@@ -117,7 +118,7 @@ import {
   isRecognitionTokenCurrent,
   recognizeIntersections,
   selectionKey,
-} from './puzzle-photo-recognition.js?v=75fe963924';
+} from './puzzle-photo-recognition.js?v=16f0f90eac';
 import {
   addTemplate,
   createPieceTypeSessionToken,
@@ -127,13 +128,13 @@ import {
   normalizePiecePatch,
   removeTemplatesForSource,
   suggestUnresolvedPieceTypes,
-} from './puzzle-photo-piece-types.js?v=75fe963924';
+} from './puzzle-photo-piece-types.js?v=16f0f90eac';
 import {
   UNREVIEWED, PuzzlePhotoReviewError,
   createReviewState, buildReviewQueue, selectReviewCandidate, confirmEmpty, confirmPiece,
   nextCandidate, previousCandidate, nextUnresolved, acceptHighConfidenceEmpty,
   undoBulkEmpty, resetReview, rescanReview, reviewProgress, confirmedSelections, buildReviewedBoard,
-} from './puzzle-photo-review.js?v=75fe963924';
+} from './puzzle-photo-review.js?v=16f0f90eac';
 
 // ---------------- 常數 ----------------
 const CELL = 1;
@@ -700,11 +701,12 @@ let gameAnalysisLegal = [];
 let gameAnalysisNotice = '';
 let gameReviewAiState = createGameReviewAiState();
 let gameReviewAiWorker = null;
+let gameReviewEvidenceState = null;
 
 let aiWorker = null;
 let aiModule = null;   // Worker 不可用時的主執行緒後備
 try {
-  aiWorker = new Worker(new URL('./ai-worker.js?v=75fe963924', import.meta.url), { type: 'module' });
+  aiWorker = new Worker(new URL('./ai-worker.js?v=16f0f90eac', import.meta.url), { type: 'module' });
   aiWorker.onmessage = (e) => onAIResult(e.data);
   aiWorker.onerror = () => {
     aiWorker = null;
@@ -727,7 +729,7 @@ function requestAIMove() {
   if (aiWorker) {
     aiWorker.postMessage(payload);
   } else {
-    (aiModule ??= import('./ai.js?v=75fe963924')).then(({ findBestMove }) => {
+    (aiModule ??= import('./ai.js?v=16f0f90eac')).then(({ findBestMove }) => {
       setTimeout(() => {
         if (token !== aiToken) return;
         onAIResult({ token, result: findBestMove(payload.board, payload.side, payload.level, payload.recent) });
@@ -789,6 +791,9 @@ window.__chess = {
       candidate: gameReviewAiState.candidate ? structuredClone(gameReviewAiState.candidate) : null,
       workerActive: !!gameReviewAiWorker,
     };
+  },
+  get gameReviewEvidence() {
+    return gameReviewEvidenceState ? structuredClone(gameReviewEvidenceState) : null;
   },
   get gameAnalysis() { return gameAnalysisState; },
   get editorDraft() { return editorState ? exportAuthoredPosition(editorState) : null; },
@@ -896,6 +901,12 @@ const btnGameReviewAiAnalyze = document.getElementById('btnGameReviewAiAnalyze')
 const gameReviewAiPanel = document.getElementById('gameReviewAiPanel');
 const gameReviewAiHeading = document.getElementById('gameReviewAiHeading');
 const gameReviewAiDetail = document.getElementById('gameReviewAiDetail');
+const gameReviewEvidence = document.getElementById('gameReviewEvidence');
+const gameReviewEvidencePlayed = document.getElementById('gameReviewEvidencePlayed');
+const gameReviewEvidenceCandidate = document.getElementById('gameReviewEvidenceCandidate');
+const gameReviewEvidenceMatch = document.getElementById('gameReviewEvidenceMatch');
+const gameReviewEvidenceFactsSection = document.getElementById('gameReviewEvidenceFactsSection');
+const gameReviewEvidenceFacts = document.getElementById('gameReviewEvidenceFacts');
 const btnGameReviewCreatePuzzle = document.getElementById('btnGameReviewCreatePuzzle');
 const btnGameReviewDelete = document.getElementById('btnGameReviewDelete');
 const gameAnalysisView = document.getElementById('gameAnalysisView');
@@ -2415,6 +2426,61 @@ function terminateGameReviewAiWorker(worker = gameReviewAiWorker) {
 function invalidateGameReviewAi() {
   terminateGameReviewAiWorker();
   gameReviewAiState = invalidateGameReviewAiState(gameReviewAiState);
+  gameReviewEvidenceState = null;
+}
+
+function gameReviewEvidenceTerminalText(label, terminal) {
+  if (!terminal) return null;
+  if (terminal.terminationReason === 'checkmate') return `${label}為一步將死`;
+  if (terminal.terminationReason === 'stalemate') return `${label}立即形成困斃`;
+  const reason = GAME_RECORD_REASON_LABELS[terminal.terminationReason] || terminal.terminationReason;
+  return `${label}立即形成${reason}`;
+}
+
+function gameReviewEvidenceFactTexts(evidence) {
+  if (!evidence || evidence.comparison.sameMove) return [];
+  const facts = [];
+  const branches = [
+    ['實戰著', evidence.played],
+    ['AI 候選', evidence.candidate],
+  ];
+  for (const [label, outcome] of branches) {
+    if (outcome.capture) facts.push(`${label}立即吃到一${outcome.capture.name}`);
+    if (outcome.givesCheck) facts.push(`${label}形成將軍`);
+    const terminal = gameReviewEvidenceTerminalText(label, outcome.terminal);
+    if (terminal) facts.push(terminal);
+    if (outcome.movedPieceCaptureReplies?.length > 0) {
+      facts.push(`${label}走後，對方有合法著法可吃到該棋子`);
+    }
+  }
+  if (facts.length === 0) {
+    facts.push('兩手皆為合法著；沒有可直接呈現的吃子、將軍或終局事實。');
+  }
+  return facts;
+}
+
+function renderGameReviewEvidence() {
+  const evidence = gameReviewEvidenceState;
+  gameReviewEvidence.classList.toggle('hidden', !evidence);
+  if (!evidence) {
+    gameReviewEvidencePlayed.textContent = '';
+    gameReviewEvidenceCandidate.textContent = '';
+    gameReviewEvidenceMatch.textContent = '';
+    gameReviewEvidenceFacts.replaceChildren();
+    return;
+  }
+  gameReviewEvidencePlayed.textContent = evidence.played.notation;
+  gameReviewEvidenceCandidate.textContent = evidence.candidate.notation;
+  gameReviewEvidenceMatch.textContent = evidence.comparison.sameMove
+    ? '你的實戰著法與 AI 候選相同'
+    : '';
+  gameReviewEvidenceMatch.classList.toggle('hidden', !evidence.comparison.sameMove);
+  gameReviewEvidenceFactsSection.classList.toggle('hidden', evidence.comparison.sameMove);
+  gameReviewEvidenceFacts.replaceChildren(...gameReviewEvidenceFactTexts(evidence).map((fact) => {
+    const item = document.createElement('li');
+    item.textContent = fact;
+    return item;
+  }));
 }
 
 function renderGameReviewAi() {
@@ -2441,6 +2507,7 @@ function renderGameReviewAi() {
     gameReviewAiHeading.textContent = '';
     gameReviewAiDetail.textContent = '';
   }
+  renderGameReviewEvidence();
 }
 
 function handleGameReviewAiResponse(worker, response) {
@@ -2449,12 +2516,15 @@ function handleGameReviewAiResponse(worker, response) {
   if (!settled.accepted) return false;
   terminateGameReviewAiWorker(worker);
   gameReviewAiState = settled.state;
+  gameReviewEvidenceState = gameReviewAiState.status === 'success'
+    ? createGameReviewEvidence(gameReviewSession, gameReviewAiState)
+    : null;
   renderGameReviewAi();
   return true;
 }
 
 function createGameReviewAiWorker() {
-  return new Worker(new URL('./ai-worker.js?v=75fe963924', import.meta.url), { type: 'module' });
+  return new Worker(new URL('./ai-worker.js?v=16f0f90eac', import.meta.url), { type: 'module' });
 }
 
 function requestGameReviewAiCandidate() {
@@ -2466,6 +2536,7 @@ function requestGameReviewAiCandidate() {
   } catch {
     return false;
   }
+  gameReviewEvidenceState = null;
   gameReviewAiState = started.state;
   renderGameReviewAi();
 

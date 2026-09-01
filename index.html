@@ -69,7 +69,7 @@
   "isBasedOn": "https://github.com/doggy8088/chinese-chess"
 }
 </script>
-<link rel="stylesheet" href="./css/style.css?v=75fe963924">
+<link rel="stylesheet" href="./css/style.css?v=16f0f90eac">
 <script type="importmap">
 {
   "imports": {
@@ -522,6 +522,18 @@
           aria-live="polite" aria-atomic="true" aria-busy="false">
           <strong id="gameReviewAiHeading"></strong>
           <span id="gameReviewAiDetail"></span>
+          <div id="gameReviewEvidence" class="game-review-evidence hidden"
+            aria-label="實戰著法與 AI 候選的事實比較">
+            <dl class="game-review-evidence-moves">
+              <div><dt>實戰</dt><dd id="gameReviewEvidencePlayed"></dd></div>
+              <div><dt>AI 候選</dt><dd id="gameReviewEvidenceCandidate"></dd></div>
+            </dl>
+            <p id="gameReviewEvidenceMatch" class="game-review-evidence-match hidden"></p>
+            <div id="gameReviewEvidenceFactsSection" class="game-review-evidence-facts">
+              <h3>事實比較</h3>
+              <ul id="gameReviewEvidenceFacts"></ul>
+            </div>
+          </div>
         </section>
         <details id="gameReviewMoveDetails" class="game-review-moves" open>
           <summary>完整著法 <span id="gameReviewMoveCount"></span></summary>
@@ -597,6 +609,6 @@
   <div id="toast" class="hidden" role="status"></div>
 </div>
 
-<script type="module" src="./main.js?v=75fe963924"></script>
+<script type="module" src="./main.js?v=16f0f90eac"></script>
 </body>
 </html>

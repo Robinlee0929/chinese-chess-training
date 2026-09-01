@@ -61,7 +61,7 @@ if (reviewAiQaMode) {
       if (reviewAiQaMode === 'error') data.error = 'Controlled Review AI failure.';
       else data.result = {
         from: { r: 2, c: 3 },
-        to: { r: 2, c: 4 },
+        to: reviewAiQaMode === 'different' ? { r: 3, c: 3 } : { r: 2, c: 4 },
         score: 99998,
         depth: 2,
       };
@@ -77,7 +77,7 @@ if (reviewAiQaMode) {
 }
 
 function seedR4Fixture(chess) {
-  if (r4FixtureSeeded || !['r4', 'r3a'].includes(qaParams.get('qa'))) return;
+  if (r4FixtureSeeded || !['r4', 'r3a', 'r3b'].includes(qaParams.get('qa'))) return;
   r4FixtureSeeded = true;
   const board = Array.from({ length: 10 }, () => Array(9).fill(null));
   board[0][4] = { type: 'K', side: 'red' };
@@ -129,6 +129,7 @@ function readProbe() {
   const analysis = chess.gameAnalysis;
   const review = chess.gameReview;
   const reviewAi = chess.gameReviewAi;
+  const reviewEvidence = chess.gameReviewEvidence;
   return {
     ready: true,
     appState: chess.appState,
@@ -150,6 +151,7 @@ function readProbe() {
       terminal: review.snapshot.terminal,
     } : null,
     reviewAi,
+    reviewEvidence,
     analysis: analysis ? {
       sourceRecordId: analysis.sourceRecordId,
       sourcePly: analysis.sourcePly,
