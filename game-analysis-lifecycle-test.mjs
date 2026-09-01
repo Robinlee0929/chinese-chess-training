@@ -161,6 +161,7 @@ function harness(record, ply, {
     reviewRenderCount: 0,
     persistenceWrites: 0,
     resultAudioCalls: 0,
+    reviewAiInvalidations: 0,
     createGameAnalysis,
     gameAnalysisLegalMoves,
     applyGameAnalysisMove(...args) {
@@ -169,6 +170,7 @@ function harness(record, ply, {
     },
     undoGameAnalysisMove,
     resetGameAnalysis,
+    invalidateGameReviewAi() { context.reviewAiInvalidations++; },
     GAME_RECORD_REASON_LABELS: Object.freeze({
       checkmate: '將死',
       stalemate: '困斃',
@@ -307,6 +309,7 @@ test('production entry and renderer branch from the exact canonical review posit
   const live = liveSnapshot(context);
 
   assert.equal(context.enterGameAnalysis(), true);
+  assert.equal(context.reviewAiInvalidations, 1, 'entering R2 invalidates pending Review AI');
   assert.equal(context.appState, 'GAME_ANALYSIS');
   assert.deepEqual(context.gameAnalysisState.anchorBoard, replayGameRecord(record, 4).board);
   assert.equal(context.gameAnalysisState.anchorSideToMove, replayGameRecord(record, 4).sideToMove);

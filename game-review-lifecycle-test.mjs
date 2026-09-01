@@ -14,6 +14,12 @@ import {
   selectGameReviewPly,
   createGameRecordLibraryView,
 } from './game-review.js';
+import {
+  createGameReviewAiState,
+  invalidateGameReviewAiState,
+  beginGameReviewAiRequest,
+  settleGameReviewAiResponse,
+} from './game-review-ai.js';
 
 const source = readFileSync(new URL('./main.js', import.meta.url), 'utf8');
 const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
@@ -135,6 +141,7 @@ function vector() {
 function harness({
   records = [], serialized, readError, writeError, confirm = true,
   mode = 'pvp', turn = RED, realRenderer = false, rendererMutation = null,
+  reviewAiMutation = null, workerCreationError = false,
 } = {}) {
   let stored = serialized === undefined
     ? (records.length ? JSON.stringify({ version: 1, records }) : null)
@@ -158,6 +165,20 @@ function harness({
   };
   const gameRecordStore = createGameRecordStore({ storage });
   const liveBoard = initialBoard();
+  const reviewAiWorkers = [];
+  class FakeReviewAiWorker {
+    constructor() {
+      this.messages = [];
+      this.terminated = false;
+      this.onmessage = null;
+      this.onerror = null;
+      reviewAiWorkers.push(this);
+    }
+    postMessage(message) { this.messages.push(structuredClone(message)); }
+    terminate() { this.terminated = true; }
+    emit(data) { this.onmessage?.({ data }); }
+    fail() { this.onerror?.({ preventDefault() {} }); }
+  }
   const document = {
     activeElement: null,
     createElement: (tagName) => domNode(false, tagName),
@@ -192,6 +213,8 @@ function harness({
     mode,
     aiToken: 7,
     aiThinking: mode !== 'pvp' && turn === BLACK,
+    aiMoveStart: 4321,
+    aiWorker: Object.freeze({ kind: 'normal-worker' }),
     aiRequests: 0,
     aiMaybeMoveCalls: 0,
     tweens: [],
@@ -204,6 +227,9 @@ function harness({
     gameAnalysisSelected: null,
     gameAnalysisLegal: [],
     gameAnalysisNotice: '',
+    gameReviewAiState: createGameReviewAiState(),
+    gameReviewAiWorker: null,
+    reviewAiWorkers,
     renderedBoard: liveBoard,
     renderCount: 0,
     productionRenderCallCount: 0,
@@ -222,6 +248,9 @@ function harness({
     nextGameReviewPly,
     lastGameReviewPly,
     selectGameReviewPly,
+    invalidateGameReviewAiState,
+    beginGameReviewAiRequest,
+    settleGameReviewAiResponse,
     GAME_RECORD_MODE_LABELS: Object.freeze({
       pvp: '雙人對弈', easy: '人機・簡單', medium: '人機・中等', hard: '人機・困難',
     }),
@@ -250,6 +279,10 @@ function harness({
     btnGameReviewNext: domNode(),
     btnGameReviewLast: domNode(),
     btnGameReviewAnalyze: domNode(),
+    btnGameReviewAiAnalyze: domNode(),
+    gameReviewAiPanel: domNode(true),
+    gameReviewAiHeading: domNode(),
+    gameReviewAiDetail: domNode(),
     btnGameReviewCreatePuzzle: domNode(),
     btnGameReviewBack: domNode(),
     btnGameReviewDelete: domNode(true),
@@ -295,6 +328,10 @@ function harness({
     refreshHUD() {},
     checkBoardMeshInvariant: () => ({ ok: true, errors: [] }),
     toast: (message) => context.messages.push(message),
+    createGameReviewAiWorker: () => {
+      if (workerCreationError) throw new Error('worker unavailable');
+      return new FakeReviewAiWorker();
+    },
     doMove() { context.normalDoMoveCalls++; },
     maybeAIMove() {
       context.aiMaybeMoveCalls++;
@@ -306,6 +343,8 @@ function harness({
     },
   });
   const names = [
+    'terminateGameReviewAiWorker', 'invalidateGameReviewAi', 'renderGameReviewAi',
+    'handleGameReviewAiResponse', 'requestGameReviewAiCandidate',
     'pauseLiveGameForGameRecords', 'restoreLiveGamePresentation',
     'enterGameRecordLibrary', 'showGameRecordLibrary', 'openGameReview',
     'openLastCompletedGameReview', 'openStoredGameReview', 'navigateGameReview',
@@ -331,7 +370,15 @@ function harness({
       `const review = gameReviewSession;\n  ${mutations[rendererMutation]}`,
     );
   }
-  vm.runInContext([...rendererHelpers, rendererSource, ...names.map(functionSource)].filter(Boolean).join('\n'), context);
+  const mainFunctions = names.map(functionSource);
+  if (reviewAiMutation === 'doMove') {
+    const index = names.indexOf('handleGameReviewAiResponse');
+    mainFunctions[index] = mainFunctions[index].replace(
+      'gameReviewAiState = settled.state;',
+      'gameReviewAiState = settled.state;\n  doMove({ r: 0, c: 0 }, { r: 0, c: 1 });',
+    );
+  }
+  vm.runInContext([...rendererHelpers, rendererSource, ...mainFunctions].filter(Boolean).join('\n'), context);
   return context;
 }
 
@@ -373,6 +420,39 @@ function assertLiveStateUnchanged(ctx, before, stage) {
     `LAST_COMPLETED_GAME_RECORD_UNCHANGED after ${stage}`,
   );
   assert.equal(after.mode, before.mode, `LIVE_MODE_UNCHANGED after ${stage}`);
+}
+
+function reviewAiIsolationSnapshot(ctx) {
+  return clone({
+    live: liveSnapshot(ctx),
+    aiToken: ctx.aiToken,
+    aiThinking: ctx.aiThinking,
+    aiMoveStart: ctx.aiMoveStart,
+    aiRequests: ctx.aiRequests,
+    aiMaybeMoveCalls: ctx.aiMaybeMoveCalls,
+    normalDoMoveCalls: ctx.normalDoMoveCalls,
+    storageWrites: ctx.storage.writes,
+    puzzleWrites: ctx.puzzleWrites,
+    analyticsWrites: ctx.analyticsWrites,
+  });
+}
+
+function successfulReviewAiResponse(worker, result = {}) {
+  const request = worker.messages[0];
+  return {
+    kind: 'review-candidate',
+    recordId: request.recordId,
+    ply: request.ply,
+    revision: request.revision,
+    result: {
+      from: { r: 2, c: 3 },
+      to: { r: 2, c: 4 },
+      depth: 2,
+      score: 99998,
+      pv: ['must-not-surface'],
+      ...result,
+    },
+  };
 }
 
 test('just-completed in-memory record opens at the final board with zero persistence writes', () => {
@@ -622,6 +702,169 @@ test('empty, multiple, corrupt and read-failed library loads never rewrite stora
   assert.equal(unavailable.appState, 'NORMAL_GAME');
 });
 
+test('explicit Review AI request uses only canonical Review context and renders one inert score-free candidate', () => {
+  const saved = record('review-ai-lifecycle');
+  const originalRecord = clone(saved);
+  const ctx = harness({ records: [saved], mode: 'medium', turn: BLACK, realRenderer: true });
+  ctx.enterGameRecordLibrary();
+  ctx.openStoredGameReview(saved.id);
+  ctx.navigateGameReview('first');
+  const review = ctx.gameReviewSession;
+  const before = reviewAiIsolationSnapshot(ctx);
+  const normalWorker = ctx.aiWorker;
+
+  assert.equal(ctx.reviewAiWorkers.length, 0, 'analysis is explicit, never automatic on Review render/navigation');
+  assert.equal(ctx.requestGameReviewAiCandidate(), true);
+  assert.equal(ctx.gameReviewAiState.status, 'loading');
+  assert.equal(ctx.gameReviewAiHeading.textContent, '電腦搜尋中…');
+  assert.equal(ctx.reviewAiWorkers.length, 1);
+  const worker = ctx.reviewAiWorkers[0];
+  const request = worker.messages[0];
+  assert.deepEqual(request.board, review.snapshot.board);
+  assert.notDeepEqual(request.board, ctx.board, 'live board is deliberately different');
+  assert.equal(request.sideToMove, review.snapshot.sideToMove);
+  assert.notEqual(request.sideToMove, ctx.turn, 'live turn is deliberately opposite');
+  assert.deepEqual(request.repetitionPrefix, review.snapshot.repetitionHistory);
+  assert.equal(request.analysisPreset, 'review-v1');
+  assert.deepEqual(reviewAiIsolationSnapshot(ctx), before);
+  assert.equal(ctx.aiWorker, normalWorker, 'persistent normal worker identity is unchanged');
+
+  worker.emit(successfulReviewAiResponse(worker));
+  assert.equal(ctx.gameReviewAiState.status, 'success');
+  assert.equal(ctx.gameReviewAiState.candidate.notation, '俥六平五');
+  assert.equal(ctx.gameReviewAiState.candidate.depth, 2);
+  assert.equal(worker.terminated, true);
+  assert.equal(ctx.gameReviewAiWorker, null);
+  assert.match(ctx.gameReviewAiHeading.textContent, /^AI 候選著法：/);
+  assert.equal(ctx.gameReviewAiDetail.textContent, '搜尋深度：2');
+  assert.doesNotMatch(`${ctx.gameReviewAiHeading.textContent}${ctx.gameReviewAiDetail.textContent}`, /99998|score|PV|最佳著/);
+  assert.deepEqual(ctx.gameReviewSession.snapshot.board, review.snapshot.board);
+  assert.deepEqual(ctx.gameReviewSession.record, originalRecord);
+  assert.deepEqual(reviewAiIsolationSnapshot(ctx), before);
+  assert.equal(ctx.normalDoMoveCalls, 0);
+  assert.equal(ctx.storage.writes, 0);
+  assert.equal(ctx.puzzleWrites, 0);
+  assert.equal(ctx.analyticsWrites, 0);
+});
+
+test('Review AI error is retryable and worker construction has no main-thread fallback', () => {
+  const saved = record('review-ai-error');
+  const ctx = harness({ records: [saved], workerCreationError: true, realRenderer: true });
+  ctx.enterGameRecordLibrary();
+  ctx.openStoredGameReview(saved.id);
+  ctx.navigateGameReview('first');
+
+  assert.equal(ctx.requestGameReviewAiCandidate(), true);
+  assert.equal(ctx.gameReviewAiState.status, 'error');
+  assert.match(ctx.gameReviewAiHeading.textContent, /請再試一次/);
+  assert.equal(ctx.btnGameReviewAiAnalyze.disabled, false);
+  assert.equal(ctx.reviewAiWorkers.length, 0);
+  assert.doesNotMatch(functionSource('requestGameReviewAiCandidate'), /aiModule|findBestMove|setTimeout/);
+  assert.equal(ctx.requestGameReviewAiCandidate(), true, 'retry remains explicit and available');
+  assert.equal(ctx.gameReviewAiState.status, 'error');
+});
+
+test('new request, ply navigation and record switch reject stale revision and old-worker results', () => {
+  const recordA = record('review-ai-record-a');
+  const recordB = record('review-ai-record-b', 2);
+  const ctx = harness({ records: [recordA, recordB], realRenderer: true });
+  ctx.enterGameRecordLibrary();
+  ctx.openStoredGameReview(recordA.id);
+  ctx.navigateGameReview('first');
+
+  ctx.requestGameReviewAiCandidate();
+  const firstWorker = ctx.reviewAiWorkers.at(-1);
+  const firstRevision = firstWorker.messages[0].revision;
+  ctx.requestGameReviewAiCandidate();
+  const secondWorker = ctx.reviewAiWorkers.at(-1);
+  assert.equal(firstWorker.terminated, true);
+  firstWorker.emit(successfulReviewAiResponse(firstWorker));
+  assert.equal(ctx.gameReviewAiState.status, 'loading', 'old worker cannot settle the replacement request');
+  secondWorker.emit({ ...successfulReviewAiResponse(secondWorker), revision: firstRevision });
+  assert.equal(ctx.gameReviewAiState.status, 'loading', 'wrong revision remains ignored');
+  secondWorker.emit(successfulReviewAiResponse(secondWorker));
+  assert.equal(ctx.gameReviewAiState.status, 'success');
+
+  ctx.requestGameReviewAiCandidate();
+  const plyWorker = ctx.reviewAiWorkers.at(-1);
+  ctx.navigateGameReview('last');
+  assert.equal(plyWorker.terminated, true);
+  assert.equal(ctx.gameReviewAiState.status, 'idle');
+  assert.equal(ctx.gameReviewAiPanel.classList.contains('hidden'), true);
+  plyWorker.emit(successfulReviewAiResponse(plyWorker, { from: { r: 0, c: 4 }, to: { r: 0, c: 5 } }));
+  assert.equal(ctx.gameReviewAiState.status, 'idle', 'stale ply response remains ignored');
+
+  ctx.navigateGameReview('first');
+  ctx.requestGameReviewAiCandidate();
+  const recordWorker = ctx.reviewAiWorkers.at(-1);
+  ctx.openStoredGameReview(recordB.id);
+  assert.equal(recordWorker.terminated, true);
+  recordWorker.emit(successfulReviewAiResponse(recordWorker));
+  assert.equal(ctx.gameReviewSession.record.id, recordB.id);
+  assert.equal(ctx.gameReviewAiState.status, 'idle', 'stale Record A response cannot surface on Record B');
+  assert.equal(ctx.normalDoMoveCalls, 0);
+  assert.equal(ctx.storage.writes, 0);
+});
+
+test('Review exit invalidates pending results and normal AI resumes through its existing scheduler only', () => {
+  const saved = record('review-ai-exit');
+  const ctx = harness({ records: [saved], mode: 'hard', turn: BLACK, realRenderer: true });
+  ctx.enterGameRecordLibrary();
+  ctx.openStoredGameReview(saved.id);
+  ctx.navigateGameReview('first');
+  const tokenAfterReviewEntry = ctx.aiToken;
+  ctx.requestGameReviewAiCandidate();
+  const worker = ctx.reviewAiWorkers.at(-1);
+  assert.equal(ctx.aiToken, tokenAfterReviewEntry);
+  ctx.exitGameRecordFlow();
+  assert.equal(worker.terminated, true);
+  assert.equal(ctx.appState, 'NORMAL_GAME');
+  assert.equal(ctx.aiToken, tokenAfterReviewEntry + 1, 'only the existing Review exit invalidation advances normal token');
+  assert.equal(ctx.aiRequests, 1, 'normal scheduler resumes one normal AI request');
+  worker.emit(successfulReviewAiResponse(worker));
+  assert.equal(ctx.gameReviewAiState.status, 'idle');
+  assert.equal(ctx.normalDoMoveCalls, 0);
+});
+
+test('terminal and GAME_ANALYSIS contexts gate Review AI, while R2/R4 production entries invalidate it', () => {
+  const saved = record('review-ai-gating');
+  const ctx = harness({ records: [saved], realRenderer: true });
+  ctx.enterGameRecordLibrary();
+  ctx.openStoredGameReview(saved.id);
+  assert.ok(ctx.gameReviewSession.snapshot.terminal);
+  assert.equal(ctx.btnGameReviewAiAnalyze.disabled, true);
+  assert.equal(ctx.requestGameReviewAiCandidate(), false);
+  ctx.navigateGameReview('first');
+  ctx.appState = 'GAME_ANALYSIS';
+  assert.equal(ctx.requestGameReviewAiCandidate(), false);
+  assert.equal(ctx.reviewAiWorkers.length, 0);
+  assert.match(functionSource('enterGameAnalysis'), /invalidateGameReviewAi\(\)/);
+  assert.match(functionSource('createPuzzleFromGameReview'), /invalidateGameReviewAi\(\)/);
+  assert.doesNotMatch(
+    html.match(/<section id="gameAnalysisView"[^]*?<\/section>/)?.[0] || '',
+    /btnGameReviewAiAnalyze|AI 分析/,
+  );
+});
+
+test('negative control detects forbidden doMove reuse in the real Review AI result route', () => {
+  const saved = record('review-ai-do-move-mutation');
+  const ctx = harness({ records: [saved], realRenderer: true, reviewAiMutation: 'doMove' });
+  ctx.enterGameRecordLibrary();
+  ctx.openStoredGameReview(saved.id);
+  ctx.navigateGameReview('first');
+  ctx.requestGameReviewAiCandidate();
+  const worker = ctx.reviewAiWorkers.at(-1);
+  worker.emit(successfulReviewAiResponse(worker));
+  let detected = null;
+  try {
+    assert.equal(ctx.normalDoMoveCalls, 0, 'REVIEW_AI_DO_MOVE_COUNT');
+  } catch (error) {
+    detected = error;
+  }
+  assert.equal(detected?.code, 'ERR_ASSERTION');
+  assert.match(detected.message, /REVIEW_AI_DO_MOVE_COUNT/);
+});
+
 test('source and DOM contain explicit read-only, accessibility and responsive guards', () => {
   assert.match(functionSource('doMove'), /if\s*\(!normalGameActive\(\)\)\s*return/);
   assert.match(source, /if \(appState === APP_STATE\.GAME_RECORD_LIBRARY \|\| appState === APP_STATE\.GAME_REVIEW\) return;\s*\n\s*const hit = pick\(e\)/);
@@ -631,6 +874,8 @@ test('source and DOM contain explicit read-only, accessibility and responsive gu
   assert.match(html, /id="gameReviewStatus"[^>]*aria-live="polite"/);
   assert.match(html, /id="btnGameReviewFirst"[^>]*type="button"/);
   assert.match(html, /id="btnGameReviewPrevious"[^>]*type="button"/);
+  assert.match(html, /id="btnGameReviewAiAnalyze"[^>]*type="button"[^>]*aria-label="分析目前複盤局面"/);
+  assert.match(html, /id="gameReviewAiPanel"[^>]*role="status"[^>]*aria-live="polite"/);
   assert.match(source, /setAttribute\('aria-current', 'step'\)/);
   assert.match(source, /ArrowLeft: 'previous'/);
   assert.match(source, /ArrowRight: 'next'/);

@@ -7,9 +7,9 @@ import {
   ROWS, COLS, RED, BLACK,
   initialBoard, legalMoves, applyMove, inCheck,
   hasAnyLegalMove, name, notation, hashBoard, repetitionVerdict,
-} from './game.js?v=0808f103cf';
-import { createGameRecord } from './game-record.js?v=0808f103cf';
-import { createGameRecordStore } from './game-record-store.js?v=0808f103cf';
+} from './game.js?v=7ddbb73eba';
+import { createGameRecord } from './game-record.js?v=7ddbb73eba';
+import { createGameRecordStore } from './game-record-store.js?v=7ddbb73eba';
 import {
   createGameReview,
   createGameRecordLibraryView,
@@ -18,15 +18,21 @@ import {
   nextGameReviewPly,
   lastGameReviewPly,
   selectGameReviewPly,
-} from './game-review.js?v=0808f103cf';
+} from './game-review.js?v=7ddbb73eba';
+import {
+  createGameReviewAiState,
+  invalidateGameReviewAiState,
+  beginGameReviewAiRequest,
+  settleGameReviewAiResponse,
+} from './game-review-ai.js?v=7ddbb73eba';
 import {
   createGameAnalysis,
   gameAnalysisLegalMoves,
   applyGameAnalysisMove,
   undoGameAnalysisMove,
   resetGameAnalysis,
-} from './game-analysis.js?v=0808f103cf';
-import { createGameReviewPuzzleHandoff } from './game-review-puzzle-handoff.js?v=0808f103cf';
+} from './game-analysis.js?v=7ddbb73eba';
+import { createGameReviewPuzzleHandoff } from './game-review-puzzle-handoff.js?v=7ddbb73eba';
 import {
   PuzzleEditorError,
   createEditorState,
@@ -36,7 +42,7 @@ import {
   setEditorSideToMove,
   confirmAuthoredPosition,
   exportAuthoredPosition,
-} from './puzzle-editor.js?v=0808f103cf';
+} from './puzzle-editor.js?v=7ddbb73eba';
 import {
   PuzzleRecorderError,
   createRecorder,
@@ -46,7 +52,7 @@ import {
   finishRecording,
   exportRecorderBoard,
   exportRecordedResult,
-} from './puzzle-recorder.js?v=0808f103cf';
+} from './puzzle-recorder.js?v=7ddbb73eba';
 import {
   PuzzlePracticeError,
   PRACTICE_HINT_MAX_LEVEL,
@@ -56,12 +62,12 @@ import {
   derivePracticeHint,
   restartPractice,
   exportPracticeSnapshot,
-} from './puzzle-practice.js?v=0808f103cf';
-import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=0808f103cf';
+} from './puzzle-practice.js?v=7ddbb73eba';
+import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=7ddbb73eba';
 import {
   PracticeAnalyticsError,
   createPracticeAnalyticsStore,
-} from './puzzle-analytics.js?v=0808f103cf';
+} from './puzzle-analytics.js?v=7ddbb73eba';
 import {
   PUZZLE_TRANSFER_FORMAT,
   PUZZLE_TRANSFER_SCHEMA_VERSION,
@@ -69,7 +75,7 @@ import {
   PuzzleTransferError,
   serializePuzzleExport,
   parsePuzzleImport,
-} from './puzzle-transfer.js?v=0808f103cf';
+} from './puzzle-transfer.js?v=7ddbb73eba';
 import {
   PHOTO_MAX_ZOOM,
   PHOTO_MIN_ZOOM,
@@ -83,7 +89,7 @@ import {
   validatePhotoMetadata,
   zoomPhotoIn,
   zoomPhotoOut,
-} from './puzzle-photo.js?v=0808f103cf';
+} from './puzzle-photo.js?v=7ddbb73eba';
 import {
   CALIBRATION_CANONICAL_HEIGHT,
   CALIBRATION_CANONICAL_WIDTH,
@@ -99,7 +105,7 @@ import {
   setCorner,
   transformPoint,
   validateQuadrilateral,
-} from './puzzle-photo-calibration.js?v=0808f103cf';
+} from './puzzle-photo-calibration.js?v=7ddbb73eba';
 import {
   PuzzlePhotoRecognitionError,
   RECOGNITION_OCCUPANCY_EMPTY,
@@ -111,7 +117,7 @@ import {
   isRecognitionTokenCurrent,
   recognizeIntersections,
   selectionKey,
-} from './puzzle-photo-recognition.js?v=0808f103cf';
+} from './puzzle-photo-recognition.js?v=7ddbb73eba';
 import {
   addTemplate,
   createPieceTypeSessionToken,
@@ -121,13 +127,13 @@ import {
   normalizePiecePatch,
   removeTemplatesForSource,
   suggestUnresolvedPieceTypes,
-} from './puzzle-photo-piece-types.js?v=0808f103cf';
+} from './puzzle-photo-piece-types.js?v=7ddbb73eba';
 import {
   UNREVIEWED, PuzzlePhotoReviewError,
   createReviewState, buildReviewQueue, selectReviewCandidate, confirmEmpty, confirmPiece,
   nextCandidate, previousCandidate, nextUnresolved, acceptHighConfidenceEmpty,
   undoBulkEmpty, resetReview, rescanReview, reviewProgress, confirmedSelections, buildReviewedBoard,
-} from './puzzle-photo-review.js?v=0808f103cf';
+} from './puzzle-photo-review.js?v=7ddbb73eba';
 
 // ---------------- 常數 ----------------
 const CELL = 1;
@@ -692,11 +698,13 @@ let gameAnalysisState = null;
 let gameAnalysisSelected = null;
 let gameAnalysisLegal = [];
 let gameAnalysisNotice = '';
+let gameReviewAiState = createGameReviewAiState();
+let gameReviewAiWorker = null;
 
 let aiWorker = null;
 let aiModule = null;   // Worker 不可用時的主執行緒後備
 try {
-  aiWorker = new Worker(new URL('./ai-worker.js?v=0808f103cf', import.meta.url), { type: 'module' });
+  aiWorker = new Worker(new URL('./ai-worker.js?v=7ddbb73eba', import.meta.url), { type: 'module' });
   aiWorker.onmessage = (e) => onAIResult(e.data);
   aiWorker.onerror = () => {
     aiWorker = null;
@@ -709,6 +717,7 @@ try {
 function requestAIMove() {
   const token = ++aiToken;
   const payload = {
+    kind: 'normal-game',
     board: board.map((row) => row.map((p) => (p ? { ...p } : null))),
     side: turn,
     level: mode,
@@ -718,7 +727,7 @@ function requestAIMove() {
   if (aiWorker) {
     aiWorker.postMessage(payload);
   } else {
-    (aiModule ??= import('./ai.js?v=0808f103cf')).then(({ findBestMove }) => {
+    (aiModule ??= import('./ai.js?v=7ddbb73eba')).then(({ findBestMove }) => {
       setTimeout(() => {
         if (token !== aiToken) return;
         onAIResult({ token, result: findBestMove(payload.board, payload.side, payload.level, payload.recent) });
@@ -771,6 +780,16 @@ window.__chess = {
   },
   get appState() { return appState; },
   get gameReview() { return gameReviewSession; },
+  get gameReviewAi() {
+    return {
+      status: gameReviewAiState.status,
+      revision: gameReviewAiState.revision,
+      recordId: gameReviewAiState.request?.recordId ?? null,
+      ply: gameReviewAiState.request?.ply ?? null,
+      candidate: gameReviewAiState.candidate ? structuredClone(gameReviewAiState.candidate) : null,
+      workerActive: !!gameReviewAiWorker,
+    };
+  },
   get gameAnalysis() { return gameAnalysisState; },
   get editorDraft() { return editorState ? exportAuthoredPosition(editorState) : null; },
   get gameReviewPuzzleReturnContext() {
@@ -873,6 +892,10 @@ const btnGameReviewPrevious = document.getElementById('btnGameReviewPrevious');
 const btnGameReviewNext = document.getElementById('btnGameReviewNext');
 const btnGameReviewLast = document.getElementById('btnGameReviewLast');
 const btnGameReviewAnalyze = document.getElementById('btnGameReviewAnalyze');
+const btnGameReviewAiAnalyze = document.getElementById('btnGameReviewAiAnalyze');
+const gameReviewAiPanel = document.getElementById('gameReviewAiPanel');
+const gameReviewAiHeading = document.getElementById('gameReviewAiHeading');
+const gameReviewAiDetail = document.getElementById('gameReviewAiDetail');
 const btnGameReviewCreatePuzzle = document.getElementById('btnGameReviewCreatePuzzle');
 const btnGameReviewDelete = document.getElementById('btnGameReviewDelete');
 const gameAnalysisView = document.getElementById('gameAnalysisView');
@@ -2321,6 +2344,7 @@ function enterGameRecordLibrary(invoker = btnGameRecords) {
     return false;
   }
   if (!pauseLiveGameForGameRecords(invoker)) return false;
+  invalidateGameReviewAi();
   appState = APP_STATE.GAME_RECORD_LIBRARY;
   gameReviewSession = null;
   gameAnalysisState = null;
@@ -2339,6 +2363,7 @@ function enterGameRecordLibrary(invoker = btnGameRecords) {
 
 function showGameRecordLibrary() {
   if (!gameRecordFlowActive()) return;
+  invalidateGameReviewAi();
   clearGameAnalysisSelection();
   appState = APP_STATE.GAME_RECORD_LIBRARY;
   gameReviewSession = null;
@@ -2381,6 +2406,97 @@ function gameAnalysisTerminalLabel(terminal) {
     : `${terminal.winner === RED ? '紅方' : '黑方'}勝・${reason}`;
 }
 
+function terminateGameReviewAiWorker(worker = gameReviewAiWorker) {
+  if (!worker) return;
+  worker.terminate();
+  if (worker === gameReviewAiWorker) gameReviewAiWorker = null;
+}
+
+function invalidateGameReviewAi() {
+  terminateGameReviewAiWorker();
+  gameReviewAiState = invalidateGameReviewAiState(gameReviewAiState);
+}
+
+function renderGameReviewAi() {
+  const terminal = !!gameReviewSession?.snapshot.terminal;
+  const loading = gameReviewAiState.status === 'loading';
+  btnGameReviewAiAnalyze.disabled = terminal || loading;
+  btnGameReviewAiAnalyze.textContent = loading ? '分析中…' : 'AI 分析';
+  btnGameReviewAiAnalyze.title = terminal ? '終局位置不可進行 AI 分析' : '';
+  btnGameReviewAiAnalyze.setAttribute('aria-busy', String(loading));
+  gameReviewAiPanel.classList.toggle('hidden', gameReviewAiState.status === 'idle');
+  gameReviewAiPanel.classList.toggle('loading', loading);
+  gameReviewAiPanel.classList.toggle('error', gameReviewAiState.status === 'error');
+  gameReviewAiPanel.setAttribute('aria-busy', String(loading));
+  if (loading) {
+    gameReviewAiHeading.textContent = '電腦搜尋中…';
+    gameReviewAiDetail.textContent = '正在分析目前的複盤局面。';
+  } else if (gameReviewAiState.status === 'success') {
+    gameReviewAiHeading.textContent = `AI 候選著法：${gameReviewAiState.candidate.notation}`;
+    gameReviewAiDetail.textContent = `搜尋深度：${gameReviewAiState.candidate.depth}`;
+  } else if (gameReviewAiState.status === 'error') {
+    gameReviewAiHeading.textContent = gameReviewAiState.message;
+    gameReviewAiDetail.textContent = '你可以再次按「AI 分析」重試。';
+  } else {
+    gameReviewAiHeading.textContent = '';
+    gameReviewAiDetail.textContent = '';
+  }
+}
+
+function handleGameReviewAiResponse(worker, response) {
+  if (worker !== gameReviewAiWorker || appState !== APP_STATE.GAME_REVIEW || !gameReviewSession) return false;
+  const settled = settleGameReviewAiResponse(gameReviewAiState, gameReviewSession, response);
+  if (!settled.accepted) return false;
+  terminateGameReviewAiWorker(worker);
+  gameReviewAiState = settled.state;
+  renderGameReviewAi();
+  return true;
+}
+
+function createGameReviewAiWorker() {
+  return new Worker(new URL('./ai-worker.js?v=7ddbb73eba', import.meta.url), { type: 'module' });
+}
+
+function requestGameReviewAiCandidate() {
+  if (appState !== APP_STATE.GAME_REVIEW || !gameReviewSession || gameReviewSession.snapshot.terminal) return false;
+  terminateGameReviewAiWorker();
+  let started;
+  try {
+    started = beginGameReviewAiRequest(gameReviewAiState, gameReviewSession);
+  } catch {
+    return false;
+  }
+  gameReviewAiState = started.state;
+  renderGameReviewAi();
+
+  let worker;
+  try {
+    worker = createGameReviewAiWorker();
+    gameReviewAiWorker = worker;
+    worker.onmessage = (event) => handleGameReviewAiResponse(worker, event.data);
+    worker.onerror = (event) => {
+      event.preventDefault?.();
+      handleGameReviewAiResponse(worker, {
+        kind: 'review-candidate',
+        recordId: started.request.recordId,
+        ply: started.request.ply,
+        revision: started.request.revision,
+        error: 'Review AI worker failed.',
+      });
+    };
+    worker.postMessage(started.request);
+  } catch {
+    handleGameReviewAiResponse(worker ?? gameReviewAiWorker, {
+      kind: 'review-candidate',
+      recordId: started.request.recordId,
+      ply: started.request.ply,
+      revision: started.request.revision,
+      error: 'Review AI worker could not start.',
+    });
+  }
+  return true;
+}
+
 function renderGameReview() {
   if (!gameReviewSession) return;
   const review = gameReviewSession;
@@ -2419,6 +2535,7 @@ function renderGameReview() {
   btnGameReviewAnalyze.title = review.snapshot.terminal ? '終局位置不可開始分析' : '';
   btnGameReviewCreatePuzzle.disabled = !!review.snapshot.terminal;
   btnGameReviewCreatePuzzle.title = review.snapshot.terminal ? '終局位置不可建立殺局題，請先返回較早著數' : '';
+  renderGameReviewAi();
   btnGameReviewBack.classList.toggle('hidden', gameReviewReturnState !== APP_STATE.GAME_RECORD_LIBRARY);
   btnGameReviewDelete.classList.toggle('hidden', !gameReviewStored);
   rebuildPieceMeshes(review.snapshot.board, false);
@@ -2508,6 +2625,7 @@ function enterGameAnalysis(invoker = btnGameReviewAnalyze) {
     toast('目前的複盤位置無法建立分析沙盤。');
     return false;
   }
+  invalidateGameReviewAi();
   clearGameAnalysisSelection();
   gameAnalysisNotice = '已建立臨時分析沙盤。';
   appState = APP_STATE.GAME_ANALYSIS;
@@ -2609,6 +2727,7 @@ function openGameReview(record, { returnState, invoker, stored = false } = {}) {
   if (sourceState !== APP_STATE.NORMAL_GAME
     && sourceState !== APP_STATE.GAME_RECORD_LIBRARY
     && sourceState !== APP_STATE.GAME_REVIEW) return false;
+  invalidateGameReviewAi();
   gameReviewReturnState = returnState
     || (sourceState === APP_STATE.GAME_RECORD_LIBRARY ? APP_STATE.GAME_RECORD_LIBRARY : APP_STATE.NORMAL_GAME);
   gameReviewSession = opened;
@@ -2653,12 +2772,15 @@ function openStoredGameReview(id, invoker) {
 
 function navigateGameReview(target) {
   if (appState !== APP_STATE.GAME_REVIEW || !gameReviewSession) return false;
-  if (target === 'first') gameReviewSession = firstGameReviewPly(gameReviewSession);
-  else if (target === 'previous') gameReviewSession = previousGameReviewPly(gameReviewSession);
-  else if (target === 'next') gameReviewSession = nextGameReviewPly(gameReviewSession);
-  else if (target === 'last') gameReviewSession = lastGameReviewPly(gameReviewSession);
-  else if (Number.isInteger(target)) gameReviewSession = selectGameReviewPly(gameReviewSession, target);
+  let nextReview;
+  if (target === 'first') nextReview = firstGameReviewPly(gameReviewSession);
+  else if (target === 'previous') nextReview = previousGameReviewPly(gameReviewSession);
+  else if (target === 'next') nextReview = nextGameReviewPly(gameReviewSession);
+  else if (target === 'last') nextReview = lastGameReviewPly(gameReviewSession);
+  else if (Number.isInteger(target)) nextReview = selectGameReviewPly(gameReviewSession, target);
   else return false;
+  invalidateGameReviewAi();
+  gameReviewSession = nextReview;
   renderGameReview();
   return true;
 }
@@ -2673,6 +2795,7 @@ function deleteGameRecordFromLibrary(id) {
       return false;
     }
     if (gameReviewSession?.record.id === id) {
+      invalidateGameReviewAi();
       gameReviewStored = false;
       btnGameReviewDelete.classList.add('hidden');
       toast('紀錄已刪除；目前的唯讀複盤仍可繼續。');
@@ -2696,6 +2819,7 @@ function exitGameReview() {
 function exitGameRecordFlow() {
   if (!gameRecordFlowActive()) return;
   const invoker = gameReviewInvoker;
+  invalidateGameReviewAi();
   clearGameAnalysisSelection();
   aiToken++;
   aiThinking = false;
@@ -2777,6 +2901,7 @@ function createPuzzleFromGameReview(invoker = btnGameReviewCreatePuzzle) {
     sourcePly: handoff.sourcePly,
     invoker,
   });
+  invalidateGameReviewAi();
   const sideLabel = handoff.editorState.sideToMove === RED ? '紅方' : '黑方';
   return activatePuzzleEditor(
     handoff.editorState,
@@ -4766,6 +4891,7 @@ btnGameReviewPrevious.addEventListener('click', () => navigateGameReview('previo
 btnGameReviewNext.addEventListener('click', () => navigateGameReview('next'));
 btnGameReviewLast.addEventListener('click', () => navigateGameReview('last'));
 btnGameReviewAnalyze.addEventListener('click', () => enterGameAnalysis(btnGameReviewAnalyze));
+btnGameReviewAiAnalyze.addEventListener('click', requestGameReviewAiCandidate);
 btnGameReviewCreatePuzzle.addEventListener('click', () => createPuzzleFromGameReview(btnGameReviewCreatePuzzle));
 btnGameAnalysisUndo.addEventListener('click', undoGameAnalysis);
 btnGameAnalysisReset.addEventListener('click', resetGameAnalysisToSource);

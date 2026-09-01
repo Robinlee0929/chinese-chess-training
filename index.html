@@ -69,7 +69,7 @@
   "isBasedOn": "https://github.com/doggy8088/chinese-chess"
 }
 </script>
-<link rel="stylesheet" href="./css/style.css?v=0808f103cf">
+<link rel="stylesheet" href="./css/style.css?v=7ddbb73eba">
 <script type="importmap">
 {
   "imports": {
@@ -514,8 +514,15 @@
         </div>
         <div class="game-review-actions" aria-label="複盤操作">
           <button id="btnGameReviewAnalyze" type="button" class="game-analysis-primary">從這裡分析</button>
+          <button id="btnGameReviewAiAnalyze" type="button" class="game-review-ai-primary"
+            aria-label="分析目前複盤局面" aria-controls="gameReviewAiPanel" aria-busy="false">AI 分析</button>
           <button id="btnGameReviewCreatePuzzle" type="button" class="game-review-puzzle-primary">建立殺局題</button>
         </div>
+        <section id="gameReviewAiPanel" class="game-review-ai-panel hidden" role="status"
+          aria-live="polite" aria-atomic="true" aria-busy="false">
+          <strong id="gameReviewAiHeading"></strong>
+          <span id="gameReviewAiDetail"></span>
+        </section>
         <details id="gameReviewMoveDetails" class="game-review-moves" open>
           <summary>完整著法 <span id="gameReviewMoveCount"></span></summary>
           <ol id="gameReviewMoveList" aria-label="完整複盤著法"></ol>
@@ -590,6 +597,6 @@
   <div id="toast" class="hidden" role="status"></div>
 </div>
 
-<script type="module" src="./main.js?v=0808f103cf"></script>
+<script type="module" src="./main.js?v=7ddbb73eba"></script>
 </body>
 </html>

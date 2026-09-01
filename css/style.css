@@ -1061,7 +1061,7 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
 .game-review-move[aria-current="step"] .ply,
 .game-review-move[aria-current="step"] .side { color: #3a2511; }
 #btnGameReviewDelete { width: 100%; min-height: 40px; }
-.game-review-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.game-review-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
 .game-review-actions button { min-width: 0; min-height: 44px; padding: 7px 8px; font-size: 12px; }
 .game-analysis-primary {
   min-height: 44px;
@@ -1071,6 +1071,13 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
   font-weight: 700;
 }
 .game-analysis-primary:hover:not(:disabled) { background: linear-gradient(180deg, #afe5d5, #73c3af); }
+.game-review-ai-primary {
+  color: #151d31;
+  border-color: #8ea8e8;
+  background: linear-gradient(180deg, #c5d3f4, #8ea8e8);
+  font-weight: 700;
+}
+.game-review-ai-primary:hover:not(:disabled) { background: linear-gradient(180deg, #d6e0f8, #a2b8ed); }
 .game-review-puzzle-primary {
   color: #2e210c;
   border-color: #d9a441;
@@ -1078,6 +1085,30 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
   font-weight: 700;
 }
 .game-review-puzzle-primary:hover:not(:disabled) { background: linear-gradient(180deg, #f6d17a, #e6b552); }
+.game-review-ai-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(142, 168, 232, 0.45);
+  border-left: 3px solid #8ea8e8;
+  border-radius: 8px;
+  background: rgba(142, 168, 232, 0.09);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.game-review-ai-panel strong { color: #dce6ff; }
+.game-review-ai-panel span { color: var(--muted); }
+.game-review-ai-panel.loading strong { color: #b9c9ef; }
+.game-review-ai-panel.error {
+  border-color: rgba(224, 125, 113, 0.5);
+  border-left-color: #e07d71;
+  background: rgba(224, 125, 113, 0.08);
+}
+.game-review-ai-panel.error strong { color: #f1b5ae; }
 .game-analysis-badge { color: #9adbc8; border-color: rgba(101, 183, 164, 0.5); background: rgba(101, 183, 164, 0.1); }
 .game-analysis-status {
   min-height: 54px;

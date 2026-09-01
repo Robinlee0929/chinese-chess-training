@@ -1,4 +1,5 @@
 // AI 引擎自測
+import { readFileSync } from 'node:fs';
 import { initialBoard, applyMove, legalMoves, inCheck, RED, BLACK, hashBoard } from './game.js';
 import { findBestMove, evaluate } from './ai.js';
 
@@ -108,6 +109,54 @@ for (const lv of ['easy', 'medium', 'hard']) {
 // ---------- 評估函數對稱 ----------
 {
   ok(evaluate(initialBoard()) === 0, '初始局面評估為 0（紅黑對稱）');
+}
+
+// ---------- Review AI：歷史前綴使同一候選成為第三次重複和局 ----------
+{
+  const b = emptyBoard();
+  b[0][3] = { type: 'K', side: RED };
+  b[7][3] = { type: 'K', side: BLACK };
+  b[0][4] = { type: 'R', side: BLACK };
+  b[1][3] = { type: 'R', side: BLACK };
+  const forced = { from: { r: 0, c: 3 }, to: { r: 0, c: 4 } };
+  const child = b.map((row) => row.map((p) => (p ? { ...p } : null)));
+  applyMove(child, forced.from, forced.to);
+  const childKey = `${hashBoard(child)}|${BLACK}`;
+  const currentKey = `${hashBoard(b)}|${RED}`;
+  const inherited = [
+    { key: childKey, mover: null, check: false },
+    { key: 'historical-filler|red', mover: BLACK, check: false },
+    { key: childKey, mover: RED, check: false },
+    { key: currentKey, mover: BLACK, check: false },
+  ];
+  const fresh = [{ key: currentKey, mover: null, check: false }];
+  const repeated = findBestMove(b, RED, 'review-v1', [], { repetitionPrefix: inherited });
+  const withoutHistory = findBestMove(b, RED, 'review-v1', [], { repetitionPrefix: fresh });
+  ok(isLegal(b, repeated) && repeated.score === 0,
+    `review-v1：繼承前綴把唯一候選判為第三次重複和局（${JSON.stringify(repeated)}）`);
+  ok(withoutHistory?.score < -(100000 - 200),
+    `review-v1：改成 fresh 前綴會產生實質不同的殺棋級分數（${withoutHistory?.score}）`);
+  ok(repeated.depth >= 1 && repeated.depth <= 3, `review-v1：只回報完成的 1–3 層（depth=${repeated.depth}）`);
+
+  const again = findBestMove(b, RED, 'review-v1', [], { repetitionPrefix: inherited });
+  ok(JSON.stringify(again) === JSON.stringify(repeated), 'review-v1：同完成深度的同分選擇具確定性');
+}
+
+// ---------- Review AI：重複與 TT 邊界必須同時存在於兩種搜索 ----------
+{
+  const source = readFileSync(new URL('./ai.js', import.meta.url), 'utf8');
+  const quiesceSource = source.match(/function quiesce\([^]*?^}/m)?.[0] || '';
+  const negamaxSource = source.match(/function negamax\([^]*?^}/m)?.[0] || '';
+  ok(/repetitionScore\(side, ply\)/.test(quiesceSource)
+    && /pushRepetitionPosition/.test(quiesceSource) && /repetitionPath\.pop\(\)/.test(quiesceSource),
+  'review-v1：quiescence 直接判決並維護 repetition path');
+  ok(/repetitionScore\(side, ply\)/.test(negamaxSource)
+    && /pushRepetitionPosition/.test(negamaxSource) && /repetitionPath\.pop\(\)/.test(negamaxSource),
+  'review-v1：negamax 直接判決並維護 repetition path');
+  ok(/transpositionTableEnabled \? TT\.get/.test(negamaxSource)
+    && /if \(transpositionTableEnabled\) TT\.set/.test(negamaxSource)
+    && /transpositionTableEnabled = !reviewSearch/.test(source),
+  'review-v1：停用 board-only TT，一般 AI 仍啟用');
 }
 
 // ---------- 效能：hard 在初始局面 5.5 秒內回覆 ----------

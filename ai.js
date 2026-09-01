@@ -4,7 +4,10 @@
 // 難度：easy（淺層＋隨機）/ medium（3 層）/ hard（迭代加深至 6 層，殘局更深）
 // 加強：置換表、killer/history 排序、將軍延伸、應將靜態搜索、重複局面偵測
 // ============================================================
-import { ROWS, COLS, RED, BLACK, getMoves, legalMoves, kingsFacing, kingPos, inCheck, hashBoard } from './game.js?v=0808f103cf';
+import {
+  ROWS, COLS, RED, BLACK,
+  getMoves, legalMoves, kingsFacing, kingPos, inCheck, hashBoard, repetitionVerdict,
+} from './game.js?v=7ddbb73eba';
 
 const INF = 1e9;
 const MATE = 100000;
@@ -307,6 +310,9 @@ function orderMoves(b, moves, ttMove, side, ply) {
 const TIMEOUT = Symbol('timeout');
 let deadline = 0;
 let nodes = 0;
+let repetitionPath = null;
+let repetitionAware = false;
+let transpositionTableEnabled = true;
 
 /** 快速判斷 side 是否被將軍（與 game.js inCheck 等價，但直接掃攻擊線，供搜索內層使用） */
 const N_STEPS = [[-2, -1, [-1, 0]], [-2, 1, [-1, 0]], [-1, 2, [0, 1]], [-1, -2, [0, -1]], [1, 2, [0, 1]], [1, -2, [0, -1]], [2, 1, [1, 0]], [2, -1, [1, 0]]];
@@ -359,8 +365,26 @@ function checkTime() {
   if (deadline && (++nodes & 1023) === 0 && Date.now() > deadline) throw TIMEOUT;
 }
 
+function repetitionScore(side, ply) {
+  if (!repetitionAware || !repetitionPath?.length) return null;
+  const verdict = repetitionVerdict(repetitionPath, repetitionPath[repetitionPath.length - 1].key);
+  if (!verdict) return null;
+  if (verdict.result === 'draw') return 0;
+  return verdict.loser === side ? -MATE + ply : MATE - ply;
+}
+
+function pushRepetitionPosition(b, mover, sideToMove) {
+  repetitionPath.push({
+    key: `${hashBoard(b)}|${sideToMove}`,
+    mover,
+    check: inCheckFast(b, sideToMove),
+  });
+}
+
 function quiesce(b, side, alpha, beta, ply) {
   checkTime();
+  const repeated = repetitionScore(side, ply);
+  if (repeated !== null) return repeated;
   const moves = genMoves(b, side);
   // 能直接吃到對方將帥（含飛將）＝殺
   for (const m of moves) {
@@ -386,7 +410,9 @@ function quiesce(b, side, alpha, beta, ply) {
     const cap = b[m.tr][m.tc];
     if (!checked && cap && stand + VAL[cap.type] + 60 < alpha) continue; // delta 剪枝
     make(b, m);
+    if (repetitionAware) pushRepetitionPosition(b, side, other(side));
     const sc = -quiesce(b, other(side), -beta, -alpha, ply + 1);
+    if (repetitionAware) repetitionPath.pop();
     unmake(b, m, cap);
     if (sc > best) best = sc;
     if (sc > alpha) alpha = sc;
@@ -398,12 +424,14 @@ function quiesce(b, side, alpha, beta, ply) {
 
 function negamax(b, side, depth, alpha, beta, ply) {
   checkTime();
+  const repeated = repetitionScore(side, ply);
+  if (repeated !== null) return repeated;
   const checked = inCheckFast(b, side);
   if (checked && ply < 32) depth++; // 將軍延伸：連將殺與解殺看得更遠
   if (depth <= 0) return quiesce(b, side, alpha, beta, ply);
 
   const key = za * 4294967296 + zb;
-  const hit = TT.get(key);
+  const hit = transpositionTableEnabled ? TT.get(key) : null;
   let ttMove = null;
   if (hit) {
     ttMove = hit.m;
@@ -424,7 +452,9 @@ function negamax(b, side, depth, alpha, beta, ply) {
     const cap = b[m.tr][m.tc];
     if (cap && cap.type === 'K') return MATE - ply;
     make(b, m);
+    if (repetitionAware) pushRepetitionPosition(b, side, other(side));
     const sc = -negamax(b, other(side), depth - 1, -beta, -alpha, ply + 1);
+    if (repetitionAware) repetitionPath.pop();
     unmake(b, m, cap);
     if (sc > best) { best = sc; bestM = m; }
     if (sc > alpha) { alpha = sc; flag = TT_EXACT; }
@@ -441,7 +471,7 @@ function negamax(b, side, depth, alpha, beta, ply) {
   }
   let sStore = best;
   if (sStore > MATE - 1000) sStore += ply; else if (sStore < -(MATE - 1000)) sStore -= ply;
-  TT.set(key, { d: depth, s: sStore, f: flag, m: bestM });
+  if (transpositionTableEnabled) TT.set(key, { d: depth, s: sStore, f: flag, m: bestM });
   return best;
 }
 
@@ -451,15 +481,41 @@ const LEVELS = {
   easy:   { maxDepth: 1, timeMs: 400,  window: 50, randomRate: 0.3 },
   medium: { maxDepth: 3, timeMs: 900,  window: 8,  randomRate: 0 },
   hard:   { maxDepth: 6, timeMs: 4500, window: 0,  randomRate: 0 },
+  'review-v1': { maxDepth: 3, timeMs: 1200, window: 0, randomRate: 0 },
 };
+
+function cloneReviewRepetitionPrefix(prefix, srcBoard, side) {
+  if (!Array.isArray(prefix) || prefix.length === 0) {
+    throw new TypeError('Review AI requires a nonempty canonical repetition prefix.');
+  }
+  const cloned = prefix.map((entry) => {
+    if (!entry || typeof entry.key !== 'string'
+      || (entry.mover !== null && entry.mover !== RED && entry.mover !== BLACK)
+      || typeof entry.check !== 'boolean') {
+      throw new TypeError('Review AI repetition prefix is invalid.');
+    }
+    return { key: entry.key, mover: entry.mover, check: entry.check };
+  });
+  const currentKey = `${hashBoard(srcBoard)}|${side}`;
+  if (cloned[cloned.length - 1].key !== currentKey) {
+    throw new TypeError('Review AI repetition prefix does not match the source position.');
+  }
+  return cloned;
+}
 
 /**
  * 找出 side 方的最佳著法。
  * @param {Array} recent 近期局面雜湊（hashBoard 字串），會懲罰走回原局面的著法
+ * @param {{repetitionPrefix?:Array<{key:string,mover:(string|null),check:boolean}>}} options
+ *   review-v1 專用的確定性重播歷史；一般對弈不讀取此參數。
  * @returns {{from:{r,c}, to:{r,c}, score:number, depth:number}|null} 無合法著法時回 null
  */
-export function findBestMove(srcBoard, side, level = 'medium', recent = []) {
+export function findBestMove(srcBoard, side, level = 'medium', recent = [], options = {}) {
   const cfg = LEVELS[level] || LEVELS.medium;
+  const reviewSearch = level === 'review-v1';
+  const reviewPrefix = reviewSearch
+    ? cloneReviewRepetitionPrefix(options.repetitionPrefix, srcBoard, side)
+    : null;
   let b = srcBoard.map((row) => row.map((p) => (p ? { type: p.type, side: p.side } : null)));
 
   // 根節點只考慮「嚴格合法」的著法（不送將、不對臉）
@@ -488,17 +544,26 @@ export function findBestMove(srcBoard, side, level = 'medium', recent = []) {
     else if (pieceCount <= 10) maxDepth += 2;
   } else if (level === 'medium' && pieceCount <= 8) maxDepth += 1;
 
-  nodes = 0;
-  deadline = Date.now() + cfg.timeMs;
-  TT = new Map();
-  killers = [];
-  histH = { [RED]: {}, [BLACK]: {} };
-  initZobrist(b, side);
-  let scored = rootMoves.map((m) => ({ m, score: 0 }));
-  let completed = 0;
+  try {
+    nodes = 0;
+    deadline = Date.now() + cfg.timeMs;
+    TT = new Map();
+    killers = [];
+    histH = { [RED]: {}, [BLACK]: {} };
+    repetitionAware = reviewSearch;
+    repetitionPath = reviewPrefix;
+    transpositionTableEnabled = !reviewSearch;
+    initZobrist(b, side);
+    let scored = rootMoves.map((m) => ({ m, score: 0 }));
+    let completed = 0;
+  const compareMoveCoordinates = (a, b2) => a.fr - b2.fr || a.fc - b2.fc
+    || a.tr - b2.tr || a.tc - b2.tc;
+  const compareScored = (a, b2) => b2.score - a.score
+    || (reviewSearch ? compareMoveCoordinates(a.m, b2.m) : 0);
   const freshBoard = () => {
     const nb = srcBoard.map((row) => row.map((p) => (p ? { type: p.type, side: p.side } : null)));
     initZobrist(nb, side);
+    if (reviewSearch) repetitionPath = cloneReviewRepetitionPrefix(reviewPrefix, srcBoard, side);
     return nb;
   };
 
@@ -508,12 +573,14 @@ export function findBestMove(srcBoard, side, level = 'medium', recent = []) {
     try {
       for (const e of scored) {
         const cap = make(b, e.m);
+        if (reviewSearch) pushRepetitionPosition(b, side, other(side));
         let sc = -negamax(b, other(side), d - 1, -INF, -alpha, 1);
         // sc === alpha 可能只是提前截斷的界值（非精確分數），全窗口重搜確認，
         // 避免假分數與真殺著同分而被誤選
         if (sc === alpha && alpha > -INF) {
           sc = -negamax(b, other(side), d - 1, -INF, INF, 1);
         }
+        if (reviewSearch) repetitionPath.pop();
         unmake(b, e.m, cap);
         iter.push({ m: e.m, score: sc });
         if (sc > alpha) alpha = sc;
@@ -524,7 +591,7 @@ export function findBestMove(srcBoard, side, level = 'medium', recent = []) {
       b = freshBoard();
       break;
     }
-    iter.sort((a, b2) => b2.score - a.score);
+    iter.sort(compareScored);
     scored = iter;
     completed = d;
     if (scored[0].score > MATE - 200) break; // 已見必殺，不必再深
@@ -548,7 +615,7 @@ export function findBestMove(srcBoard, side, level = 'medium', recent = []) {
       if (err !== TIMEOUT) throw err;
     }
     deadline = 0;
-    near.sort((a, b2) => b2.score - a.score);
+    near.sort(compareScored);
     // 會走回近期出現過局面的著法扣分，避免殘局來回搗棋（殺棋不受影響）
     if (recent && recent.length) {
       const seen = new Map();
@@ -562,7 +629,7 @@ export function findBestMove(srcBoard, side, level = 'medium', recent = []) {
         const n = seen.get(h) || 0;
         if (n) e.score -= (chk ? 60 : 12) * n;
       }
-      near.sort((a, b2) => b2.score - a.score);
+      near.sort(compareScored);
     }
     const best = near[0].score;
     const top = near.filter((e) => best - e.score <= cfg.window);
@@ -583,12 +650,22 @@ export function findBestMove(srcBoard, side, level = 'medium', recent = []) {
       const n = seen.get(h) || 0;
       if (n) e.score -= (chk ? 60 : 12) * n;
     }
-    scored.sort((a, b2) => b2.score - a.score);
+    scored.sort(compareScored);
   }
 
+    if (reviewSearch) return completed > 0 ? fmt(scored[0].m, scored[0].score, completed) : null;
+
   // hard（window=0）或有殺棋：直接取最佳著法（同分著法隨機）
-  const topScore = scored[0].score;
-  const top = scored.filter((e) => e.score === topScore);
-  const pick = top[(Math.random() * top.length) | 0];
-  return fmt(pick.m, pick.score, completed);
+    const topScore = scored[0].score;
+    const top = scored.filter((e) => e.score === topScore);
+    const pick = top[(Math.random() * top.length) | 0];
+    return fmt(pick.m, pick.score, completed);
+  } finally {
+    deadline = 0;
+    if (reviewSearch) {
+      repetitionAware = false;
+      repetitionPath = null;
+      transpositionTableEnabled = true;
+    }
+  }
 }

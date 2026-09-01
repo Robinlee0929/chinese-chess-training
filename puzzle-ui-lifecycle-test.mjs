@@ -125,7 +125,7 @@ function harness(options = {}) {
     AI_SIDE: game.BLACK, aiMoveStart: 0, aiRequestCount: 0, aiMaybeMoveCalls: 0,
     aiWorker: { postMessage: () => { context.aiRequestCount++; } }, aiModule: null,
     practiceToken: 0, appState: 'NORMAL_GAME', editorState: null, recorderState: null,
-    gameReviewSession: null, gameReviewPuzzleReturnContext: null,
+    gameReviewSession: null, gameReviewPuzzleReturnContext: null, reviewAiInvalidations: 0,
     practiceState: null, activeSavedPuzzleId: null, practiceCompletionRecorded: false,
     practiceHintLevel: 0, practiceHint: null, practiceAttempt: null, hintMarkerRoles: [],
     practiceAnalyticsStore, analyticsStorage,
@@ -154,6 +154,7 @@ function harness(options = {}) {
     markPracticeStarted: () => true, isAI: () => false, setEditorTool: noop,
     setEditorMessage: noop, setPhotoImportMessage: noop, renderLibraryList: noop, openLibraryPuzzle: noop,
     renderGameReview: noop, createGameReviewPuzzleHandoff,
+    invalidateGameReviewAi: () => { context.reviewAiInvalidations++; },
     decodePhotoObjectUrl: async () => ({ naturalWidth: 4, naturalHeight: 3 }),
     document: { querySelector: () => ({ checked: false }) },
     window: { confirm: () => false },
@@ -317,6 +318,7 @@ function assertTurnDivergenceHandoff(ctx, reviewSession, invoker = node()) {
   ctx.appState = ctx.APP_STATE.GAME_REVIEW;
   ctx.gameReviewSession = reviewSession;
   assert.equal(ctx.createPuzzleFromGameReview(invoker), true);
+  assert.equal(ctx.reviewAiInvalidations, 1, 'entering R4 invalidates pending Review AI');
   same(ctx.editorState.board, reviewSession.snapshot.board);
   assert.notDeepEqual(ctx.editorState.board, ctx.board,
     'historical Review board deliberately differs from live normal board');
