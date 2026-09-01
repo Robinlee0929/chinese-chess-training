@@ -84,12 +84,24 @@ function executableAi({ disableNegamaxRepetition = false, disableQuiesceRepetiti
     'function quiesce(b, side, alpha, beta, ply) {\n  globalThis.__hooks?.onQuiesceEnter?.({ side, ply });\n  checkTime();\n  const repeated =',
     'quiescence entry hook');
   source = replaceRequired(source,
+    "    make(b, m);\n    const sc = -withRepetitionPosition(b, side, other(side), 'quiescence',",
+    `    make(b, m);
+    globalThis.__hooks?.onQuiesceMove?.({
+      move: { fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc },
+      captured: cap ? { ...cap } : null,
+      key: hashBoard(b) + '|' + other(side),
+      mover: side,
+      check: inCheckFast(b, other(side)),
+    });
+    const sc = -withRepetitionPosition(b, side, other(side), 'quiescence',`,
+    'quiescence move diagnostics');
+  source = replaceRequired(source,
     'function negamax(b, side, depth, alpha, beta, ply) {\n  checkTime();\n  const repeated =',
     'function negamax(b, side, depth, alpha, beta, ply) {\n  globalThis.__hooks?.onNegamaxEnter?.({ side, depth, ply });\n  checkTime();\n  const repeated =',
     'negamax entry hook');
   source = replaceRequired(source,
     'if (repeated !== null) return repeated;',
-    'if (repeated !== null) { globalThis.__hooks?.onQuiesceRepetition?.({ side, ply }); return repeated; }',
+    'if (repeated !== null) { globalThis.__hooks?.onQuiesceRepetition?.({ side, ply, key: repetitionPath[repetitionPath.length - 1].key }); return repeated; }',
     'quiescence repetition hook');
   source = replaceRequired(source,
     'if (repeated !== null) return repeated;',
@@ -316,37 +328,87 @@ for (const lv of ['easy', 'medium', 'hard']) {
   expectedFailure(() => assert.equal(brokenResult?.score, 0), '移除 negamax 歷史判決會被測試攔截');
 }
 
-// ---------- Review AI：quiescence 捕獲分支會把新局面加入歷史並判決 ----------
+// ---------- Review AI：quiescence 第三次重複會改變公開候選，fresh history 不會 ----------
 {
   const b = emptyBoard();
-  b[0][3] = { type: 'K', side: RED };
-  b[7][3] = { type: 'K', side: BLACK };
-  b[0][4] = { type: 'R', side: BLACK };
-  b[1][3] = { type: 'R', side: BLACK };
-  b[1][0] = { type: 'B', side: RED };
-  const child = b.map((row) => row.map((p) => (p ? { ...p } : null)));
-  applyMove(child, { r: 0, c: 3 }, { r: 0, c: 4 });
-  const capture = child.map((row) => row.map((p) => (p ? { ...p } : null)));
-  applyMove(capture, { r: 1, c: 3 }, { r: 1, c: 0 });
-  const captureKey = `${hashBoard(capture)}|${RED}`;
+  b[0][5] = { type: 'K', side: RED };
+  b[2][6] = { type: 'N', side: RED };
+  b[2][7] = { type: 'R', side: RED };
+  b[3][2] = { type: 'B', side: BLACK };
+  b[8][4] = { type: 'K', side: BLACK };
+  b[9][0] = { type: 'A', side: BLACK };
+
+  // 候選俥七進七後，黑將進入 (7,3)，quiescence 內俥由 (9,7) 吃至 (9,0)。
+  const repeatedBoard = b.map((row) => row.map((p) => (p ? { ...p } : null)));
+  applyMove(repeatedBoard, { r: 2, c: 7 }, { r: 9, c: 7 });
+  applyMove(repeatedBoard, { r: 8, c: 4 }, { r: 7, c: 3 });
+  applyMove(repeatedBoard, { r: 9, c: 7 }, { r: 9, c: 0 });
+  const repeatedKey = `${hashBoard(repeatedBoard)}|${BLACK}`;
   const currentKey = `${hashBoard(b)}|${RED}`;
+
+  // 使用實際 hashBoard 產生的 canonical entry，並維持 side/mover 交替。
+  const filler1 = b.map((row) => row.map((p) => (p ? { ...p } : null)));
+  filler1[8][3] = filler1[8][4]; filler1[8][4] = null;
+  const filler2 = filler1.map((row) => row.map((p) => (p ? { ...p } : null)));
+  filler2[4][5] = filler2[2][6]; filler2[2][6] = null;
+  const filler3 = filler2.map((row) => row.map((p) => (p ? { ...p } : null)));
+  filler3[5][4] = filler3[3][2]; filler3[3][2] = null;
   const inherited = [
-    { key: captureKey, mover: null, check: false },
-    { key: 'quiesce-filler|black', mover: RED, check: false },
-    { key: captureKey, mover: BLACK, check: false },
+    { key: repeatedKey, mover: null, check: false },
+    { key: `${hashBoard(filler1)}|${RED}`, mover: BLACK, check: false },
+    { key: `${hashBoard(filler2)}|${BLACK}`, mover: RED, check: false },
+    { key: `${hashBoard(filler3)}|${RED}`, mover: BLACK, check: false },
+    { key: repeatedKey, mover: RED, check: false },
     { key: currentKey, mover: BLACK, check: false },
   ];
+  const fresh = [{ key: currentKey, mover: null, check: false }];
+
+  const inheritedResult = findBestMove(b, RED, 'review-v1', [], { repetitionPrefix: inherited });
+  const freshResult = findBestMove(b, RED, 'review-v1', [], { repetitionPrefix: fresh });
+  ok(inheritedResult?.from.r === 2 && inheritedResult?.from.c === 7
+    && inheritedResult?.to.r === 9 && inheritedResult?.to.c === 7
+    && inheritedResult?.score === 298 && inheritedResult?.depth === 3,
+  `review-v1：quiescence 重複歷史選擇俥 (2,7)→(9,7)（score=${inheritedResult?.score}, depth=${inheritedResult?.depth}）`);
+  ok(freshResult?.from.r === 2 && freshResult?.from.c === 7
+    && freshResult?.to.r === 8 && freshResult?.to.c === 7
+    && freshResult?.score === 303 && freshResult?.depth === 3,
+  `review-v1：fresh history 改選俥 (2,7)→(8,7)（score=${freshResult?.score}, depth=${freshResult?.depth}）`);
+  ok(JSON.stringify(inheritedResult) !== JSON.stringify(freshResult),
+    'review-v1：唯一輸入差異為 repetition history，公開候選與分數產生實質差異');
+
   const context = executableAi();
-  let repetitionHits = 0;
-  context.__hooks.onQuiesceRepetition = () => { repetitionHits++; };
+  context.__now = () => 0;
+  const quiescenceHits = [];
+  const quiescenceMoves = [];
+  let negamaxHits = 0;
+  context.__hooks.onQuiesceMove = (entry) => { quiescenceMoves.push(entry); };
+  context.__hooks.onQuiesceRepetition = (entry) => { quiescenceHits.push(entry); };
+  context.__hooks.onNegamaxRepetition = () => { negamaxHits++; };
   const result = context.__aiTest.findBestMove(b, RED, 'review-v1', [], { repetitionPrefix: inherited });
-  ok(repetitionHits > 0, `review-v1：quiescence 捕獲遞迴讀到新增的第三次重複（hits=${repetitionHits}）`);
+  const decisiveMoveReached = quiescenceMoves.some((entry) => entry.key === repeatedKey
+    && entry.move.fr === 9 && entry.move.fc === 7 && entry.move.tr === 9 && entry.move.tc === 0);
+  ok(JSON.stringify(result) === JSON.stringify(inheritedResult)
+    && decisiveMoveReached && quiescenceHits.some((entry) => entry.key === repeatedKey),
+  `review-v1：quiescence 內 (9,7)→(9,0) 到達第三次重複（hits=${quiescenceHits.length}）`);
+  ok(negamaxHits === 0, 'review-v1：公開結果差異不是由 negamax repetition 判決造成');
+
+  const freshContext = executableAi();
+  freshContext.__now = () => 0;
+  const freshQuiescenceHits = [];
+  freshContext.__hooks.onQuiesceRepetition = (entry) => { freshQuiescenceHits.push(entry); };
+  const deterministicFreshResult = freshContext.__aiTest.findBestMove(
+    b, RED, 'review-v1', [], { repetitionPrefix: fresh });
+  ok(JSON.stringify(deterministicFreshResult) === JSON.stringify(freshResult)
+    && !freshQuiescenceHits.some((entry) => entry.key === repeatedKey),
+  'review-v1：固定 clock 下 fresh history 的同一 quiescence 節點不受重複判決');
 
   const broken = executableAi({ disableQuiesceRepetition: true });
-  let brokenHits = 0;
-  broken.__hooks.onQuiesceRepetition = () => { brokenHits++; };
-  broken.__aiTest.findBestMove(b, RED, 'review-v1', [], { repetitionPrefix: inherited });
-  expectedFailure(() => assert.ok(brokenHits > 0), '移除 quiescence 歷史判決會被測試攔截');
+  broken.__now = () => 0;
+  const brokenResult = broken.__aiTest.findBestMove(b, RED, 'review-v1', [], { repetitionPrefix: inherited });
+  ok(JSON.stringify(brokenResult) === JSON.stringify(freshResult),
+    'review-v1：移除 quiescence repetition 後 inherited 結果退化為 fresh history 結果');
+  expectedFailure(() => assert.deepEqual(brokenResult, inheritedResult),
+    '移除 quiescence 歷史判決會被候選／分數行為差異攔截');
 }
 
 // ---------- Review AI：長將判負的兩個符號方向都由 negamax 實際判決 ----------
