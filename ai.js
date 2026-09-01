@@ -7,7 +7,7 @@
 import {
   ROWS, COLS, RED, BLACK,
   getMoves, legalMoves, kingsFacing, kingPos, inCheck, hashBoard, repetitionVerdict,
-} from './game.js?v=7ddbb73eba';
+} from './game.js?v=75fe963924';
 
 const INF = 1e9;
 const MATE = 100000;
@@ -381,6 +381,16 @@ function pushRepetitionPosition(b, mover, sideToMove) {
   });
 }
 
+function withRepetitionPosition(b, mover, sideToMove, searchChild) {
+  if (!repetitionAware) return searchChild();
+  pushRepetitionPosition(b, mover, sideToMove);
+  try {
+    return searchChild();
+  } finally {
+    repetitionPath.pop();
+  }
+}
+
 function quiesce(b, side, alpha, beta, ply) {
   checkTime();
   const repeated = repetitionScore(side, ply);
@@ -410,9 +420,8 @@ function quiesce(b, side, alpha, beta, ply) {
     const cap = b[m.tr][m.tc];
     if (!checked && cap && stand + VAL[cap.type] + 60 < alpha) continue; // delta 剪枝
     make(b, m);
-    if (repetitionAware) pushRepetitionPosition(b, side, other(side));
-    const sc = -quiesce(b, other(side), -beta, -alpha, ply + 1);
-    if (repetitionAware) repetitionPath.pop();
+    const sc = -withRepetitionPosition(b, side, other(side),
+      () => quiesce(b, other(side), -beta, -alpha, ply + 1));
     unmake(b, m, cap);
     if (sc > best) best = sc;
     if (sc > alpha) alpha = sc;
@@ -452,9 +461,8 @@ function negamax(b, side, depth, alpha, beta, ply) {
     const cap = b[m.tr][m.tc];
     if (cap && cap.type === 'K') return MATE - ply;
     make(b, m);
-    if (repetitionAware) pushRepetitionPosition(b, side, other(side));
-    const sc = -negamax(b, other(side), depth - 1, -beta, -alpha, ply + 1);
-    if (repetitionAware) repetitionPath.pop();
+    const sc = -withRepetitionPosition(b, side, other(side),
+      () => negamax(b, other(side), depth - 1, -beta, -alpha, ply + 1));
     unmake(b, m, cap);
     if (sc > best) { best = sc; bestM = m; }
     if (sc > alpha) { alpha = sc; flag = TT_EXACT; }
@@ -573,14 +581,15 @@ export function findBestMove(srcBoard, side, level = 'medium', recent = [], opti
     try {
       for (const e of scored) {
         const cap = make(b, e.m);
-        if (reviewSearch) pushRepetitionPosition(b, side, other(side));
-        let sc = -negamax(b, other(side), d - 1, -INF, -alpha, 1);
-        // sc === alpha 可能只是提前截斷的界值（非精確分數），全窗口重搜確認，
-        // 避免假分數與真殺著同分而被誤選
-        if (sc === alpha && alpha > -INF) {
-          sc = -negamax(b, other(side), d - 1, -INF, INF, 1);
-        }
-        if (reviewSearch) repetitionPath.pop();
+        const sc = withRepetitionPosition(b, side, other(side), () => {
+          let childScore = -negamax(b, other(side), d - 1, -INF, -alpha, 1);
+          // childScore === alpha 可能只是提前截斷的界值（非精確分數），全窗口重搜確認，
+          // 避免假分數與真殺著同分而被誤選
+          if (childScore === alpha && alpha > -INF) {
+            childScore = -negamax(b, other(side), d - 1, -INF, INF, 1);
+          }
+          return childScore;
+        });
         unmake(b, e.m, cap);
         iter.push({ m: e.m, score: sc });
         if (sc > alpha) alpha = sc;

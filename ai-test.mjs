@@ -1,5 +1,7 @@
 // AI 引擎自測
 import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
+import * as gameEngine from './game.js';
 import { initialBoard, applyMove, legalMoves, inCheck, RED, BLACK, hashBoard } from './game.js';
 import { findBestMove, evaluate } from './ai.js';
 
@@ -11,6 +13,149 @@ function ok(cond, msg) {
 const emptyBoard = () => Array.from({ length: 10 }, () => Array(9).fill(null));
 const isLegal = (b, mv) =>
   !!mv && legalMoves(b, mv.from.r, mv.from.c).some((m) => m.r === mv.to.r && m.c === mv.to.c);
+
+const aiSource = readFileSync(new URL('./ai.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+
+function replaceRequired(source, search, replacement, label) {
+  const next = source.replace(search, replacement);
+  if (next === source) throw new Error(`AI test harness could not instrument ${label}`);
+  return next;
+}
+
+function executableAi({ disableNegamaxRepetition = false, disableQuiesceRepetition = false,
+  invertPerpetualScore = false, exposePartialDepth = false, breakCleanupLayer = null } = {}) {
+  let source = aiSource;
+  source = replaceRequired(source, /import \{[^]*?\} from '\.\/game\.js\?v=[^']+';/,
+    'const { ROWS, COLS, RED, BLACK, getMoves, legalMoves, kingsFacing, kingPos, inCheck, hashBoard, repetitionVerdict } = globalThis.__game;',
+    'game import');
+  source = source.replace(/\bexport\s+/g, '');
+  if (disableNegamaxRepetition) {
+    source = replaceRequired(source,
+      'function negamax(b, side, depth, alpha, beta, ply) {\n  checkTime();\n  const repeated = repetitionScore(side, ply);',
+      'function negamax(b, side, depth, alpha, beta, ply) {\n  checkTime();\n  const repeated = null;',
+      'negamax repetition negative control');
+  }
+  source = replaceRequired(source,
+    'function withRepetitionPosition(b, mover, sideToMove, searchChild) {\n  if (!repetitionAware) return searchChild();\n  pushRepetitionPosition(b, mover, sideToMove);\n  try {\n    return searchChild();\n  } finally {\n    repetitionPath.pop();\n  }\n}',
+    `function withRepetitionPosition(b, mover, sideToMove, layer, searchChild) {
+  if (!repetitionAware) return searchChild();
+  const before = repetitionPath.map((entry) => ({ ...entry }));
+  pushRepetitionPosition(b, mover, sideToMove);
+  globalThis.__hooks?.onRepetitionPush?.(layer, before, repetitionPath.map((entry) => ({ ...entry })));
+  try {
+    return searchChild();
+  } finally {
+    if (globalThis.__brokenCleanupLayer !== layer) repetitionPath.pop();
+    globalThis.__hooks?.onRepetitionExit?.(layer, before, repetitionPath.map((entry) => ({ ...entry })));
+  }
+}`,
+    'repetition-scope diagnostics');
+  source = replaceRequired(source,
+    'const sc = -withRepetitionPosition(b, side, other(side),\n      () => quiesce',
+    "const sc = -withRepetitionPosition(b, side, other(side), 'quiescence',\n      () => quiesce",
+    'quiescence repetition-scope label');
+  source = replaceRequired(source,
+    'const sc = -withRepetitionPosition(b, side, other(side),\n      () => negamax',
+    "const sc = -withRepetitionPosition(b, side, other(side), 'negamax',\n      () => negamax",
+    'negamax repetition-scope label');
+  source = replaceRequired(source,
+    'const sc = withRepetitionPosition(b, side, other(side), () => {',
+    "const sc = withRepetitionPosition(b, side, other(side), 'root', () => {",
+    'root repetition-scope label');
+  if (disableQuiesceRepetition) {
+    source = replaceRequired(source,
+      'function quiesce(b, side, alpha, beta, ply) {\n  checkTime();\n  const repeated = repetitionScore(side, ply);',
+      'function quiesce(b, side, alpha, beta, ply) {\n  checkTime();\n  const repeated = null;',
+      'quiescence repetition negative control');
+  }
+  if (invertPerpetualScore) {
+    source = replaceRequired(source,
+      'return verdict.loser === side ? -MATE + ply : MATE - ply;',
+      'return verdict.loser === side ? MATE - ply : -MATE + ply;',
+      'perpetual-check sign negative control');
+  }
+  source = replaceRequired(source,
+    'if (deadline && (++nodes & 1023) === 0 && Date.now() > deadline) throw TIMEOUT;',
+    'if (deadline && (++nodes & globalThis.__timeMask) === 0 && globalThis.__now() > deadline) throw TIMEOUT;',
+    'controllable deadline');
+  source = source.replace(/Date\.now\(\)/g, 'globalThis.__now()');
+  source = replaceRequired(source,
+    'function quiesce(b, side, alpha, beta, ply) {\n  checkTime();\n  const repeated =',
+    'function quiesce(b, side, alpha, beta, ply) {\n  globalThis.__hooks?.onQuiesceEnter?.({ side, ply });\n  checkTime();\n  const repeated =',
+    'quiescence entry hook');
+  source = replaceRequired(source,
+    'function negamax(b, side, depth, alpha, beta, ply) {\n  checkTime();\n  const repeated =',
+    'function negamax(b, side, depth, alpha, beta, ply) {\n  globalThis.__hooks?.onNegamaxEnter?.({ side, depth, ply });\n  checkTime();\n  const repeated =',
+    'negamax entry hook');
+  source = replaceRequired(source,
+    'if (repeated !== null) return repeated;',
+    'if (repeated !== null) { globalThis.__hooks?.onQuiesceRepetition?.({ side, ply }); return repeated; }',
+    'quiescence repetition hook');
+  source = replaceRequired(source,
+    'if (repeated !== null) return repeated;',
+    'if (repeated !== null) { globalThis.__hooks?.onNegamaxRepetition?.({ side, ply }); return repeated; }',
+    'negamax repetition hook');
+  source = replaceRequired(source,
+    'const hit = transpositionTableEnabled ? TT.get(key) : null;',
+    'globalThis.__hooks?.onTTRead?.(transpositionTableEnabled);\n  const hit = transpositionTableEnabled ? TT.get(key) : null;',
+    'TT read hook');
+  source = replaceRequired(source,
+    'if (transpositionTableEnabled) TT.set(key, { d: depth, s: sStore, f: flag, m: bestM });',
+    'globalThis.__hooks?.onTTWrite?.(transpositionTableEnabled);\n  if (transpositionTableEnabled) TT.set(key, { d: depth, s: sStore, f: flag, m: bestM });',
+    'TT write hook');
+  source = replaceRequired(source,
+    'for (let d = 1; d <= maxDepth; d++) {',
+    'for (let d = 1; d <= maxDepth; d++) {\n    globalThis.__hooks?.onDepthStart?.(d);',
+    'depth-start hook');
+  source = replaceRequired(source,
+    'completed = d;\n    if (scored[0].score > MATE - 200)',
+    'completed = d;\n    globalThis.__hooks?.onDepthComplete?.(d, scored.map((entry) => ({ m: { ...entry.m }, score: entry.score })));\n    if (scored[0].score > MATE - 200)',
+    'depth-complete hook');
+  source = replaceRequired(source,
+    'if (err !== TIMEOUT) throw err;\n      // 逾時例外會跳過搜索內層的 make/unmake，直接換新盤面',
+    'if (err !== TIMEOUT) throw err;\n      globalThis.__hooks?.onIterationTimeout?.(repetitionPath?.map((entry) => ({ ...entry })));\n      // 逾時例外會跳過搜索內層的 make/unmake，直接換新盤面',
+    'iteration-timeout hook');
+  if (exposePartialDepth) {
+    source = replaceRequired(source,
+      'globalThis.__hooks?.onDepthStart?.(d);',
+      'globalThis.__hooks?.onDepthStart?.(d);\n    completed = d;',
+      'partial-depth negative control');
+  }
+  source += `
+globalThis.__aiTest = {
+  findBestMove,
+  runNegamax(srcBoard, side, depth, records) {
+    const b = srcBoard.map((row) => row.map((p) => (p ? { ...p } : null)));
+    nodes = 0; deadline = 0; TT = new Map(); killers = [];
+    histH = { [RED]: {}, [BLACK]: {} };
+    repetitionAware = true;
+    repetitionPath = records.map((entry) => ({ ...entry }));
+    transpositionTableEnabled = false;
+    initZobrist(b, side);
+    try { return negamax(b, side, depth, -INF, INF, 0); }
+    finally { repetitionAware = false; repetitionPath = null; transpositionTableEnabled = true; }
+  },
+};`;
+
+  const context = vm.createContext({
+    __game: gameEngine,
+    __hooks: {},
+    __brokenCleanupLayer: breakCleanupLayer,
+    __now: Date.now,
+    __timeMask: 1023,
+    Math,
+    Map,
+    Set,
+  });
+  vm.runInContext(source, context);
+  return context;
+}
+
+function expectedFailure(detector, label) {
+  let caught = false;
+  try { detector(); } catch { caught = true; }
+  ok(caught, `EXPECTED_FAIL：${label}`);
+}
 
 // ---------- 初始局面：三種難度都要回傳合法著法 ----------
 for (const lv of ['easy', 'medium', 'hard']) {
@@ -142,21 +287,255 @@ for (const lv of ['easy', 'medium', 'hard']) {
   ok(JSON.stringify(again) === JSON.stringify(repeated), 'review-v1：同完成深度的同分選擇具確定性');
 }
 
-// ---------- Review AI：重複與 TT 邊界必須同時存在於兩種搜索 ----------
+// ---------- Review AI：negamax 實際遞迴會讀取繼承歷史 ----------
 {
-  const source = readFileSync(new URL('./ai.js', import.meta.url), 'utf8');
-  const quiesceSource = source.match(/function quiesce\([^]*?^}/m)?.[0] || '';
-  const negamaxSource = source.match(/function negamax\([^]*?^}/m)?.[0] || '';
-  ok(/repetitionScore\(side, ply\)/.test(quiesceSource)
-    && /pushRepetitionPosition/.test(quiesceSource) && /repetitionPath\.pop\(\)/.test(quiesceSource),
-  'review-v1：quiescence 直接判決並維護 repetition path');
-  ok(/repetitionScore\(side, ply\)/.test(negamaxSource)
-    && /pushRepetitionPosition/.test(negamaxSource) && /repetitionPath\.pop\(\)/.test(negamaxSource),
-  'review-v1：negamax 直接判決並維護 repetition path');
-  ok(/transpositionTableEnabled \? TT\.get/.test(negamaxSource)
-    && /if \(transpositionTableEnabled\) TT\.set/.test(negamaxSource)
-    && /transpositionTableEnabled = !reviewSearch/.test(source),
-  'review-v1：停用 board-only TT，一般 AI 仍啟用');
+  const b = emptyBoard();
+  b[0][3] = { type: 'K', side: RED };
+  b[7][3] = { type: 'K', side: BLACK };
+  b[0][4] = { type: 'R', side: BLACK };
+  b[1][3] = { type: 'R', side: BLACK };
+  const child = b.map((row) => row.map((p) => (p ? { ...p } : null)));
+  applyMove(child, { r: 0, c: 3 }, { r: 0, c: 4 });
+  const childKey = `${hashBoard(child)}|${BLACK}`;
+  const currentKey = `${hashBoard(b)}|${RED}`;
+  const inherited = [
+    { key: childKey, mover: null, check: false },
+    { key: 'negamax-filler|red', mover: BLACK, check: false },
+    { key: childKey, mover: RED, check: false },
+    { key: currentKey, mover: BLACK, check: false },
+  ];
+  const context = executableAi();
+  let repetitionHits = 0;
+  context.__hooks.onNegamaxRepetition = () => { repetitionHits++; };
+  const result = context.__aiTest.findBestMove(b, RED, 'review-v1', [], { repetitionPrefix: inherited });
+  ok(result?.score === 0 && repetitionHits > 0,
+    `review-v1：negamax 遞迴讀到第三次重複（hits=${repetitionHits}, score=${result?.score}）`);
+
+  const broken = executableAi({ disableNegamaxRepetition: true });
+  const brokenResult = broken.__aiTest.findBestMove(b, RED, 'review-v1', [], { repetitionPrefix: inherited });
+  expectedFailure(() => assert.equal(brokenResult?.score, 0), '移除 negamax 歷史判決會被測試攔截');
+}
+
+// ---------- Review AI：quiescence 捕獲分支會把新局面加入歷史並判決 ----------
+{
+  const b = emptyBoard();
+  b[0][3] = { type: 'K', side: RED };
+  b[7][3] = { type: 'K', side: BLACK };
+  b[0][4] = { type: 'R', side: BLACK };
+  b[1][3] = { type: 'R', side: BLACK };
+  b[1][0] = { type: 'B', side: RED };
+  const child = b.map((row) => row.map((p) => (p ? { ...p } : null)));
+  applyMove(child, { r: 0, c: 3 }, { r: 0, c: 4 });
+  const capture = child.map((row) => row.map((p) => (p ? { ...p } : null)));
+  applyMove(capture, { r: 1, c: 3 }, { r: 1, c: 0 });
+  const captureKey = `${hashBoard(capture)}|${RED}`;
+  const currentKey = `${hashBoard(b)}|${RED}`;
+  const inherited = [
+    { key: captureKey, mover: null, check: false },
+    { key: 'quiesce-filler|black', mover: RED, check: false },
+    { key: captureKey, mover: BLACK, check: false },
+    { key: currentKey, mover: BLACK, check: false },
+  ];
+  const context = executableAi();
+  let repetitionHits = 0;
+  context.__hooks.onQuiesceRepetition = () => { repetitionHits++; };
+  const result = context.__aiTest.findBestMove(b, RED, 'review-v1', [], { repetitionPrefix: inherited });
+  ok(repetitionHits > 0, `review-v1：quiescence 捕獲遞迴讀到新增的第三次重複（hits=${repetitionHits}）`);
+
+  const broken = executableAi({ disableQuiesceRepetition: true });
+  let brokenHits = 0;
+  broken.__hooks.onQuiesceRepetition = () => { brokenHits++; };
+  broken.__aiTest.findBestMove(b, RED, 'review-v1', [], { repetitionPrefix: inherited });
+  expectedFailure(() => assert.ok(brokenHits > 0), '移除 quiescence 歷史判決會被測試攔截');
+}
+
+// ---------- Review AI：長將判負的兩個符號方向都由 negamax 實際判決 ----------
+{
+  const context = executableAi();
+  const blackToMove = emptyBoard();
+  blackToMove[0][3] = { type: 'K', side: RED };
+  blackToMove[9][5] = { type: 'K', side: BLACK };
+  const key = `${hashBoard(blackToMove)}|${BLACK}`;
+  const blackLoses = [
+    { key, mover: null, check: false },
+    { key: 'black-check-1|red', mover: BLACK, check: true },
+    { key, mover: RED, check: false },
+    { key: 'black-check-2|red', mover: BLACK, check: true },
+    { key, mover: RED, check: false },
+  ];
+  const redLoses = [
+    { key, mover: null, check: false },
+    { key: 'red-check-1|red', mover: BLACK, check: false },
+    { key, mover: RED, check: true },
+    { key: 'red-check-2|red', mover: BLACK, check: false },
+    { key, mover: RED, check: true },
+  ];
+  const loss = context.__aiTest.runNegamax(blackToMove, BLACK, 1, blackLoses);
+  const win = context.__aiTest.runNegamax(blackToMove, BLACK, 1, redLoses);
+  ok(loss < -(100000 - 200), `review-v1：輪到違規長將方時回傳負殺分（${loss}）`);
+  ok(win > 100000 - 200, `review-v1：輪到長將受害方時回傳正殺分（${win}）`);
+
+  const broken = executableAi({ invertPerpetualScore: true });
+  expectedFailure(() => {
+    assert.ok(broken.__aiTest.runNegamax(blackToMove, BLACK, 1, blackLoses) < 0);
+    assert.ok(broken.__aiTest.runNegamax(blackToMove, BLACK, 1, redLoses) > 0);
+  }, '反轉長將勝負符號會被雙向測試攔截');
+}
+
+// ---------- Review AI：negamax timeout 逐層精確還原 repetition path ----------
+{
+  const b = initialBoard();
+  const prefix = [{ key: `${hashBoard(b)}|${RED}`, mover: null, check: false }];
+  let activeDepth = 0;
+  let negamaxPly = 0;
+  const exits = [];
+  const timeoutPaths = [];
+  const context = executableAi();
+  context.__timeMask = 0;
+  context.__hooks.onDepthStart = (depth) => { activeDepth = depth; };
+  context.__hooks.onNegamaxEnter = ({ ply }) => { negamaxPly = ply; };
+  context.__hooks.onRepetitionExit = (layer, before, after) => {
+    if (layer === 'negamax') exits.push({ before: structuredClone(before), after: structuredClone(after) });
+  };
+  context.__hooks.onIterationTimeout = (path) => timeoutPaths.push(structuredClone(path));
+  context.__now = () => (activeDepth >= 2 && negamaxPly >= 2 ? 1201 : 0);
+  const result = context.__aiTest.findBestMove(b, RED, 'review-v1', [], { repetitionPrefix: prefix });
+  ok(result?.depth === 1 && exits.length > 0
+    && exits.every(({ before, after }) => JSON.stringify(before) === JSON.stringify(after))
+    && timeoutPaths.every((path) => JSON.stringify(path) === JSON.stringify(prefix)),
+  `review-v1：negamax timeout 後精確還原每筆 repetition entry（scopes=${exits.length}）`);
+
+  activeDepth = 0;
+  negamaxPly = 0;
+  const broken = executableAi({ breakCleanupLayer: 'negamax' });
+  broken.__timeMask = 0;
+  broken.__hooks.onDepthStart = (depth) => { activeDepth = depth; };
+  broken.__hooks.onNegamaxEnter = ({ ply }) => { negamaxPly = ply; };
+  broken.__now = () => (activeDepth >= 2 && negamaxPly >= 2 ? 1201 : 0);
+  expectedFailure(() => assert.doesNotThrow(() => broken.__aiTest.findBestMove(
+    b, RED, 'review-v1', [], { repetitionPrefix: prefix },
+  )), '略過 negamax exceptional cleanup 會被測試攔截');
+}
+
+// ---------- Review AI：quiescence timeout 逐層精確還原 repetition path ----------
+{
+  const b = emptyBoard();
+  b[0][3] = { type: 'K', side: RED };
+  b[7][3] = { type: 'K', side: BLACK };
+  b[0][4] = { type: 'R', side: BLACK };
+  b[1][3] = { type: 'R', side: BLACK };
+  b[1][0] = { type: 'B', side: RED };
+  const prefix = [{ key: `${hashBoard(b)}|${RED}`, mover: null, check: false }];
+  let quiescePly = 0;
+  const exits = [];
+  const timeoutPaths = [];
+  const context = executableAi();
+  context.__timeMask = 0;
+  context.__hooks.onQuiesceEnter = ({ ply }) => { quiescePly = ply; };
+  context.__hooks.onRepetitionExit = (layer, before, after) => {
+    if (layer === 'quiescence') exits.push({ before: structuredClone(before), after: structuredClone(after) });
+  };
+  context.__hooks.onIterationTimeout = (path) => timeoutPaths.push(structuredClone(path));
+  context.__now = () => (quiescePly >= 2 ? 1201 : 0);
+  const result = context.__aiTest.findBestMove(b, RED, 'review-v1', [], { repetitionPrefix: prefix });
+  ok(result === null && exits.length > 0
+    && exits.every(({ before, after }) => JSON.stringify(before) === JSON.stringify(after))
+    && timeoutPaths.every((path) => JSON.stringify(path) === JSON.stringify(prefix)),
+  `review-v1：quiescence timeout 後精確還原每筆 repetition entry（scopes=${exits.length}）`);
+
+  quiescePly = 0;
+  const broken = executableAi({ breakCleanupLayer: 'quiescence' });
+  broken.__timeMask = 0;
+  broken.__hooks.onQuiesceEnter = ({ ply }) => { quiescePly = ply; };
+  broken.__now = () => (quiescePly >= 2 ? 1201 : 0);
+  expectedFailure(() => assert.doesNotThrow(() => broken.__aiTest.findBestMove(
+    b, RED, 'review-v1', [], { repetitionPrefix: prefix },
+  )), '略過 quiescence exceptional cleanup 會被測試攔截');
+}
+
+// ---------- Review AI：逾時只回傳完整完成的迭代 ----------
+{
+  const b = initialBoard();
+  const prefix = [{ key: `${hashBoard(b)}|${RED}`, mover: null, check: false }];
+  let activeDepth = 0;
+  const starts = [];
+  const completes = [];
+  const completedCandidates = new Map();
+  const timeoutPaths = [];
+  const rootExits = [];
+  const context = executableAi();
+  context.__timeMask = 0;
+  context.__hooks.onDepthStart = (depth) => { activeDepth = depth; starts.push(depth); };
+  context.__hooks.onDepthComplete = (depth, scored) => {
+    completes.push(depth);
+    completedCandidates.set(depth, structuredClone(scored[0]));
+  };
+  context.__hooks.onIterationTimeout = (path) => timeoutPaths.push(structuredClone(path));
+  context.__hooks.onRepetitionExit = (layer, before, after) => {
+    if (layer === 'root') rootExits.push({ before: structuredClone(before), after: structuredClone(after) });
+  };
+  context.__now = () => (activeDepth >= 3 ? 1201 : 0);
+  const partial = context.__aiTest.findBestMove(b, RED, 'review-v1', [], { repetitionPrefix: prefix });
+  const completedDepth2 = completedCandidates.get(2);
+  ok(partial?.depth === 2 && starts.join() === '1,2,3' && completes.join() === '1,2',
+    `review-v1：第 3 層中途逾時只回傳第 2 層（depth=${partial?.depth}）`);
+  ok(partial?.from.r === completedDepth2?.m.fr && partial?.from.c === completedDepth2?.m.fc
+    && partial?.to.r === completedDepth2?.m.tr && partial?.to.c === completedDepth2?.m.tc
+    && partial?.score === completedDepth2?.score,
+  'review-v1：逾時結果是完整 depth-2 的同一候選與分數，不是部分 depth-3 結果');
+  ok(timeoutPaths.length === 1 && JSON.stringify(timeoutPaths[0]) === JSON.stringify(prefix)
+    && rootExits.every(({ before, after }) => JSON.stringify(before) === JSON.stringify(after)),
+  'review-v1：iterative timeout 邊界看到完整原始 repetition prefix');
+
+  activeDepth = 0;
+  context.__hooks = {};
+  context.__now = () => 0;
+  const afterTimeout = context.__aiTest.findBestMove(b, RED, 'review-v1', [], { repetitionPrefix: prefix });
+  ok(isLegal(b, afterTimeout) && afterTimeout.depth === 3,
+    'review-v1：同一引擎 context 在 timeout 後可用乾淨 canonical history 完成下一次搜索');
+
+  activeDepth = 0;
+  const immediate = executableAi();
+  const immediateTimeoutPaths = [];
+  immediate.__timeMask = 0;
+  immediate.__hooks.onDepthStart = (depth) => { activeDepth = depth; };
+  immediate.__hooks.onIterationTimeout = (path) => immediateTimeoutPaths.push(structuredClone(path));
+  immediate.__now = () => (activeDepth >= 1 ? 1201 : 0);
+  const none = immediate.__aiTest.findBestMove(b, RED, 'review-v1', [], { repetitionPrefix: prefix });
+  ok(none === null && immediateTimeoutPaths.length === 1
+    && JSON.stringify(immediateTimeoutPaths[0]) === JSON.stringify(prefix),
+  'review-v1：第 1 層完成前逾時安全回傳 null 且 repetition history 完整');
+
+  activeDepth = 0;
+  const broken = executableAi({ exposePartialDepth: true });
+  broken.__timeMask = 0;
+  broken.__hooks.onDepthStart = (depth) => { activeDepth = depth; };
+  broken.__now = () => (activeDepth >= 3 ? 1201 : 0);
+  const leaked = broken.__aiTest.findBestMove(b, RED, 'review-v1', [], { repetitionPrefix: prefix });
+  expectedFailure(() => assert.equal(leaked?.depth, 2), '把部分完成的第 3 層標為完成會被測試攔截');
+}
+
+// ---------- Review AI：實際搜索停用 board-only TT，一般 AI 仍啟用 ----------
+{
+  const reviewBoard = initialBoard();
+  const prefix = [{ key: `${hashBoard(reviewBoard)}|${RED}`, mover: null, check: false }];
+  const reviewContext = executableAi();
+  const reviewReads = [];
+  const reviewWrites = [];
+  reviewContext.__hooks.onTTRead = (enabled) => reviewReads.push(enabled);
+  reviewContext.__hooks.onTTWrite = (enabled) => reviewWrites.push(enabled);
+  reviewContext.__aiTest.findBestMove(reviewBoard, RED, 'review-v1', [], { repetitionPrefix: prefix });
+  ok(reviewReads.length > 0 && reviewReads.every((enabled) => enabled === false)
+    && reviewWrites.length > 0 && reviewWrites.every((enabled) => enabled === false),
+  'review-v1：可執行搜索完全停用 board-only TT 讀寫');
+
+  const normalContext = executableAi();
+  const normalReads = [];
+  const normalWrites = [];
+  normalContext.__hooks.onTTRead = (enabled) => normalReads.push(enabled);
+  normalContext.__hooks.onTTWrite = (enabled) => normalWrites.push(enabled);
+  normalContext.__aiTest.findBestMove(initialBoard(), RED, 'medium');
+  ok(normalReads.some(Boolean) && normalWrites.some(Boolean), '一般 AI 的可執行搜索仍啟用 TT');
 }
 
 // ---------- 效能：hard 在初始局面 5.5 秒內回覆 ----------
