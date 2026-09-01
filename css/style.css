@@ -1153,8 +1153,34 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
   color: var(--text);
 }
 .game-review-evidence-facts li + li { margin-top: 2px; }
+.game-review-teaching {
+  margin-top: 9px;
+  padding: 9px 10px;
+  border: 1px solid rgba(101, 183, 164, 0.42);
+  border-left: 3px solid #65b7a4;
+  border-radius: 8px;
+  background: rgba(101, 183, 164, 0.08);
+  overflow-wrap: anywhere;
+}
+.game-review-teaching h3 {
+  margin: 0 0 4px;
+  color: #9adbc8;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+.game-review-teaching strong {
+  display: block;
+  color: #d8f1e9;
+  font-size: 12px;
+}
+.game-review-teaching p {
+  margin: 3px 0 0;
+  color: var(--text);
+  line-height: 1.55;
+}
 @media (max-width: 420px) {
   .game-review-evidence-moves { grid-template-columns: 1fr; }
+  .game-review-teaching { padding: 8px; }
 }
 .game-analysis-badge { color: #9adbc8; border-color: rgba(101, 183, 164, 0.5); background: rgba(101, 183, 164, 0.1); }
 .game-analysis-status {

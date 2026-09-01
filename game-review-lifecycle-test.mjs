@@ -21,6 +21,7 @@ import {
   settleGameReviewAiResponse,
 } from './game-review-ai.js';
 import { createGameReviewEvidence } from './game-review-evidence.js';
+import { deriveGameReviewTeaching } from './game-review-teaching.js';
 
 const source = readFileSync(new URL('./main.js', import.meta.url), 'utf8');
 const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
@@ -28,6 +29,12 @@ const css = readFileSync(new URL('./css/style.css', import.meta.url), 'utf8');
 const R3B_FORBIDDEN_UI_TERMS = Object.freeze([
   '最佳著', '比較好', '比較差', '失誤', '大漏著', '白送', '掉子', '懸子',
   '優勢', '勝率', '評分', '評估值', '分數', 'score', 'evaluation', 'PV',
+]);
+const R3C_FORBIDDEN_UI_TERMS = Object.freeze([
+  '完美', '最佳', '最好', '比較好', '比較差', '你走錯了', '失誤', '大錯',
+  '大漏著', '漏吃', '白送', '掉子', '懸子', '一定會被吃', '賺子', '賺更多',
+  '子力優勢', '優勢', '勝率', '評分', '評估值', '分數', 'score', 'evaluation', 'PV',
+  '妙手', '牽制', '串擊', '必勝', '必敗',
 ]);
 
 function functionSource(name) {
@@ -263,6 +270,7 @@ function harness({
     beginGameReviewAiRequest,
     settleGameReviewAiResponse,
     createGameReviewEvidence,
+    deriveGameReviewTeaching,
     GAME_RECORD_MODE_LABELS: Object.freeze({
       pvp: '雙人對弈', easy: '人機・簡單', medium: '人機・中等', hard: '人機・困難',
     }),
@@ -301,6 +309,9 @@ function harness({
     gameReviewEvidenceMatch: domNode(true),
     gameReviewEvidenceFactsSection: domNode(),
     gameReviewEvidenceFacts: domNode(),
+    gameReviewTeaching: domNode(true),
+    gameReviewTeachingTitle: domNode(),
+    gameReviewTeachingBody: domNode(),
     btnGameReviewCreatePuzzle: domNode(),
     btnGameReviewBack: domNode(),
     btnGameReviewDelete: domNode(true),
@@ -367,7 +378,7 @@ function harness({
   const names = [
     'terminateGameReviewAiWorker', 'invalidateGameReviewAi',
     'gameReviewEvidenceTerminalText', 'gameReviewEvidenceFactTexts',
-    'renderGameReviewEvidence', 'renderGameReviewAi',
+    'renderGameReviewTeaching', 'renderGameReviewEvidence', 'renderGameReviewAi',
     'handleGameReviewAiResponse', 'requestGameReviewAiCandidate',
     'pauseLiveGameForGameRecords', 'restoreLiveGamePresentation',
     'enterGameRecordLibrary', 'showGameRecordLibrary', 'openGameReview',
@@ -500,6 +511,36 @@ function renderedR3bText(ctx) {
     ctx.gameReviewEvidenceMatch.textContent,
     ...ctx.gameReviewEvidenceFacts.children.map((item) => item.textContent),
   ].filter(Boolean).join('\n');
+}
+
+function renderedR3cText(ctx) {
+  return [ctx.gameReviewTeachingTitle.textContent, ctx.gameReviewTeachingBody.textContent]
+    .filter(Boolean).join('\n');
+}
+
+function syntheticTeachingEvidence(base, kind) {
+  const fixture = clone(base);
+  for (const outcome of [fixture.played, fixture.candidate]) {
+    outcome.terminal = null;
+    outcome.repetitionVerdict = null;
+    outcome.legalReplyCount = 2;
+    outcome.movedPieceCaptureReplies = [];
+    outcome.givesCheck = false;
+    outcome.capture = null;
+  }
+  if (kind === 'candidate-mate') {
+    fixture.candidate.terminal = { winner: RED, terminationReason: 'checkmate' };
+    fixture.candidate.legalReplyCount = null;
+    fixture.candidate.movedPieceCaptureReplies = null;
+    fixture.candidate.givesCheck = true;
+  } else if (kind === 'candidate-check') {
+    fixture.candidate.givesCheck = true;
+  } else if (kind === 'candidate-capture') {
+    fixture.candidate.capture = { side: BLACK, type: 'P', name: '卒' };
+  } else if (kind !== 'none') {
+    throw new TypeError(`Unknown synthetic teaching fixture: ${kind}`);
+  }
+  return fixture;
 }
 
 function assertFactualR3bLanguage(text, label = 'R3B user-visible text') {
@@ -815,6 +856,91 @@ test('explicit Review AI request uses only canonical Review context and renders 
   assert.equal(ctx.analyticsWrites, 0);
 });
 
+test('R3C teaching is derived from current R3B evidence, bounded, and hidden for MATCH or no useful rule', () => {
+  const saved = record('review-teaching-ui');
+  const ctx = harness({ records: [saved], realRenderer: true });
+  ctx.enterGameRecordLibrary();
+  ctx.openStoredGameReview(saved.id);
+  ctx.navigateGameReview('first');
+
+  assert.equal(ctx.gameReviewEvidenceState, null);
+  assert.equal(ctx.gameReviewTeaching.classList.contains('hidden'), true);
+  ctx.requestGameReviewAiCandidate();
+  let worker = ctx.reviewAiWorkers.at(-1);
+  worker.emit(successfulReviewAiResponse(worker));
+  assert.equal(ctx.gameReviewEvidenceState.comparison.status, 'MATCH');
+  assert.equal(ctx.gameReviewTeaching.classList.contains('hidden'), true,
+    'MATCH keeps the teaching card absent');
+  assert.equal(renderedR3cText(ctx), '');
+
+  ctx.requestGameReviewAiCandidate();
+  worker = ctx.reviewAiWorkers.at(-1);
+  worker.emit(successfulReviewAiResponse(worker, { to: { r: 3, c: 3 } }));
+  const canonicalDifferent = clone(ctx.gameReviewEvidenceState);
+  assert.equal(ctx.gameReviewTeaching.classList.contains('hidden'), false);
+  assert.equal(ctx.gameReviewTeachingTitle.textContent, '實戰的一步將死');
+  assert.match(ctx.gameReviewTeachingBody.textContent, /直接將死/);
+
+  const before = {
+    workers: ctx.reviewAiWorkers.length,
+    requests: ctx.reviewAiRequestCount,
+    searches: ctx.engineSearches,
+    storage: ctx.storage.writes,
+    puzzle: ctx.puzzleWrites,
+    analytics: ctx.analyticsWrites,
+  };
+  for (const [kind, expectedRule, expectedTitle] of [
+    ['candidate-mate', 'immediate-mate', '先找一步將死'],
+    ['candidate-check', 'check-difference', '先看看將軍手'],
+    ['candidate-capture', 'capture-difference', '看看立即吃子'],
+  ]) {
+    ctx.gameReviewEvidenceState = syntheticTeachingEvidence(canonicalDifferent, kind);
+    ctx.renderGameReviewEvidence();
+    assert.equal(deriveGameReviewTeaching(ctx.gameReviewEvidenceState)[0].ruleId, expectedRule);
+    assert.equal(ctx.gameReviewTeachingTitle.textContent, expectedTitle);
+    assert.equal(ctx.gameReviewTeaching.classList.contains('hidden'), false);
+    assert.equal(deriveGameReviewTeaching(ctx.gameReviewEvidenceState).length, 1);
+  }
+
+  ctx.gameReviewEvidenceState = syntheticTeachingEvidence(canonicalDifferent, 'none');
+  ctx.renderGameReviewEvidence();
+  assert.deepEqual(deriveGameReviewTeaching(ctx.gameReviewEvidenceState), []);
+  assert.equal(ctx.gameReviewTeaching.classList.contains('hidden'), true);
+  assert.equal(renderedR3cText(ctx), '');
+  assert.deepEqual({
+    workers: ctx.reviewAiWorkers.length,
+    requests: ctx.reviewAiRequestCount,
+    searches: ctx.engineSearches,
+    storage: ctx.storage.writes,
+    puzzle: ctx.puzzleWrites,
+    analytics: ctx.analyticsWrites,
+  }, before, 'R3C derivation adds no worker, request, search, or write');
+});
+
+test('R3C teaching clears with new requests and navigation and stale results cannot restore it', () => {
+  const saved = record('review-teaching-stale');
+  const ctx = harness({ records: [saved], realRenderer: true });
+  ctx.enterGameRecordLibrary();
+  ctx.openStoredGameReview(saved.id);
+  ctx.navigateGameReview('first');
+  ctx.requestGameReviewAiCandidate();
+  let worker = ctx.reviewAiWorkers.at(-1);
+  worker.emit(successfulReviewAiResponse(worker, { to: { r: 3, c: 3 } }));
+  assert.equal(ctx.gameReviewTeaching.classList.contains('hidden'), false);
+
+  ctx.requestGameReviewAiCandidate();
+  worker = ctx.reviewAiWorkers.at(-1);
+  assert.equal(ctx.gameReviewEvidenceState, null);
+  assert.equal(ctx.gameReviewTeaching.classList.contains('hidden'), true);
+  ctx.navigateGameReview('last');
+  assert.equal(ctx.gameReviewEvidenceState, null);
+  assert.equal(ctx.gameReviewTeaching.classList.contains('hidden'), true);
+  worker.emit(successfulReviewAiResponse(worker, { to: { r: 3, c: 3 } }));
+  assert.equal(ctx.gameReviewEvidenceState, null);
+  assert.equal(ctx.gameReviewTeaching.classList.contains('hidden'), true,
+    'BROKEN_R3C1_USES_STALE_R3B_EVIDENCE_WOULD_FAIL');
+});
+
 test('accepted R3A success adds zero Review workers, requests or direct engine searches', () => {
   const exercise = (reviewAiMutation = null) => {
     const saved = record(`review-ai-search-count-${reviewAiMutation || 'canonical'}`);
@@ -1053,6 +1179,43 @@ test('MATCH and DIFFERENT panels retain factual language and reject heuristic wo
   }
 });
 
+test('rendered R3C templates remain child-neutral and forbidden-language mutations are detected', () => {
+  const saved = record('review-teaching-language');
+  const ctx = harness({ records: [saved], realRenderer: true });
+  ctx.enterGameRecordLibrary();
+  ctx.openStoredGameReview(saved.id);
+  ctx.navigateGameReview('first');
+  ctx.requestGameReviewAiCandidate();
+  const worker = ctx.reviewAiWorkers.at(-1);
+  worker.emit(successfulReviewAiResponse(worker, { to: { r: 3, c: 3 } }));
+  const base = clone(ctx.gameReviewEvidenceState);
+  const rendered = [];
+  for (const kind of ['candidate-mate', 'candidate-check', 'candidate-capture']) {
+    ctx.gameReviewEvidenceState = syntheticTeachingEvidence(base, kind);
+    ctx.renderGameReviewEvidence();
+    rendered.push(renderedR3cText(ctx));
+  }
+  for (const text of rendered) {
+    assert.ok(text);
+    for (const term of R3C_FORBIDDEN_UI_TERMS) {
+      assert.equal(text.toLowerCase().includes(term.toLowerCase()), false,
+        `rendered R3C text must not contain forbidden term: ${term}`);
+    }
+  }
+  for (const injected of ['這步白送一車', 'AI 最佳著比較好']) {
+    let detected = null;
+    try {
+      for (const term of R3C_FORBIDDEN_UI_TERMS) {
+        assert.equal(injected.toLowerCase().includes(term.toLowerCase()), false,
+          `BROKEN_R3C1_FORBIDDEN_UI_LANGUAGE: ${term}`);
+      }
+    } catch (error) {
+      detected = error;
+    }
+    assert.equal(detected?.code, 'ERR_ASSERTION');
+  }
+});
+
 test('source and DOM contain explicit read-only, accessibility and responsive guards', () => {
   assert.match(functionSource('doMove'), /if\s*\(!normalGameActive\(\)\)\s*return/);
   assert.match(source, /if \(appState === APP_STATE\.GAME_RECORD_LIBRARY \|\| appState === APP_STATE\.GAME_REVIEW\) return;\s*\n\s*const hit = pick\(e\)/);
@@ -1065,6 +1228,19 @@ test('source and DOM contain explicit read-only, accessibility and responsive gu
   assert.match(html, /id="btnGameReviewAiAnalyze"[^>]*type="button"[^>]*aria-label="分析目前複盤局面"/);
   assert.match(html, /id="gameReviewAiPanel"[^>]*role="status"[^>]*aria-live="polite"/);
   assert.match(html, /id="gameReviewEvidence"[^>]*aria-label="實戰著法與 AI 候選的事實比較"/);
+  assert.match(html, /id="gameReviewTeaching"[^>]*class="game-review-teaching hidden"[^>]*aria-labelledby="gameReviewTeachingHeading"/);
+  assert.match(html, /id="gameReviewTeachingHeading">教學提示<\/h3>/);
+  const teachingMarkup = html.match(/<section id="gameReviewTeaching"[^]*?<\/section>/)?.[0] || '';
+  assert.doesNotMatch(teachingMarkup, /aria-live|role="status"/,
+    'R3C adds no separate live region');
+  assert.doesNotMatch(
+    html.match(/<section id="gameAnalysisView"[^]*?<\/section>/)?.[0] || '',
+    /gameReviewTeaching|教學提示/,
+    'R2 has no teaching UI',
+  );
+  assert.doesNotMatch(source, /gameReviewTeachingState/,
+    'R3C uses no separate mutable teaching state');
+  assert.match(functionSource('renderGameReviewTeaching'), /deriveGameReviewTeaching\(evidence\)/);
   assert.equal((html.match(/id="btnGameReviewAiAnalyze"/g) || []).length, 1, 'R3B adds no second action');
   assert.doesNotMatch(html, /最佳著|比較好|比較差|你走錯了|失誤|大漏著|白送|掉子|懸子|優勢|勝率|評分/);
   assert.match(source, /setAttribute\('aria-current', 'step'\)/);
@@ -1074,5 +1250,6 @@ test('source and DOM contain explicit read-only, accessibility and responsive gu
   assert.match(source, /End: 'last'/);
   assert.match(css, /@media \(max-width: 900px\)[^]*#gameRecordPanel/);
   assert.match(css, /min-height: 44px/);
+  assert.match(css, /\.game-review-teaching/);
   assert.match(css, /prefers-reduced-motion/);
 });

@@ -22,6 +22,7 @@ import {
   settleGameReviewAiResponse,
 } from './game-review-ai.js';
 import { createGameReviewEvidence } from './game-review-evidence.js';
+import { deriveGameReviewTeaching } from './game-review-teaching.js';
 
 // Execute the real UI lifecycle functions with a deterministic clock and minimal
 // rendering/DOM doubles. No browser globals are injected and no UI logic is copied.
@@ -351,7 +352,7 @@ function assertTurnDivergenceHandoff(ctx, reviewSession, invoker = node()) {
   return invoker;
 }
 
-function acceptedR3bEvidence(reviewSession) {
+function acceptedR3bEvidence(reviewSession, candidateMove = null) {
   const started = beginGameReviewAiRequest(createGameReviewAiState(), reviewSession);
   const playedMove = reviewSession.record.moves[reviewSession.selectedPly];
   const settled = settleGameReviewAiResponse(started.state, reviewSession, {
@@ -359,7 +360,7 @@ function acceptedR3bEvidence(reviewSession) {
     recordId: started.request.recordId,
     ply: started.request.ply,
     revision: started.request.revision,
-    result: { ...playedMove, depth: 2, score: 99998, pv: ['must-not-surface'] },
+    result: { ...(candidateMove || playedMove), depth: 2, score: 99998, pv: ['must-not-surface'] },
   });
   assert.equal(settled.accepted, true);
   assert.equal(settled.state.status, 'success');
@@ -516,10 +517,14 @@ test('Review handoff enters the existing editor and exit restores the exact reco
   assert.equal(ctx.analyticsStorage.writes, 0);
 });
 
-test('R4 entry clears accepted R3B evidence and exact Review return never resurrects it', () => {
-  const reviewSession = r4TurnDivergenceReviewFixture('r4-r3b-no-resurrection');
+test('R4 entry clears accepted R3B/R3C evidence and exact Review return never resurrects teaching', () => {
+  const reviewSession = r4ReviewFixture('r4-r3c-no-resurrection');
   const reviewBefore = structuredClone(reviewSession);
-  const staleEvidence = acceptedR3bEvidence(reviewSession);
+  const staleEvidence = acceptedR3bEvidence(reviewSession, {
+    from: { r: 2, c: 3 }, to: { r: 3, c: 3 },
+  });
+  assert.equal(deriveGameReviewTeaching(staleEvidence)[0].ruleId, 'immediate-mate',
+    'accepted R3B fixture visibly has one derived teaching message before R4');
   const invoker = node();
   const ctx = harness();
   ctx.appState = ctx.APP_STATE.GAME_REVIEW;
@@ -530,6 +535,8 @@ test('R4 entry clears accepted R3B evidence and exact Review return never resurr
   assert.equal(ctx.createPuzzleFromGameReview(invoker), true);
   assert.equal(ctx.appState, ctx.APP_STATE.PUZZLE_EDITOR);
   assert.equal(ctx.gameReviewEvidenceState, null, 'R4 entry clears accepted R3B evidence');
+  assert.deepEqual(deriveGameReviewTeaching(ctx.gameReviewEvidenceState), [],
+    'R4 entry has no derived teaching');
   ctx.exitEditor();
   assert.equal(ctx.appState, ctx.APP_STATE.GAME_REVIEW);
   assert.equal(ctx.gameReviewSession.record.id, reviewSession.record.id);
@@ -537,6 +544,8 @@ test('R4 entry clears accepted R3B evidence and exact Review return never resurr
   same(ctx.gameReviewSession.snapshot.board, reviewBefore.snapshot.board);
   assert.equal(ctx.gameReviewEvidenceState, null,
     'exact Review restoration does not recreate or reuse the old evidence');
+  assert.deepEqual(deriveGameReviewTeaching(ctx.gameReviewEvidenceState), [],
+    'exact Review restoration cannot recreate old teaching');
   assert.equal(invoker.focused, true);
 
   const broken = harness({ r4EvidenceResurrection: true });
@@ -550,6 +559,8 @@ test('R4 entry clears accepted R3B evidence and exact Review return never resurr
   broken.exitEditor();
   assert.equal(broken.gameReviewEvidenceState.source.recordId, reviewSession.record.id,
     'isolated mutation visibly restores the distinguishable stale evidence identity');
+  assert.equal(deriveGameReviewTeaching(broken.gameReviewEvidenceState)[0].ruleId, 'immediate-mate',
+    'isolated mutation visibly resurrects the stale teaching message');
   let detected = null;
   try {
     assert.equal(broken.gameReviewEvidenceState, null,

@@ -59,12 +59,21 @@ if (reviewAiQaMode) {
         revision: message.revision,
       };
       if (reviewAiQaMode === 'error') data.error = 'Controlled Review AI failure.';
-      else data.result = {
-        from: { r: 2, c: 3 },
-        to: reviewAiQaMode === 'different' ? { r: 3, c: 3 } : { r: 2, c: 4 },
-        score: 99998,
-        depth: 2,
-      };
+      else {
+        const controlledMoves = {
+          'candidate-mate': [{ r: 2, c: 3 }, { r: 2, c: 4 }],
+          check: [{ r: 4, c: 3 }, { r: 9, c: 3 }],
+          capture: [{ r: 4, c: 3 }, { r: 4, c: 1 }],
+          exposure: [{ r: 4, c: 1 }, { r: 3, c: 3 }],
+          none: [{ r: 4, c: 1 }, { r: 2, c: 0 }],
+          'capture-reply': [{ r: 4, c: 3 }, { r: 4, c: 4 }],
+          repetition: [{ r: 5, c: 3 }, { r: 6, c: 3 }],
+          stalemate: [{ r: 0, c: 5 }, { r: 1, c: 5 }],
+        };
+        const [from, to] = controlledMoves[reviewAiQaMode]
+          || [{ r: 2, c: 3 }, reviewAiQaMode === 'different' ? { r: 3, c: 3 } : { r: 2, c: 4 }];
+        data.result = { from, to, score: 99998, depth: 2 };
+      }
       const delay = reviewAiQaMode === 'stale' ? 800 : 120;
       this.scheduled = setTimeout(() => this.onmessage?.({ data }), delay);
     }
@@ -77,18 +86,84 @@ if (reviewAiQaMode) {
 }
 
 function seedR4Fixture(chess) {
-  if (r4FixtureSeeded || !['r4', 'r3a', 'r3b'].includes(qaParams.get('qa'))) return;
+  const qaMode = qaParams.get('qa');
+  if (r4FixtureSeeded || !['r4', 'r3a', 'r3b', 'r3c-mate', 'r3c-cycle',
+    'r3c-capture-reply', 'r3c-stalemate'].includes(qaMode)) return;
   r4FixtureSeeded = true;
+  if (qaMode === 'r3c-cycle') {
+    const board = Array.from({ length: 10 }, () => Array(9).fill(null));
+    board[0][0] = { type: 'K', side: 'red' };
+    board[4][3] = { type: 'R', side: 'red' };
+    board[4][1] = { type: 'N', side: 'black' };
+    board[9][4] = { type: 'K', side: 'black' };
+    const cycle = [
+      [{ r: 9, c: 4 }, { r: 9, c: 5 }],
+      [{ r: 4, c: 3 }, { r: 5, c: 3 }],
+      [{ r: 9, c: 5 }, { r: 9, c: 4 }],
+      [{ r: 5, c: 3 }, { r: 4, c: 3 }],
+    ];
+    seedCompletedFixture(chess, board, 'black', [...cycle, ...cycle]);
+    return;
+  }
+  if (qaMode === 'r3c-capture-reply') {
+    const board = Array.from({ length: 10 }, () => Array(9).fill(null));
+    board[0][4] = { type: 'K', side: 'red' };
+    board[4][3] = { type: 'R', side: 'red' };
+    board[4][4] = { type: 'P', side: 'black' };
+    board[4][6] = { type: 'R', side: 'black' };
+    board[5][5] = { type: 'P', side: 'red' };
+    board[6][4] = { type: 'P', side: 'black' };
+    board[9][4] = { type: 'K', side: 'black' };
+    const cycle = [
+      [{ r: 0, c: 4 }, { r: 0, c: 5 }],
+      [{ r: 9, c: 4 }, { r: 9, c: 5 }],
+      [{ r: 0, c: 5 }, { r: 0, c: 4 }],
+      [{ r: 9, c: 5 }, { r: 9, c: 4 }],
+    ];
+    seedCompletedFixture(chess, board, 'red', [...cycle, ...cycle]);
+    return;
+  }
+  if (qaMode === 'r3c-stalemate') {
+    const board = Array.from({ length: 10 }, () => Array(9).fill(null));
+    board[9][5] = { type: 'K', side: 'black' };
+    board[0][5] = { type: 'K', side: 'red' };
+    board[4][5] = { type: 'P', side: 'red' };
+    board[7][5] = { type: 'N', side: 'red' };
+    board[7][0] = { type: 'R', side: 'red' };
+    seedCompletedFixture(chess, board, 'red', [[{ r: 7, c: 0 }, { r: 8, c: 0 }]]);
+    return;
+  }
   const board = Array.from({ length: 10 }, () => Array(9).fill(null));
   board[0][4] = { type: 'K', side: 'red' };
   board[2][3] = { type: 'R', side: 'red' };
   board[2][4] = { type: 'P', side: 'black' };
+  if (qaMode === 'r3c-mate') board[4][1] = { type: 'N', side: 'black' };
   board[9][0] = { type: 'R', side: 'red' };
   board[9][4] = { type: 'K', side: 'black' };
   board[9][8] = { type: 'R', side: 'red' };
+  const moves = qaMode === 'r3c-mate' ? [
+    [{ r: 0, c: 4 }, { r: 0, c: 5 }],
+    [{ r: 9, c: 4 }, { r: 8, c: 4 }],
+    [{ r: 9, c: 0 }, { r: 9, c: 4 }],
+  ] : [[{ r: 2, c: 3 }, { r: 2, c: 4 }]];
+  seedCompletedFixture(chess, board, 'red', moves);
+}
+
+function seedCompletedFixture(chess, board, sideToMove, moves) {
   chess.setMode('pvp');
-  chess.resetTo(board, 'red');
-  chess.doMove({ r: 2, c: 3 }, { r: 2, c: 4 });
+  chess.resetTo(board, sideToMove);
+  let index = 0;
+  const advance = () => {
+    if (index >= moves.length) return;
+    if (chess.busy) {
+      setTimeout(advance, 30);
+      return;
+    }
+    const [from, to] = moves[index++];
+    chess.doMove(from, to);
+    setTimeout(advance, 30);
+  };
+  advance();
 }
 
 function project(world) {
@@ -130,6 +205,7 @@ function readProbe() {
   const review = chess.gameReview;
   const reviewAi = chess.gameReviewAi;
   const reviewEvidence = chess.gameReviewEvidence;
+  const teaching = document.getElementById('gameReviewTeaching');
   return {
     ready: true,
     appState: chess.appState,
@@ -152,6 +228,11 @@ function readProbe() {
     } : null,
     reviewAi,
     reviewEvidence,
+    reviewTeaching: teaching ? {
+      visible: !teaching.classList.contains('hidden'),
+      title: document.getElementById('gameReviewTeachingTitle')?.textContent || '',
+      body: document.getElementById('gameReviewTeachingBody')?.textContent || '',
+    } : null,
     analysis: analysis ? {
       sourceRecordId: analysis.sourceRecordId,
       sourcePly: analysis.sourcePly,

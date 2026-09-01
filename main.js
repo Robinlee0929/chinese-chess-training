@@ -7,9 +7,9 @@ import {
   ROWS, COLS, RED, BLACK,
   initialBoard, legalMoves, applyMove, inCheck,
   hasAnyLegalMove, name, notation, hashBoard, repetitionVerdict,
-} from './game.js?v=16f0f90eac';
-import { createGameRecord } from './game-record.js?v=16f0f90eac';
-import { createGameRecordStore } from './game-record-store.js?v=16f0f90eac';
+} from './game.js?v=4dd3e2c2ca';
+import { createGameRecord } from './game-record.js?v=4dd3e2c2ca';
+import { createGameRecordStore } from './game-record-store.js?v=4dd3e2c2ca';
 import {
   createGameReview,
   createGameRecordLibraryView,
@@ -18,22 +18,23 @@ import {
   nextGameReviewPly,
   lastGameReviewPly,
   selectGameReviewPly,
-} from './game-review.js?v=16f0f90eac';
+} from './game-review.js?v=4dd3e2c2ca';
 import {
   createGameReviewAiState,
   invalidateGameReviewAiState,
   beginGameReviewAiRequest,
   settleGameReviewAiResponse,
-} from './game-review-ai.js?v=16f0f90eac';
-import { createGameReviewEvidence } from './game-review-evidence.js?v=16f0f90eac';
+} from './game-review-ai.js?v=4dd3e2c2ca';
+import { createGameReviewEvidence } from './game-review-evidence.js?v=4dd3e2c2ca';
+import { deriveGameReviewTeaching } from './game-review-teaching.js?v=4dd3e2c2ca';
 import {
   createGameAnalysis,
   gameAnalysisLegalMoves,
   applyGameAnalysisMove,
   undoGameAnalysisMove,
   resetGameAnalysis,
-} from './game-analysis.js?v=16f0f90eac';
-import { createGameReviewPuzzleHandoff } from './game-review-puzzle-handoff.js?v=16f0f90eac';
+} from './game-analysis.js?v=4dd3e2c2ca';
+import { createGameReviewPuzzleHandoff } from './game-review-puzzle-handoff.js?v=4dd3e2c2ca';
 import {
   PuzzleEditorError,
   createEditorState,
@@ -43,7 +44,7 @@ import {
   setEditorSideToMove,
   confirmAuthoredPosition,
   exportAuthoredPosition,
-} from './puzzle-editor.js?v=16f0f90eac';
+} from './puzzle-editor.js?v=4dd3e2c2ca';
 import {
   PuzzleRecorderError,
   createRecorder,
@@ -53,7 +54,7 @@ import {
   finishRecording,
   exportRecorderBoard,
   exportRecordedResult,
-} from './puzzle-recorder.js?v=16f0f90eac';
+} from './puzzle-recorder.js?v=4dd3e2c2ca';
 import {
   PuzzlePracticeError,
   PRACTICE_HINT_MAX_LEVEL,
@@ -63,12 +64,12 @@ import {
   derivePracticeHint,
   restartPractice,
   exportPracticeSnapshot,
-} from './puzzle-practice.js?v=16f0f90eac';
-import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=16f0f90eac';
+} from './puzzle-practice.js?v=4dd3e2c2ca';
+import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=4dd3e2c2ca';
 import {
   PracticeAnalyticsError,
   createPracticeAnalyticsStore,
-} from './puzzle-analytics.js?v=16f0f90eac';
+} from './puzzle-analytics.js?v=4dd3e2c2ca';
 import {
   PUZZLE_TRANSFER_FORMAT,
   PUZZLE_TRANSFER_SCHEMA_VERSION,
@@ -76,7 +77,7 @@ import {
   PuzzleTransferError,
   serializePuzzleExport,
   parsePuzzleImport,
-} from './puzzle-transfer.js?v=16f0f90eac';
+} from './puzzle-transfer.js?v=4dd3e2c2ca';
 import {
   PHOTO_MAX_ZOOM,
   PHOTO_MIN_ZOOM,
@@ -90,7 +91,7 @@ import {
   validatePhotoMetadata,
   zoomPhotoIn,
   zoomPhotoOut,
-} from './puzzle-photo.js?v=16f0f90eac';
+} from './puzzle-photo.js?v=4dd3e2c2ca';
 import {
   CALIBRATION_CANONICAL_HEIGHT,
   CALIBRATION_CANONICAL_WIDTH,
@@ -106,7 +107,7 @@ import {
   setCorner,
   transformPoint,
   validateQuadrilateral,
-} from './puzzle-photo-calibration.js?v=16f0f90eac';
+} from './puzzle-photo-calibration.js?v=4dd3e2c2ca';
 import {
   PuzzlePhotoRecognitionError,
   RECOGNITION_OCCUPANCY_EMPTY,
@@ -118,7 +119,7 @@ import {
   isRecognitionTokenCurrent,
   recognizeIntersections,
   selectionKey,
-} from './puzzle-photo-recognition.js?v=16f0f90eac';
+} from './puzzle-photo-recognition.js?v=4dd3e2c2ca';
 import {
   addTemplate,
   createPieceTypeSessionToken,
@@ -128,13 +129,13 @@ import {
   normalizePiecePatch,
   removeTemplatesForSource,
   suggestUnresolvedPieceTypes,
-} from './puzzle-photo-piece-types.js?v=16f0f90eac';
+} from './puzzle-photo-piece-types.js?v=4dd3e2c2ca';
 import {
   UNREVIEWED, PuzzlePhotoReviewError,
   createReviewState, buildReviewQueue, selectReviewCandidate, confirmEmpty, confirmPiece,
   nextCandidate, previousCandidate, nextUnresolved, acceptHighConfidenceEmpty,
   undoBulkEmpty, resetReview, rescanReview, reviewProgress, confirmedSelections, buildReviewedBoard,
-} from './puzzle-photo-review.js?v=16f0f90eac';
+} from './puzzle-photo-review.js?v=4dd3e2c2ca';
 
 // ---------------- 常數 ----------------
 const CELL = 1;
@@ -706,7 +707,7 @@ let gameReviewEvidenceState = null;
 let aiWorker = null;
 let aiModule = null;   // Worker 不可用時的主執行緒後備
 try {
-  aiWorker = new Worker(new URL('./ai-worker.js?v=16f0f90eac', import.meta.url), { type: 'module' });
+  aiWorker = new Worker(new URL('./ai-worker.js?v=4dd3e2c2ca', import.meta.url), { type: 'module' });
   aiWorker.onmessage = (e) => onAIResult(e.data);
   aiWorker.onerror = () => {
     aiWorker = null;
@@ -729,7 +730,7 @@ function requestAIMove() {
   if (aiWorker) {
     aiWorker.postMessage(payload);
   } else {
-    (aiModule ??= import('./ai.js?v=16f0f90eac')).then(({ findBestMove }) => {
+    (aiModule ??= import('./ai.js?v=4dd3e2c2ca')).then(({ findBestMove }) => {
       setTimeout(() => {
         if (token !== aiToken) return;
         onAIResult({ token, result: findBestMove(payload.board, payload.side, payload.level, payload.recent) });
@@ -907,6 +908,9 @@ const gameReviewEvidenceCandidate = document.getElementById('gameReviewEvidenceC
 const gameReviewEvidenceMatch = document.getElementById('gameReviewEvidenceMatch');
 const gameReviewEvidenceFactsSection = document.getElementById('gameReviewEvidenceFactsSection');
 const gameReviewEvidenceFacts = document.getElementById('gameReviewEvidenceFacts');
+const gameReviewTeaching = document.getElementById('gameReviewTeaching');
+const gameReviewTeachingTitle = document.getElementById('gameReviewTeachingTitle');
+const gameReviewTeachingBody = document.getElementById('gameReviewTeachingBody');
 const btnGameReviewCreatePuzzle = document.getElementById('btnGameReviewCreatePuzzle');
 const btnGameReviewDelete = document.getElementById('btnGameReviewDelete');
 const gameAnalysisView = document.getElementById('gameAnalysisView');
@@ -2459,9 +2463,17 @@ function gameReviewEvidenceFactTexts(evidence) {
   return facts;
 }
 
+function renderGameReviewTeaching(evidence) {
+  const [message] = deriveGameReviewTeaching(evidence);
+  gameReviewTeaching.classList.toggle('hidden', !message);
+  gameReviewTeachingTitle.textContent = message?.title ?? '';
+  gameReviewTeachingBody.textContent = message?.body ?? '';
+}
+
 function renderGameReviewEvidence() {
   const evidence = gameReviewEvidenceState;
   gameReviewEvidence.classList.toggle('hidden', !evidence);
+  renderGameReviewTeaching(evidence);
   if (!evidence) {
     gameReviewEvidencePlayed.textContent = '';
     gameReviewEvidenceCandidate.textContent = '';
@@ -2524,7 +2536,7 @@ function handleGameReviewAiResponse(worker, response) {
 }
 
 function createGameReviewAiWorker() {
-  return new Worker(new URL('./ai-worker.js?v=16f0f90eac', import.meta.url), { type: 'module' });
+  return new Worker(new URL('./ai-worker.js?v=4dd3e2c2ca', import.meta.url), { type: 'module' });
 }
 
 function requestGameReviewAiCandidate() {
