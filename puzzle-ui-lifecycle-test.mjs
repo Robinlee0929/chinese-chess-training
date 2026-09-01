@@ -210,7 +210,20 @@ function harness(options = {}) {
     'loadSelectedPhoto', 'photoErrorMessage', 'storeErrorMessage', 'transferErrorMessage',
     'setLibraryTransferStatus', 'preparePuzzleImportPreview', 'clearPendingPuzzleImport',
     'downloadPuzzleTransfer', 'loadPuzzleImportFile', 'cancelPuzzleImport', 'confirmPuzzleImport'];
-  vm.runInContext(names.map(functionSource).join('\n'), context);
+  const lifecycleSources = names.map((name) => {
+    let candidate = functionSource(name);
+    if (name === 'createPuzzleFromGameReview' && options.handoffSideMutation === 'live-turn') {
+      const productionArgument = '    handoff.editorState,';
+      candidate = candidate.replace(
+        productionArgument,
+        '    { ...handoff.editorState, sideToMove: turn },',
+      );
+      assert.doesNotMatch(candidate, /\n    handoff\.editorState,\n/,
+        'live-turn negative control replaces the production handoff argument');
+    }
+    return candidate;
+  });
+  vm.runInContext(lifecycleSources.join('\n'), context);
   const realMaybeAIMove = context.maybeAIMove;
   context.maybeAIMove = (...args) => {
     context.aiMaybeMoveCalls++;
@@ -274,6 +287,47 @@ function r4ReviewFixture(id = 'r4-review') {
     mode: 'pvp',
     result: { winner: game.RED, terminationReason: 'checkmate' },
   }), 0);
+}
+
+function r4TurnDivergenceReviewFixture(id = 'r4-turn-divergence') {
+  const cycle = [
+    [{ r: 0, c: 1 }, { r: 2, c: 2 }],
+    [{ r: 9, c: 1 }, { r: 7, c: 2 }],
+    [{ r: 2, c: 2 }, { r: 0, c: 1 }],
+    [{ r: 7, c: 2 }, { r: 9, c: 1 }],
+  ];
+  return selectGameReviewPly(createGameReview({
+    schemaVersion: 1,
+    id,
+    createdAt: '2026-09-01T02:00:00.000Z',
+    completedAt: '2026-09-01T02:08:00.000Z',
+    initialPosition: { board: game.initialBoard(), sideToMove: game.RED },
+    moves: [...cycle, ...cycle].map(([from, to]) => ({ from, to })),
+    mode: 'pvp',
+    result: { winner: null, terminationReason: 'threefold-repetition' },
+  }), 1);
+}
+
+function assertTurnDivergenceHandoff(ctx, reviewSession, invoker = node()) {
+  assert.equal(ctx.turn, game.RED, 'live normal turn fixture is red');
+  assert.equal(reviewSession.snapshot.sideToMove, game.BLACK,
+    'historical Review side-to-move fixture is black');
+  assert.notEqual(ctx.turn, reviewSession.snapshot.sideToMove,
+    'live turn deliberately differs from historical Review side');
+  ctx.appState = ctx.APP_STATE.GAME_REVIEW;
+  ctx.gameReviewSession = reviewSession;
+  assert.equal(ctx.createPuzzleFromGameReview(invoker), true);
+  same(ctx.editorState.board, reviewSession.snapshot.board);
+  assert.notDeepEqual(ctx.editorState.board, ctx.board,
+    'historical Review board deliberately differs from live normal board');
+  assert.equal(
+    ctx.editorState.sideToMove,
+    reviewSession.snapshot.sideToMove,
+    'Puzzle Editor must use the historical Review side-to-move',
+  );
+  assert.notEqual(ctx.editorState.sideToMove, ctx.turn,
+    'Puzzle Editor must not use the live normal turn');
+  return invoker;
 }
 
 function normalStalemateFixture() {
@@ -388,7 +442,7 @@ test('game review blocks normal move, undo and new-game mutations', () => {
 
 test('Review handoff enters the existing editor and exit restores the exact record and ply', () => {
   const ctx = harness();
-  const reviewSession = r4ReviewFixture();
+  const reviewSession = r4TurnDivergenceReviewFixture();
   const reviewBefore = structuredClone(reviewSession);
   const liveBefore = {
     board: structuredClone(ctx.board), turn: ctx.turn, history: structuredClone(ctx.history),
@@ -396,14 +450,8 @@ test('Review handoff enters the existing editor and exit restores the exact reco
     capturedBy: structuredClone(ctx.capturedBy), session: structuredClone(ctx.normalGameRecordSession),
     mode: ctx.mode, aiToken: ctx.aiToken,
   };
-  const invoker = node();
-  ctx.appState = ctx.APP_STATE.GAME_REVIEW;
-  ctx.gameReviewSession = reviewSession;
-
-  assert.equal(ctx.createPuzzleFromGameReview(invoker), true);
+  const invoker = assertTurnDivergenceHandoff(ctx, reviewSession);
   assert.equal(ctx.appState, ctx.APP_STATE.PUZZLE_EDITOR);
-  same(ctx.editorState.board, reviewSession.snapshot.board);
-  assert.equal(ctx.editorState.sideToMove, reviewSession.snapshot.sideToMove);
   same(ctx.gameReviewPuzzleReturnContext, {
     reviewSession,
     sourceRecordId: reviewSession.record.id,
@@ -428,6 +476,22 @@ test('Review handoff enters the existing editor and exit restores the exact reco
   }, { ...liveBefore, aiToken: liveBefore.aiToken + 2 });
   assert.equal(ctx.gameRecordStorage.writes, 0);
   assert.equal(ctx.analyticsStorage.writes, 0);
+});
+
+test('negative control: using live turn for Review handoff fails the divergence regression', () => {
+  const ctx = harness({ handoffSideMutation: 'live-turn' });
+  const reviewSession = r4TurnDivergenceReviewFixture('live-turn-negative-control');
+  assert.throws(
+    () => assertTurnDivergenceHandoff(ctx, reviewSession),
+    (error) => error?.code === 'ERR_ASSERTION'
+      && /historical Review side-to-move/.test(error.message)
+      && error.actual === game.RED
+      && error.expected === game.BLACK,
+  );
+  assert.equal(ctx.editorState.sideToMove, ctx.turn,
+    'negative control received the live normal turn');
+  assert.notEqual(ctx.editorState.sideToMove, reviewSession.snapshot.sideToMove,
+    'negative control did not receive the historical Review side');
 });
 
 test('terminal and Analysis states reject R4 handoff without lifecycle mutation', () => {
