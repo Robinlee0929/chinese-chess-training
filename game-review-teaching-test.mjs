@@ -123,14 +123,103 @@ function pathExists(root, path) {
   return true;
 }
 
+function productionDependencies(candidate) {
+  const dependencies = [];
+  const scanners = [
+    ['static-import', /(?:^|[;\n])\s*import\s+(?!\s*\()(?:(?:[^;"']+?)\s+from\s+)?(["'])([^"']+)\1/gm],
+    ['export-from', /\bexport\s+(?:\*|\{[^}]*\})(?:\s+as\s+\w+)?\s+from\s+(["'])([^"']+)\1/gm],
+    ['dynamic-import', /\bimport\s*\(/g],
+    ['commonjs-require', /\brequire\s*\(/g],
+  ];
+  for (const [kind, pattern] of scanners) {
+    for (const match of candidate.matchAll(pattern)) {
+      dependencies.push({ kind, specifier: match[2] ?? '<computed>' });
+    }
+  }
+  return dependencies;
+}
+
 function assertPureMapperSource(candidate) {
+  assert.deepEqual(productionDependencies(candidate), [],
+    'game-review-teaching.js must have zero production dependencies');
   const forbidden = [
-    /from\s+['"]\.\/(?:game|ai|ai-worker|game-review|game-record)\.js/,
     /\b(?:legalMoves|applyMove|replay|inCheck|findBestMove|Worker)\b/,
     /\b(?:board|snapshot)\b/,
     /\b(?:localStorage|fetch|XMLHttpRequest|WebSocket)\b/,
   ];
   for (const pattern of forbidden) assert.doesNotMatch(candidate, pattern);
+}
+
+function nonterminalTeachingCases() {
+  const noUseful = evidence();
+  noUseful.played.movedPieceCaptureReplies = [reply(coordinate(3, 3))];
+  noUseful.candidate.movedPieceCaptureReplies = [reply(coordinate(2, 4))];
+  return [
+    ['check-difference', evidence({ candidate: { givesCheck: true } })],
+    ['capture-difference', evidence({ candidate: { capture: piece('black', 'R') } })],
+    ['capture-with-capture-reply', evidence({ candidate: {
+      capture: piece('black', 'P'), replies: [reply()],
+    } })],
+    ['moved-piece-capturable-difference', evidence({ candidate: { replies: [reply()] } })],
+    ['no-useful-rule', noUseful],
+  ];
+}
+
+function withLegalReplyCounts(input, playedCount, candidateCount) {
+  const mutated = clone(input);
+  assert.ok(playedCount >= mutated.played.movedPieceCaptureReplies.length);
+  assert.ok(candidateCount >= mutated.candidate.movedPieceCaptureReplies.length);
+  mutated.played.legalReplyCount = playedCount;
+  mutated.candidate.legalReplyCount = candidateCount;
+  return mutated;
+}
+
+function withMaterialDeltas(input, playedDelta, candidateDelta) {
+  const mutated = clone(input);
+  mutated.played.materialDeltaBySide = clone(playedDelta);
+  mutated.candidate.materialDeltaBySide = clone(candidateDelta);
+  return mutated;
+}
+
+function assertLegalReplyCountInvariance(derive = deriveGameReviewTeaching) {
+  for (const [label, input] of nonterminalTeachingCases()) {
+    const baseline = derive(input);
+    const variants = [
+      withLegalReplyCounts(input,
+        Math.max(7, input.played.movedPieceCaptureReplies.length),
+        Math.max(1, input.candidate.movedPieceCaptureReplies.length)),
+      withLegalReplyCounts(input,
+        Math.max(30, input.played.movedPieceCaptureReplies.length),
+        Math.max(0, input.candidate.movedPieceCaptureReplies.length)),
+    ];
+    for (const variant of variants) {
+      assert.deepEqual(derive(variant), baseline,
+        `${label} must ignore legalReplyCount`);
+    }
+  }
+}
+
+function assertMaterialDeltaInvariance(derive = deriveGameReviewTeaching) {
+  for (const [label, input] of nonterminalTeachingCases()) {
+    const baseline = derive(input);
+    const variants = [
+      withMaterialDeltas(input, { red: { P: -1 }, black: {} },
+        { red: {}, black: { R: -1 } }),
+      withMaterialDeltas(input, { red: { R: 2 }, black: { C: -3 } },
+        { red: { N: -4 }, black: { P: 5 } }),
+    ];
+    for (const variant of variants) {
+      assert.deepEqual(derive(variant), baseline,
+        `${label} must ignore materialDeltaBySide`);
+    }
+  }
+}
+
+async function importMutatedMapper(from, to, label) {
+  assert.ok(source.includes(from), `${label} mutation target exists`);
+  const mutated = source.replace(from, to);
+  const dataUrl = `data:text/javascript;base64,${Buffer.from(mutated).toString('base64')}`;
+  return import(dataUrl);
 }
 
 test('MATCH is a non-emitting suppressor', () => {
@@ -248,6 +337,54 @@ test('valid evidence with no approved difference emits nothing', () => {
   input.played.movedPieceCaptureReplies = [reply(coordinate(3, 3))];
   input.candidate.movedPieceCaptureReplies = [reply(coordinate(2, 4))];
   assert.deepEqual(deriveGameReviewTeaching(input), []);
+});
+
+test('legal reply counts never select, suppress or alter nonterminal teaching', () => {
+  assertLegalReplyCountInvariance();
+});
+
+test('material deltas never select, suppress or alter nonterminal teaching', () => {
+  assertMaterialDeltaInvariance();
+});
+
+test('legal reply counts and material deltas remain jointly irrelevant', () => {
+  const input = evidence({ candidate: { givesCheck: true } });
+  const baseline = deriveGameReviewTeaching(input);
+  const combined = withMaterialDeltas(
+    withLegalReplyCounts(input, 30, 1),
+    { red: { P: -7, R: 3 }, black: { C: -2 } },
+    { red: { N: 9 }, black: { P: -8, R: 4 } },
+  );
+  assert.deepEqual(deriveGameReviewTeaching(combined), baseline);
+  assert.deepEqual(deriveGameReviewTeaching(combined)[0], baseline[0],
+    'ruleId, priority, title, body, evidenceRefs, source and message count are unchanged');
+});
+
+test('unused-field invariance rejects legalReplyCount and materialDelta mutants', async () => {
+  const checkStart = 'function checkDifference(evidence) {\n';
+  const legalReplyMutant = await importMutatedMapper(
+    checkStart,
+    `${checkStart}  if (evidence.candidate.legalReplyCount < evidence.played.legalReplyCount) return null;\n`,
+    'legalReplyCount',
+  );
+  assert.throws(
+    () => assertLegalReplyCountInvariance(legalReplyMutant.deriveGameReviewTeaching),
+    (error) => error?.code === 'ERR_ASSERTION'
+      && /must ignore legalReplyCount/.test(error.message),
+    'BROKEN_R3C1_USES_LEGAL_REPLY_COUNT_WOULD_FAIL',
+  );
+
+  const materialMutant = await importMutatedMapper(
+    checkStart,
+    `${checkStart}  if (Object.keys(evidence.candidate.materialDeltaBySide.black).length > 0) return null;\n`,
+    'materialDeltaBySide',
+  );
+  assert.throws(
+    () => assertMaterialDeltaInvariance(materialMutant.deriveGameReviewTeaching),
+    (error) => error?.code === 'ERR_ASSERTION'
+      && /must ignore materialDeltaBySide/.test(error.message),
+    'BROKEN_R3C1_USES_MATERIAL_DELTA_WOULD_FAIL',
+  );
 });
 
 test('malformed and unsupported evidence fail closed', () => {
@@ -385,6 +522,37 @@ test('source guard excludes raw-position, chess-rule, AI, stateful and external 
     }
     assert.equal(detected?.code, 'ERR_ASSERTION', label);
   }
+});
+
+test('production mapper has zero dependencies and import mutants are rejected', () => {
+  assert.equal(productionDependencies(source).length, 0,
+    'R3C1_PRODUCTION_IMPORT_COUNT=0');
+  const dependencyMutants = [
+    ["import './game-review-ai.js?v=123';\n", 'BROKEN_R3C1_IMPORTS_GAME_REVIEW_AI_QUERY_WOULD_FAIL'],
+    ["import './game.js#test';\n", 'side-effect import'],
+    ["import { findBestMove } from './ai.js?v=abc';\n", 'static import declaration'],
+    ["import {\n  findBestMove,\n} from './ai.js?v=multiline';\n", 'multiline static import'],
+    ["export { createGameReviewAiState } from './game-review-ai.js#x';\n", 'export-from dependency'],
+    ["const mod = await import('./game-review-ai.js?v=123');\n", 'dynamic import'],
+    ["const specifier = './game.js'; const computed = await import(specifier);\n", 'computed dynamic import'],
+    ["const rules = require('./game.js');\n", 'CommonJS require'],
+  ];
+  for (const [prefix, label] of dependencyMutants) {
+    assert.throws(
+      () => assertPureMapperSource(`${prefix}${source}`),
+      (error) => error?.code === 'ERR_ASSERTION'
+        && /zero production dependencies/.test(error.message),
+      label,
+    );
+  }
+  assert.throws(
+    () => assertPureMapperSource(
+      `import * as reviewAiDomain from './game-review-ai.js?v=raw-board';\n${source}\nvoid reviewAiDomain;`,
+    ),
+    (error) => error?.code === 'ERR_ASSERTION'
+      && /zero production dependencies/.test(error.message),
+    'BROKEN_R3C1_TEACHES_FROM_RAW_BOARD_WOULD_FAIL',
+  );
 });
 
 test('forbidden-language guard detects capturable-loss and best-move mutations', () => {

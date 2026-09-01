@@ -153,7 +153,7 @@ function vector() {
 function harness({
   records = [], serialized, readError, writeError, confirm = true,
   mode = 'pvp', turn = RED, realRenderer = false, rendererMutation = null,
-  reviewAiMutation = null, workerCreationError = false,
+  reviewAiMutation = null, teachingMutation = null, workerCreationError = false,
 } = {}) {
   let stored = serialized === undefined
     ? (records.length ? JSON.stringify({ version: 1, records }) : null)
@@ -248,6 +248,8 @@ function harness({
     reviewAiWorkers,
     reviewAiRequestCount: 0,
     engineSearches: 0,
+    gameRuleEvaluations: 0,
+    gameRuleCallsByName: {},
     renderedBoard: liveBoard,
     renderCount: 0,
     productionRenderCallCount: 0,
@@ -365,6 +367,31 @@ function harness({
       context.engineSearches++;
       return null;
     },
+    legalMoves() {
+      context.gameRuleEvaluations++;
+      context.gameRuleCallsByName.legalMoves = (context.gameRuleCallsByName.legalMoves || 0) + 1;
+      return [];
+    },
+    applyMove(value) {
+      context.gameRuleEvaluations++;
+      context.gameRuleCallsByName.applyMove = (context.gameRuleCallsByName.applyMove || 0) + 1;
+      return value;
+    },
+    inCheck() {
+      context.gameRuleEvaluations++;
+      context.gameRuleCallsByName.inCheck = (context.gameRuleCallsByName.inCheck || 0) + 1;
+      return false;
+    },
+    repetitionVerdict() {
+      context.gameRuleEvaluations++;
+      context.gameRuleCallsByName.repetitionVerdict = (context.gameRuleCallsByName.repetitionVerdict || 0) + 1;
+      return null;
+    },
+    notation() {
+      context.gameRuleEvaluations++;
+      context.gameRuleCallsByName.notation = (context.gameRuleCallsByName.notation || 0) + 1;
+      return '測試記法';
+    },
     doMove() { context.normalDoMoveCalls++; },
     maybeAIMove() {
       context.aiMaybeMoveCalls++;
@@ -423,6 +450,13 @@ function harness({
     mainFunctions[index] = mainFunctions[index].replace(
       '  renderGameReviewAi();',
       "  findBestMove(gameReviewSession.snapshot.board, gameReviewSession.snapshot.sideToMove, 'review-v1');\n  renderGameReviewAi();",
+    );
+  }
+  if (teachingMutation === 'direct-rule') {
+    const index = names.indexOf('renderGameReviewTeaching');
+    mainFunctions[index] = mainFunctions[index].replace(
+      '  const [message] = deriveGameReviewTeaching(evidence);',
+      '  legalMoves(gameReviewSession.snapshot.board, 0, 0);\n  const [message] = deriveGameReviewTeaching(evidence);',
     );
   }
   vm.runInContext([...rendererHelpers, rendererSource, ...mainFunctions].filter(Boolean).join('\n'), context);
@@ -939,6 +973,57 @@ test('R3C teaching clears with new requests and navigation and stale results can
   assert.equal(ctx.gameReviewEvidenceState, null);
   assert.equal(ctx.gameReviewTeaching.classList.contains('hidden'), true,
     'BROKEN_R3C1_USES_STALE_R3B_EVIDENCE_WOULD_FAIL');
+});
+
+test('rendering R3C from existing R3B evidence adds zero workers, requests, searches or rule calls', () => {
+  const exercise = (teachingMutation = null) => {
+    const saved = record(`review-teaching-purity-${teachingMutation || 'canonical'}`);
+    const ctx = harness({ records: [saved], realRenderer: true, teachingMutation });
+    ctx.enterGameRecordLibrary();
+    ctx.openStoredGameReview(saved.id);
+    ctx.navigateGameReview('first');
+    ctx.requestGameReviewAiCandidate();
+    const worker = ctx.reviewAiWorkers.at(-1);
+    worker.emit(successfulReviewAiResponse(worker, { to: { r: 3, c: 3 } }));
+    assert.ok(ctx.gameReviewEvidenceState, 'R3B evidence exists before the measured R3C render');
+
+    const before = {
+      workers: ctx.reviewAiWorkers.length,
+      requests: ctx.reviewAiRequestCount,
+      searches: ctx.engineSearches,
+      gameRules: ctx.gameRuleEvaluations,
+    };
+    ctx.renderGameReviewEvidence();
+    return {
+      ctx,
+      additionalWorkers: ctx.reviewAiWorkers.length - before.workers,
+      additionalRequests: ctx.reviewAiRequestCount - before.requests,
+      additionalSearches: ctx.engineSearches - before.searches,
+      additionalGameRules: ctx.gameRuleEvaluations - before.gameRules,
+    };
+  };
+
+  const canonical = exercise();
+  assert.equal(canonical.additionalWorkers, 0, 'ADDITIONAL_REVIEW_WORKERS_DURING_R3C1=0');
+  assert.equal(canonical.additionalRequests, 0, 'ADDITIONAL_R3A_REQUESTS_DURING_R3C1=0');
+  assert.equal(canonical.additionalSearches, 0, 'ADDITIONAL_ENGINE_SEARCHES_DURING_R3C1=0');
+  assert.equal(canonical.additionalGameRules, 0,
+    'ADDITIONAL_GAME_RULE_EVALUATIONS_DURING_R3C1=0');
+
+  const broken = exercise('direct-rule');
+  assert.equal(broken.additionalGameRules, 1,
+    'isolated mutation performs one forbidden legalMoves computation from the Review snapshot');
+  assert.deepEqual(Object.keys(broken.ctx.gameRuleCallsByName), ['legalMoves']);
+  assert.ok(broken.ctx.gameRuleCallsByName.legalMoves >= 1);
+  let detected = null;
+  try {
+    assert.equal(broken.additionalGameRules, 0,
+      'BROKEN_R3C1_CALLS_GAME_RULES_WOULD_FAIL');
+  } catch (error) {
+    detected = error;
+  }
+  assert.equal(detected?.code, 'ERR_ASSERTION');
+  assert.match(detected.message, /BROKEN_R3C1_CALLS_GAME_RULES_WOULD_FAIL/);
 });
 
 test('accepted R3A success adds zero Review workers, requests or direct engine searches', () => {
