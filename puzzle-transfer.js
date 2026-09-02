@@ -1,4 +1,4 @@
-import { validatePuzzle, isCheckmateAfterSolution } from './puzzle-domain.js?v=4dd3e2c2ca';
+import { validatePuzzle, isCheckmateAfterSolution } from './puzzle-domain.js?v=d78bb3ba26';
 
 export const PUZZLE_TRANSFER_FORMAT = 'chinese-chess-training-puzzles';
 export const PUZZLE_TRANSFER_SCHEMA_VERSION = 1;
