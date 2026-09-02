@@ -227,11 +227,11 @@ function assertPureCoachSource(candidate) {
   const forbidden = [
     /\b(?:legalMoves|applyMove|replay|inCheck|findBestMove|Worker)\b/u,
     /\b(?:fetch|XMLHttpRequest|WebSocket|EventSource|sendBeacon)\b/u,
-    /\b(?:localStorage|sessionStorage|indexedDB)\b/u,
-    /\b(?:document|HTMLElement|querySelector|textContent)\b/u,
+    /\b(?:localStorage|sessionStorage|indexedDB|CacheStorage|serviceWorker)\b/u,
+    /\b(?:document|window|HTMLElement|querySelector|textContent)\b/u,
     /\b(?:setTimeout|setInterval|AbortController)\b/u,
-    /\b(?:Authorization|Bearer|OPENAI_API_KEY|apiKey|providerSecret)\b/u,
-    /\b(?:prompt|system|messages)\b/u,
+    /\b(?:Authorization|Bearer|OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY|apiKey|providerSecret)\b/u,
+    /\b(?:prompt|system|messages|conversation|chat)\b/u,
   ];
   for (const pattern of forbidden) assert.doesNotMatch(candidate, pattern);
 }
@@ -262,8 +262,21 @@ function injectAfterUniqueLine(candidate, targetLine, injectedLine, label) {
   return `${candidate.slice(0, insertAt)}${injectedLine}${eol}${candidate.slice(insertAt)}`;
 }
 
+function replaceUniqueLine(candidate, targetLine, replacementLine, label) {
+  const matches = logicalLineMatches(candidate, targetLine);
+  assert.equal(matches.length, 1, `${label} mutation target occurs exactly once`);
+  const [{ index, line }] = matches;
+  return `${candidate.slice(0, index)}${replacementLine}${candidate.slice(index + line.length)}`;
+}
+
 async function importMutatedModule(candidate, targetLine, injectedLine, label) {
   const mutated = injectAfterUniqueLine(candidate, targetLine, injectedLine, label);
+  const dataUrl = `data:text/javascript;base64,${Buffer.from(mutated).toString('base64')}`;
+  return import(dataUrl);
+}
+
+async function importReplacedModule(candidate, targetLine, replacementLine, label) {
+  const mutated = replaceUniqueLine(candidate, targetLine, replacementLine, label);
   const dataUrl = `data:text/javascript;base64,${Buffer.from(mutated).toString('base64')}`;
   return import(dataUrl);
 }
@@ -552,6 +565,175 @@ test('hostile malformed values and exotic objects never throw or partially accep
   }
 });
 
+test('accessor properties are rejected at every consumed depth without invoking getters', () => {
+  const getterCounts = [];
+  const accessor = (target, key, safeValue) => {
+    let calls = 0;
+    Object.defineProperty(target, key, {
+      enumerable: true,
+      get() {
+        calls++;
+        return calls === 1 ? safeValue : '私密內容';
+      },
+    });
+    getterCounts.push(() => calls);
+  };
+
+  const messageAccessor = teaching();
+  delete messageAccessor.ruleId;
+  accessor(messageAccessor, 'ruleId', 'check-difference');
+  assert.equal(createCoachRequestPayload(messageAccessor, 'accessor-message'), null);
+  const accessorBegin = beginCoachRequest({
+    state: createIdleCoachState(), teachingMessage: messageAccessor, requestId: 'accessor-message',
+  });
+  assert.equal(accessorBegin.accepted, false);
+  assert.equal(Object.hasOwn(accessorBegin.state, 'title'), false);
+  assert.equal(Object.hasOwn(accessorBegin.state, 'body'), false);
+
+  const sourceAccessor = teaching();
+  delete sourceAccessor.source.recordId;
+  accessor(sourceAccessor.source, 'recordId', 'coach-fixture');
+  assert.equal(createCoachRequestPayload(sourceAccessor, 'accessor-source'), null);
+
+  const evidenceAccessor = teaching();
+  const evidenceRefs = [];
+  let evidenceGetterCalls = 0;
+  Object.defineProperty(evidenceRefs, '0', {
+    enumerable: true,
+    configurable: true,
+    get() {
+      evidenceGetterCalls++;
+      return 'source.recordId';
+    },
+  });
+  getterCounts.push(() => evidenceGetterCalls);
+  evidenceRefs.length = 1;
+  evidenceAccessor.evidenceRefs = evidenceRefs;
+  assert.equal(createCoachRequestPayload(evidenceAccessor, 'accessor-array'), null);
+
+  const started = begin();
+  const response = responseFor(started.request);
+  delete response.framing.leadIn;
+  accessor(response.framing, 'leadIn', '慢慢想一想。');
+  assert.equal(settle(started, teaching(), response).accepted, false);
+
+  const topLevelResponse = responseFor(started.request);
+  const safeFraming = topLevelResponse.framing;
+  delete topLevelResponse.framing;
+  accessor(topLevelResponse, 'framing', safeFraming);
+  assert.equal(settle(started, teaching(), topLevelResponse).accepted, false);
+
+  const optionAccessor = {};
+  accessor(optionAccessor, 'state', createIdleCoachState());
+  assert.equal(beginCoachRequest(optionAccessor).accepted, false);
+
+  const stateAccessor = { ...createIdleCoachState() };
+  delete stateAccessor.revision;
+  accessor(stateAccessor, 'revision', 0);
+  Object.freeze(stateAccessor);
+  assert.equal(beginCoachRequest({
+    state: stateAccessor, teachingMessage: teaching(), requestId: 'accessor-state',
+  }).accepted, false);
+  assert.ok(getterCounts.every((readCount) => readCount() === 0),
+    'R3C2_ACCESSOR_GETTER_INVOCATIONS_DURING_VALIDATION=0');
+});
+
+test('hostile reflection failures reject without throwing', () => {
+  const hostileProxy = new Proxy({}, {
+    getPrototypeOf() { throw new Error('prototype reflection blocked'); },
+  });
+  assert.doesNotThrow(() => createCoachRequestPayload(hostileProxy, 'proxy'));
+  assert.equal(createCoachRequestPayload(hostileProxy, 'proxy'), null);
+  assert.doesNotThrow(() => beginCoachRequest(hostileProxy));
+  assert.equal(beginCoachRequest(hostileProxy).accepted, false);
+  assert.doesNotThrow(() => settleCoachResponse(hostileProxy));
+  assert.equal(settleCoachResponse(hostileProxy).accepted, false);
+});
+
+test('homograph policy rejects the pre-fix claim without lossy deletion and keeps generic prose', () => {
+  const started = begin();
+  const rejected = [
+    '紅馬上前進。',
+    '紅將來移動。',
+    '將 軍',
+    '將　軍',
+    '將・軍',
+    '將/**/軍',
+    '将军',
+    '红马向前進。',
+    '帅会移動。',
+    '车向前進。',
+  ];
+  for (const leadIn of rejected) {
+    assert.equal(settle(started, teaching(), responseFor(started.request, { leadIn })).accepted,
+      false, leadIn);
+  }
+  for (const leadIn of [
+    '可以先注意這個地方。',
+    '再仔細看看也很好。',
+    '下次可以先停一下想想。',
+    '馬上可以再試一次。',
+    '將來也可以再試一次。',
+    '相信自己，慢慢練習。',
+  ]) {
+    assert.equal(settle(started, teaching(), responseFor(started.request, { leadIn })).accepted,
+      true, leadIn);
+  }
+});
+
+test('revision exhaustion stays safe, inert and stale-response resistant', () => {
+  const message = teaching();
+  const nearMax = createIdleCoachState(Number.MAX_SAFE_INTEGER - 1);
+  const atMax = begin(message, 'max-revision-request', nearMax);
+  assert.equal(atMax.state.revision, Number.MAX_SAFE_INTEGER);
+  assert.equal(Number.isSafeInteger(atMax.state.identity.coachRevision), true);
+
+  const oldResponse = responseFor(atMax.request);
+  const exhausted = invalidateCoachState(atMax.state);
+  assert.deepEqual(exhausted, {
+    version: 1,
+    status: 'disabled',
+    revision: Number.MAX_SAFE_INTEGER,
+    identity: null,
+    request: null,
+    framing: null,
+  });
+  assert.equal(settleCoachResponse({
+    state: exhausted, currentTeachingMessage: message, response: oldResponse,
+  }).accepted, false);
+  const retry = beginCoachRequest({
+    state: exhausted, teachingMessage: message, requestId: 'max-revision-request',
+  });
+  assert.equal(retry.accepted, false);
+  assert.equal(retry.reason, 'DISABLED');
+
+  const idleAtMax = createIdleCoachState(Number.MAX_SAFE_INTEGER);
+  const exhaustedBegin = beginCoachRequest({
+    state: idleAtMax, teachingMessage: message, requestId: 'exhausted-begin',
+  });
+  assert.equal(exhaustedBegin.accepted, false);
+  assert.equal(exhaustedBegin.reason, 'REVISION_EXHAUSTED');
+  assert.equal(exhaustedBegin.state.status, 'disabled');
+  assert.equal(exhaustedBegin.state.revision, Number.MAX_SAFE_INTEGER);
+
+  for (const revision of [NaN, Infinity, -Infinity, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    const hostileState = Object.freeze({
+      version: 1,
+      status: 'idle',
+      revision,
+      identity: null,
+      request: null,
+      framing: null,
+    });
+    const result = beginCoachRequest({
+      state: hostileState, teachingMessage: message, requestId: 'invalid-revision',
+    });
+    assert.equal(result.accepted, false, String(revision));
+    assert.equal(result.state.status, 'disabled', String(revision));
+    assert.equal(Number.isSafeInteger(invalidateCoachState(hostileState).revision), true);
+  }
+});
+
 test('production source has no dependency, R3C1 import, engine, network, storage, DOM or secret', () => {
   assertPureCoachSource(source);
   assert.equal(productionDependencies(source).length, 0, 'R3C2_PRODUCTION_IMPORT_COUNT=0');
@@ -584,16 +766,154 @@ test('dependency scanner rejects broad import forms and ignores non-executable l
   }]);
 });
 
+test('accessor snapshot mutants leak or accept unsafe framing on every EOL', async () => {
+  for (const [eolLabel, candidate] of sourceForms()) {
+    const outboundMutant = await importMutatedModule(
+      candidate,
+      'export function createCoachRequestPayload(teachingMessage, requestId) {',
+      "  return deepFreeze({ version: 1, requestId, locale: 'zh-Hant', sourceRuleId: teachingMessage.ruleId, style: 'child-neutral-teacher-v1' });",
+      `${eolLabel} accessor outbound`,
+    );
+    let outboundGetterCalls = 0;
+    const accessorMessage = teaching();
+    delete accessorMessage.ruleId;
+    Object.defineProperty(accessorMessage, 'ruleId', {
+      enumerable: true,
+      get() {
+        outboundGetterCalls++;
+        return accessorMessage.body;
+      },
+    });
+    const leaked = outboundMutant.createCoachRequestPayload(accessorMessage, 'accessor-leak');
+    assert.throws(() => assert.equal(leaked, null),
+      (error) => error?.code === 'ERR_ASSERTION',
+      `${eolLabel} BROKEN_R3C2_ACCESSOR_TOCTOU_LEAK_WOULD_FAIL`);
+    assert.equal(outboundGetterCalls, 1, `${eolLabel} outbound mutant actually executed`);
+
+    const framingMutant = await importReplacedModule(
+      candidate,
+      '    const response = snapshotCoachResponse(input.response);',
+      '    const response = input.response;',
+      `${eolLabel} accessor framing`,
+    );
+    const started = framingMutant.beginCoachRequest({
+      state: framingMutant.createIdleCoachState(),
+      teachingMessage: teaching(),
+      requestId: 'accessor-framing',
+    });
+    let framingGetterCalls = 0;
+    const hostileResponse = {
+      version: 1,
+      requestId: started.request.requestId,
+      sourceRuleId: started.request.sourceRuleId,
+      style: started.request.style,
+    };
+    Object.defineProperty(hostileResponse, 'framing', {
+      enumerable: true,
+      get() {
+        framingGetterCalls++;
+        return framingGetterCalls <= 5
+          ? { leadIn: '慢慢想一想。', encouragement: '你可以再試一次。' }
+          : { leadIn: '這步會將軍', encouragement: '<b>可以吃車</b>' };
+      },
+    });
+    const unsafe = framingMutant.settleCoachResponse({
+      state: started.state,
+      currentTeachingMessage: teaching(),
+      response: hostileResponse,
+    });
+    assert.throws(() => assert.equal(unsafe.accepted, false),
+      (error) => error?.code === 'ERR_ASSERTION',
+      `${eolLabel} BROKEN_R3C2_ACCESSOR_TOCTOU_FRAMING_WOULD_FAIL`);
+    assert.ok(framingGetterCalls >= 6, `${eolLabel} framing mutant actually re-read accessor`);
+  }
+});
+
+test('lossy homograph removal mutant restores the exact pre-fix chess-claim bypass', async () => {
+  const preFixClaim = '紅馬上前進。';
+  const started = begin();
+  assert.equal(settle(started, teaching(), responseFor(started.request, {
+    leadIn: preFixClaim,
+  })).accepted, false, 'BROKEN_R3C2_HOMOGRAPH_CHESS_CLAIM_WOULD_FAIL');
+
+  for (const [eolLabel, candidate] of sourceForms()) {
+    const mutant = await importMutatedModule(
+      candidate,
+      'function containsChessPieceVocabulary(value) {',
+      "  value = value.replace(/(?:馬上|將來)/gu, '');",
+      `${eolLabel} lossy homograph`,
+    );
+    const mutantStarted = mutant.beginCoachRequest({
+      state: mutant.createIdleCoachState(), teachingMessage: teaching(), requestId: 'lossy-homograph',
+    });
+    const mutantResponse = responseFor(mutantStarted.request, { leadIn: preFixClaim });
+    const accepted = mutant.settleCoachResponse({
+      state: mutantStarted.state,
+      currentTeachingMessage: teaching(),
+      response: mutantResponse,
+    });
+    assert.throws(() => assert.equal(accepted.accepted, false),
+      (error) => error?.code === 'ERR_ASSERTION',
+      `${eolLabel} BROKEN_R3C2_LOSSY_HOMOGRAPH_REMOVAL_WOULD_FAIL`);
+  }
+});
+
+test('overflow and wrap mutants violate the bounded revision contract on every EOL', async () => {
+  for (const [eolLabel, candidate] of sourceForms()) {
+    const overflowMutant = await importMutatedModule(
+      candidate,
+      'function nextCoachRevision(current) {',
+      '  return current + 1;',
+      `${eolLabel} revision overflow`,
+    );
+    const overflow = overflowMutant.beginCoachRequest({
+      state: overflowMutant.createIdleCoachState(Number.MAX_SAFE_INTEGER),
+      teachingMessage: teaching(),
+      requestId: 'overflow-mutant',
+    });
+    assert.throws(() => assert.equal(Number.isSafeInteger(overflow.state.revision), true),
+      (error) => error?.code === 'ERR_ASSERTION',
+      `${eolLabel} BROKEN_R3C2_REVISION_OVERFLOW_WOULD_FAIL`);
+
+    const wrapMutant = await importMutatedModule(
+      candidate,
+      'function nextCoachRevision(current) {',
+      '  if (current === Number.MAX_SAFE_INTEGER) return 0;',
+      `${eolLabel} revision wrap`,
+    );
+    const original = wrapMutant.beginCoachRequest({
+      state: wrapMutant.createIdleCoachState(Number.MAX_SAFE_INTEGER - 1),
+      teachingMessage: teaching(),
+      requestId: 'wrapped-request',
+    });
+    const oldResponse = responseFor(original.request);
+    const wrapped = wrapMutant.invalidateCoachState(original.state);
+    const replacement = wrapMutant.beginCoachRequest({
+      state: wrapped,
+      teachingMessage: teaching(),
+      requestId: 'wrapped-request',
+    });
+    const stale = wrapMutant.settleCoachResponse({
+      state: replacement.state,
+      currentTeachingMessage: teaching(),
+      response: oldResponse,
+    });
+    assert.throws(() => assert.equal(stale.accepted, false),
+      (error) => error?.code === 'ERR_ASSERTION',
+      `${eolLabel} BROKEN_R3C2_REVISION_WRAP_WOULD_FAIL`);
+  }
+});
+
 test('exact outbound allowlist rejects isolated raw-data and arbitrary-interface mutants on every EOL',
   async () => {
-    const target = '      style: GAME_REVIEW_COACH_STYLE,';
+    const target = '    style: GAME_REVIEW_COACH_STYLE,';
     const mutations = [
-      ["      board: 'raw-position',", 'BROKEN_R3C2_SENDS_RAW_BOARD_WOULD_FAIL'],
-      ["      GameRecord: 'record',", 'BROKEN_R3C2_SENDS_GAME_RECORD_WOULD_FAIL'],
-      ['      score: 12,', 'BROKEN_R3C2_SENDS_SCORE_WOULD_FAIL'],
-      ['      title: teachingMessage.title,', 'BROKEN_R3C2_REMOVES_R3C1_FALLBACK_WOULD_FAIL'],
-      ['      recordId: teachingMessage.source.recordId,', 'source identity outbound mutant'],
-      ["      prompt: 'arbitrary',", 'BROKEN_R3C2_ARBITRARY_PROMPT_WOULD_FAIL'],
+      ["    board: 'raw-position',", 'BROKEN_R3C2_SENDS_RAW_BOARD_WOULD_FAIL'],
+      ["    GameRecord: 'record',", 'BROKEN_R3C2_SENDS_GAME_RECORD_WOULD_FAIL'],
+      ['    score: 12,', 'BROKEN_R3C2_SENDS_SCORE_WOULD_FAIL'],
+      ['    title: message.title,', 'BROKEN_R3C2_REMOVES_R3C1_FALLBACK_WOULD_FAIL'],
+      ['    recordId: message.source.recordId,', 'source identity outbound mutant'],
+      ["    prompt: 'arbitrary',", 'BROKEN_R3C2_ARBITRARY_PROMPT_WOULD_FAIL'],
     ];
     assert.throws(() => injectAfterUniqueLine('', target, mutations[0][0], 'missing'),
       /mutation target occurs exactly once/);
@@ -694,7 +1014,7 @@ test('deterministic hostile fuzz covers 3000 cases with replay equivalence', () 
     const outcomes = [];
     const values = [null, undefined, 0, '', [], {}, new Date(0), new Map(), new Set(), () => {}];
     for (let index = 0; index < 3000; index++) {
-      const choice = next() % 5;
+      const choice = next() % 8;
       let result;
       if (choice === 0) result = beginCoachRequest(values[next() % values.length]);
       else if (choice === 1) result = settleCoachResponse(values[next() % values.length]);
@@ -703,7 +1023,39 @@ test('deterministic hostile fuzz covers 3000 cases with replay equivalence', () 
         const started = begin(teaching(), `fuzz-${index}`);
         const text = `${String.fromCodePoint(0x4e00 + (next() % 100))}${index}`;
         result = settle(started, teaching(), responseFor(started.request, { leadIn: text }));
-      } else result = createCoachRequestPayload(teaching(), `fuzz-${next()}`);
+      } else if (choice === 4) result = createCoachRequestPayload(teaching(), `fuzz-${next()}`);
+      else if (choice === 5) {
+        const accessorMessage = teaching();
+        delete accessorMessage.ruleId;
+        Object.defineProperty(accessorMessage, 'ruleId', {
+          enumerable: true,
+          get() { return index % 2 ? 'check-difference' : accessorMessage.body; },
+        });
+        result = createCoachRequestPayload(accessorMessage, `fuzz-accessor-${index}`);
+      } else if (choice === 6) {
+        const revisions = [
+          Number.MAX_SAFE_INTEGER - 1,
+          Number.MAX_SAFE_INTEGER,
+          Number.MAX_SAFE_INTEGER + 1,
+          NaN,
+          Infinity,
+          -1,
+          1.5,
+        ];
+        const state = createIdleCoachState(revisions[next() % revisions.length]);
+        result = beginCoachRequest({
+          state, teachingMessage: teaching(), requestId: `fuzz-revision-${index}`,
+        });
+      } else {
+        const started = begin(teaching(), `fuzz-framing-${index}`);
+        const hostileResponse = responseFor(started.request);
+        delete hostileResponse.framing.leadIn;
+        Object.defineProperty(hostileResponse.framing, 'leadIn', {
+          enumerable: true,
+          get() { return index % 2 ? '慢慢想一想。' : '這步會將軍'; },
+        });
+        result = settle(started, teaching(), hostileResponse);
+      }
       outcomes.push(JSON.stringify(result, (_key, value) => (
         typeof value === 'function' ? '<function>' : value
       )));

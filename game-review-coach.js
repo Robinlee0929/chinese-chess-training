@@ -48,7 +48,8 @@ const QUALITY_TERMS = Object.freeze([
   '白送', '掉子', '懸子', '優勢', '勝率', '評分', '評估值', '評估', '分數',
 ]);
 const CHESS_FACT_TERMS = Object.freeze([
-  '將軍', '將死', '困斃', '長將', '重複', '判和', '判負', '獲勝', '吃',
+  '將軍', '将军', '將死', '将死', '困斃', '困毙', '長將', '长将',
+  '重複', '重复', '判和', '判負', '判负', '獲勝', '获胜', '吃',
   '這步', '此步', '那步', '實戰', '候選', '走法', '著法', '棋步',
   '紅方', '黑方', '對方', '局面', '棋子',
 ]);
@@ -56,10 +57,12 @@ const ENGLISH_QUALITY = /\b(?:score|evaluation|depth|pv|best|blunder|mistake)\b/
 const URL_OR_SCHEME = /(?:https?:\/\/|www\.|javascript\s*:|data\s*:)/i;
 const MARKDOWN_LINK = /\[[^\]]*\]\([^)]*\)/u;
 const QUOTE_OR_BRACKET = /[「」『』【】\[\]{}]/u;
-const MOVE_NOTATION = /(?:[前中後]?[車馬炮砲俥傌相象仕士帥將兵卒][一二三四五六七八九][平進退][一二三四五六七八九])/u;
+const MOVE_NOTATION = /(?:[前中後]?[車车馬马炮砲俥傌相象仕士帥帅將将兵卒][一二三四五六七八九][平進进退][一二三四五六七八九])/u;
 const COORDINATE_LIKE = /(?:[甲乙丙丁戊己庚辛壬癸一二三四五六七八九十Ａ-Ｚ][一二三四五六七八九十])/u;
-const NON_CHESS_HOMOGRAPHS = /(?:相信|互相|相同|將來|即將|馬上|士氣)/gu;
-const PIECE_VOCABULARY = /[車馬炮砲俥傌相象仕士帥將兵卒]/u;
+const SAFE_HOMOGRAPH_WORDS = Object.freeze(['相信', '互相', '相同', '將來', '即將', '馬上', '士氣']);
+const PIECE_VOCABULARY = /[車车馬马炮砲俥傌相象仕士帥帅將将兵卒]/u;
+const CHESS_CONTEXT_BEFORE = /[紅红黑棋前中後后車车馬马炮砲俥傌相象仕士帥帅將将兵卒]/u;
+const CHESS_CONTEXT_AFTER = /[前後后左右進进退平移動动走吃攻守將将軍军棋步著着]/u;
 const CONTROL_OR_MULTILINE = /[\u0000-\u001f\u007f-\u009f]/u;
 const SAFE_FRAMING_CHARACTER = /^(?:\p{Script=Han}|\p{Extended_Pictographic}|\p{Punctuation}|\p{Separator})$/u;
 const STATUSES = Object.freeze(['disabled', 'idle', 'loading', 'success']);
@@ -69,26 +72,15 @@ export function createDisabledCoachState(revision = 0) {
 }
 
 export function createIdleCoachState(revision = 0) {
-  return createEmptyState('idle', validRevision(revision) ? revision : 0);
+  return validRevision(revision)
+    ? createEmptyState('idle', revision)
+    : createDisabledCoachState();
 }
 
 export function createTeachingFingerprint(teachingMessage) {
   try {
-    if (!validTeachingMessage(teachingMessage)) return null;
-    const canonical = JSON.stringify([
-      teachingMessage.version,
-      teachingMessage.ruleId,
-      teachingMessage.title,
-      teachingMessage.body,
-      teachingMessage.tone,
-      teachingMessage.confidence,
-    ]);
-    let hash = 0xcbf29ce484222325n;
-    for (const character of canonical) {
-      hash ^= BigInt(character.codePointAt(0));
-      hash = BigInt.asUintN(64, hash * 0x100000001b3n);
-    }
-    return `r3c2-${hash.toString(16).padStart(16, '0')}`;
+    const message = snapshotTeachingMessage(teachingMessage);
+    return message ? fingerprintFromSnapshot(message) : null;
   } catch {
     return null;
   }
@@ -96,15 +88,8 @@ export function createTeachingFingerprint(teachingMessage) {
 
 export function createCoachRequestPayload(teachingMessage, requestId) {
   try {
-    if (!validTeachingMessage(teachingMessage) || !validRequestId(requestId)) return null;
-    const payload = {
-      version: GAME_REVIEW_COACH_VERSION,
-      requestId,
-      locale: GAME_REVIEW_COACH_LOCALE,
-      sourceRuleId: teachingMessage.ruleId,
-      style: GAME_REVIEW_COACH_STYLE,
-    };
-    return deepFreeze(payload);
+    const message = snapshotTeachingMessage(teachingMessage);
+    return message ? createCoachRequestPayloadFromSnapshot(message, requestId) : null;
   } catch {
     return null;
   }
@@ -112,20 +97,25 @@ export function createCoachRequestPayload(teachingMessage, requestId) {
 
 export function beginCoachRequest(options) {
   try {
-    if (!exactKeys(options, ['state', 'teachingMessage', 'requestId'])) {
+    const input = snapshotExactDataObject(options, ['state', 'teachingMessage', 'requestId']);
+    if (!input) {
       return rejectedBegin(createDisabledCoachState(), 'INVALID_ARGUMENTS');
     }
-    const { state, teachingMessage, requestId } = options;
-    if (!validCoachState(state)) return rejectedBegin(createDisabledCoachState(), 'INVALID_STATE');
+    const state = snapshotCoachState(input.state);
+    if (!state) return rejectedBegin(createDisabledCoachState(), 'INVALID_STATE');
     if (state.status === 'disabled') return rejectedBegin(state, 'DISABLED');
     if (state.status === 'loading') return rejectedBegin(state, 'ALREADY_LOADING');
-    if (!validTeachingMessage(teachingMessage)) {
+    const teachingMessage = snapshotTeachingMessage(input.teachingMessage);
+    if (!teachingMessage) {
       return rejectedBegin(state, 'INVALID_TEACHING_MESSAGE');
     }
-    const request = createCoachRequestPayload(teachingMessage, requestId);
+    const request = createCoachRequestPayloadFromSnapshot(teachingMessage, input.requestId);
     if (!request) return rejectedBegin(state, 'INVALID_REQUEST_ID');
 
-    const revision = state.revision + 1;
+    const revision = nextCoachRevision(state.revision);
+    if (revision === null) {
+      return rejectedBegin(createEmptyState('disabled', state.revision), 'REVISION_EXHAUSTED');
+    }
     const identity = createIdentity(teachingMessage, revision);
     if (!identity) return rejectedBegin(state, 'INVALID_TEACHING_MESSAGE');
     const requestMetadata = deepFreeze({
@@ -149,22 +139,27 @@ export function beginCoachRequest(options) {
 
 export function settleCoachResponse(options) {
   try {
-    if (!exactKeys(options, ['state', 'currentTeachingMessage', 'response'])) {
+    const input = snapshotExactDataObject(
+      options, ['state', 'currentTeachingMessage', 'response'],
+    );
+    if (!input) {
       return rejectedSettlement(createDisabledCoachState(), 'INVALID_ARGUMENTS');
     }
-    const { state, currentTeachingMessage, response } = options;
-    if (!validCoachState(state)) {
+    const state = snapshotCoachState(input.state);
+    if (!state) {
       return rejectedSettlement(createDisabledCoachState(), 'INVALID_STATE');
     }
     if (state.status !== 'loading') return rejectedSettlement(state, 'NOT_LOADING');
-    if (!validTeachingMessage(currentTeachingMessage)) {
+    const currentTeachingMessage = snapshotTeachingMessage(input.currentTeachingMessage);
+    if (!currentTeachingMessage) {
       return rejectedSettlement(state, 'STALE_TEACHING');
     }
     const currentIdentity = createIdentity(currentTeachingMessage, state.identity.coachRevision);
     if (!sameIdentity(state.identity, currentIdentity)) {
       return rejectedSettlement(state, 'STALE_TEACHING');
     }
-    if (!validCoachResponse(response, state.request)) {
+    const response = snapshotCoachResponse(input.response);
+    if (!response || !validCoachResponse(response, state.request)) {
       return rejectedSettlement(state, 'INVALID_RESPONSE');
     }
     const successState = deepFreeze({
@@ -186,9 +181,12 @@ export function settleCoachResponse(options) {
 
 export function invalidateCoachState(state) {
   try {
-    if (!validCoachState(state)) return createDisabledCoachState();
-    const status = state.status === 'disabled' ? 'disabled' : 'idle';
-    return createEmptyState(status, state.revision + 1);
+    const current = snapshotCoachState(state);
+    if (!current) return createDisabledCoachState();
+    const revision = nextCoachRevision(current.revision);
+    if (revision === null) return createEmptyState('disabled', current.revision);
+    const status = current.status === 'disabled' ? 'disabled' : 'idle';
+    return createEmptyState(status, revision);
   } catch {
     return createDisabledCoachState();
   }
@@ -206,7 +204,7 @@ function createEmptyState(status, revision) {
 }
 
 function createIdentity(message, coachRevision) {
-  const teachingFingerprint = createTeachingFingerprint(message);
+  const teachingFingerprint = fingerprintFromSnapshot(message);
   if (!teachingFingerprint) return null;
   return deepFreeze({
     recordId: message.source.recordId,
@@ -220,9 +218,46 @@ function createIdentity(message, coachRevision) {
   });
 }
 
-function validTeachingMessage(message) {
-  return exactKeys(message, TEACHING_KEYS)
-    && message.kind === TEACHING_KIND
+function createCoachRequestPayloadFromSnapshot(message, requestId) {
+  if (!validRequestId(requestId)) return null;
+  return deepFreeze({
+    version: GAME_REVIEW_COACH_VERSION,
+    requestId,
+    locale: GAME_REVIEW_COACH_LOCALE,
+    sourceRuleId: message.ruleId,
+    style: GAME_REVIEW_COACH_STYLE,
+  });
+}
+
+function fingerprintFromSnapshot(message) {
+  const canonical = JSON.stringify([
+    message.version,
+    message.ruleId,
+    message.title,
+    message.body,
+    message.tone,
+    message.confidence,
+  ]);
+  let hash = 0xcbf29ce484222325n;
+  for (const character of canonical) {
+    hash ^= BigInt(character.codePointAt(0));
+    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+  }
+  return `r3c2-${hash.toString(16).padStart(16, '0')}`;
+}
+
+function snapshotTeachingMessage(message) {
+  const root = snapshotExactDataObject(message, TEACHING_KEYS);
+  if (!root) return null;
+  const source = snapshotExactDataObject(root.source, SOURCE_KEYS);
+  const evidenceRefs = snapshotStringArray(root.evidenceRefs);
+  if (!source || !evidenceRefs) return null;
+  const snapshot = deepFreeze({ ...root, evidenceRefs, source });
+  return validTeachingSnapshot(snapshot) ? snapshot : null;
+}
+
+function validTeachingSnapshot(message) {
+  return message.kind === TEACHING_KIND
     && message.version === TEACHING_VERSION
     && GAME_REVIEW_COACH_ALLOWED_RULES.includes(message.ruleId)
     && message.priority === PRIORITIES[message.ruleId]
@@ -232,7 +267,6 @@ function validTeachingMessage(message) {
     && message.evidenceRefs.length > 0
     && message.evidenceRefs.every((value) => boundedNonemptyString(value, 200))
     && new Set(message.evidenceRefs).size === message.evidenceRefs.length
-    && exactKeys(message.source, SOURCE_KEYS)
     && boundedNonemptyString(message.source.recordId, 200)
     && Number.isInteger(message.source.ply) && message.source.ply >= 0
     && boundedNonemptyString(message.source.positionKey, 1000)
@@ -241,16 +275,20 @@ function validTeachingMessage(message) {
     && message.confidence === TEACHING_CONFIDENCE;
 }
 
+function snapshotCoachResponse(response) {
+  const root = snapshotExactDataObject(response, RESPONSE_KEYS);
+  if (!root) return null;
+  const framing = snapshotExactDataObject(root.framing, FRAMING_KEYS);
+  return framing ? deepFreeze({ ...root, framing }) : null;
+}
+
 function validCoachResponse(response, activeRequest) {
-  return exactKeys(response, RESPONSE_KEYS)
-    && response.version === GAME_REVIEW_COACH_VERSION
-    && exactKeys(activeRequest, STATE_REQUEST_KEYS)
+  return response.version === GAME_REVIEW_COACH_VERSION
     && response.requestId === activeRequest.requestId
     && response.sourceRuleId === activeRequest.sourceRuleId
     && GAME_REVIEW_COACH_ALLOWED_RULES.includes(response.sourceRuleId)
     && response.style === activeRequest.style
     && response.style === GAME_REVIEW_COACH_STYLE
-    && exactKeys(response.framing, FRAMING_KEYS)
     && validFraming(response.framing.leadIn)
     && validFraming(response.framing.encouragement)
     && codePointLength(response.framing.leadIn)
@@ -259,37 +297,107 @@ function validCoachResponse(response, activeRequest) {
 }
 
 function validFraming(value) {
+  if (typeof value !== 'string') return false;
+  let normalized;
+  try {
+    normalized = value.normalize('NFKC');
+  } catch {
+    return false;
+  }
+  return validFramingForm(value) && validFramingForm(normalized);
+}
+
+function validFramingForm(value) {
   if (!boundedNonemptyString(value, GAME_REVIEW_COACH_MAX_SEGMENT_CODEPOINTS)
     || value !== value.trim() || CONTROL_OR_MULTILINE.test(value)
     || /[<>]/u.test(value) || MARKDOWN_LINK.test(value) || URL_OR_SCHEME.test(value)
     || QUOTE_OR_BRACKET.test(value) || /[0-9]/u.test(value)
     || ENGLISH_QUALITY.test(value) || MOVE_NOTATION.test(value) || COORDINATE_LIKE.test(value)
-    || PIECE_VOCABULARY.test(value.replace(NON_CHESS_HOMOGRAPHS, ''))) {
+    || containsChessPieceVocabulary(value)) {
     return false;
   }
-  for (const term of QUALITY_TERMS) if (value.includes(term)) return false;
-  for (const term of CHESS_FACT_TERMS) if (value.includes(term)) return false;
+  const factSkeleton = framingFactSkeleton(value);
+  for (const term of QUALITY_TERMS) {
+    if (value.includes(term) || factSkeleton.includes(term)) return false;
+  }
+  for (const term of CHESS_FACT_TERMS) {
+    if (value.includes(term) || factSkeleton.includes(term)) return false;
+  }
   return Array.from(value).every((character) => SAFE_FRAMING_CHARACTER.test(character));
 }
 
-function validCoachState(state) {
-  if (!exactKeys(state, STATE_KEYS) || !Object.isFrozen(state)
-    || state.version !== GAME_REVIEW_COACH_VERSION || !STATUSES.includes(state.status)
+function containsChessPieceVocabulary(value) {
+  const characters = Array.from(value);
+  for (let index = 0; index < characters.length; index++) {
+    if (PIECE_VOCABULARY.test(characters[index])
+      && !safeHomographOccurrence(characters, index)) return true;
+  }
+  return false;
+}
+
+function safeHomographOccurrence(characters, pieceIndex) {
+  for (const word of SAFE_HOMOGRAPH_WORDS) {
+    const wordCharacters = Array.from(word);
+    for (let start = pieceIndex - wordCharacters.length + 1; start <= pieceIndex; start++) {
+      if (start < 0 || start + wordCharacters.length > characters.length) continue;
+      if (!wordCharacters.every((character, offset) => characters[start + offset] === character)) {
+        continue;
+      }
+      const before = characters[start - 1] || '';
+      const after = characters[start + wordCharacters.length] || '';
+      if ((!before || !CHESS_CONTEXT_BEFORE.test(before))
+        && (!after || !CHESS_CONTEXT_AFTER.test(after))) return true;
+    }
+  }
+  return false;
+}
+
+function framingFactSkeleton(value) {
+  return Array.from(value)
+    .filter((character) => /[\p{Script=Han}A-Za-z0-9]/u.test(character))
+    .join('');
+}
+
+function snapshotCoachState(state) {
+  const root = snapshotExactDataObject(state, STATE_KEYS);
+  if (!root || !Object.isFrozen(state)) return null;
+  let identity = null;
+  let request = null;
+  let framing = null;
+  if (root.identity !== null) {
+    if (!Object.isFrozen(root.identity)) return null;
+    identity = snapshotExactDataObject(root.identity, IDENTITY_KEYS);
+    if (!identity) return null;
+  }
+  if (root.request !== null) {
+    if (!Object.isFrozen(root.request)) return null;
+    request = snapshotExactDataObject(root.request, STATE_REQUEST_KEYS);
+    if (!request) return null;
+  }
+  if (root.framing !== null) {
+    if (!Object.isFrozen(root.framing)) return null;
+    framing = snapshotExactDataObject(root.framing, FRAMING_KEYS);
+    if (!framing) return null;
+  }
+  const snapshot = deepFreeze({ ...root, identity, request, framing });
+  return validCoachStateSnapshot(snapshot) ? snapshot : null;
+}
+
+function validCoachStateSnapshot(state) {
+  if (state.version !== GAME_REVIEW_COACH_VERSION || !STATUSES.includes(state.status)
     || !validRevision(state.revision)) return false;
   if (state.status === 'disabled' || state.status === 'idle') {
     return state.identity === null && state.request === null && state.framing === null;
   }
-  if (!validIdentity(state.identity) || !Object.isFrozen(state.identity)
+  if (!validIdentity(state.identity)
     || state.identity.coachRevision !== state.revision
-    || !validStateRequest(state.request) || !Object.isFrozen(state.request)) return false;
+    || !validStateRequest(state.request)) return false;
   if (state.status === 'loading') return state.framing === null;
-  return exactKeys(state.framing, FRAMING_KEYS) && Object.isFrozen(state.framing)
-    && validFraming(state.framing.leadIn) && validFraming(state.framing.encouragement);
+  return validFraming(state.framing.leadIn) && validFraming(state.framing.encouragement);
 }
 
 function validIdentity(identity) {
-  return exactKeys(identity, IDENTITY_KEYS)
-    && boundedNonemptyString(identity.recordId, 200)
+  return boundedNonemptyString(identity.recordId, 200)
     && Number.isInteger(identity.ply) && identity.ply >= 0
     && boundedNonemptyString(identity.positionKey, 1000)
     && Number.isInteger(identity.r3aRevision) && identity.r3aRevision >= 1
@@ -300,8 +408,7 @@ function validIdentity(identity) {
 }
 
 function validStateRequest(request) {
-  return exactKeys(request, STATE_REQUEST_KEYS)
-    && validRequestId(request.requestId)
+  return validRequestId(request.requestId)
     && GAME_REVIEW_COACH_ALLOWED_RULES.includes(request.sourceRuleId)
     && request.style === GAME_REVIEW_COACH_STYLE;
 }
@@ -318,16 +425,55 @@ function rejectedSettlement(state, reason) {
   return deepFreeze({ accepted: false, state, reason });
 }
 
-function exactKeys(value, keys) {
+function snapshotExactDataObject(value, keys) {
   if (!value || typeof value !== 'object' || Array.isArray(value)
-    || Object.getPrototypeOf(value) !== Object.prototype) return false;
-  const actual = Reflect.ownKeys(value);
-  return actual.length === keys.length
-    && actual.every((key) => typeof key === 'string' && keys.includes(key));
+    || Object.getPrototypeOf(value) !== Object.prototype) return null;
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const actual = Reflect.ownKeys(descriptors);
+  if (actual.length !== keys.length
+    || !actual.every((key) => typeof key === 'string' && keys.includes(key))) return null;
+  const snapshot = {};
+  for (const key of keys) {
+    const descriptor = descriptors[key];
+    if (!descriptor || !Object.prototype.hasOwnProperty.call(descriptor, 'value')
+      || descriptor.get !== undefined || descriptor.set !== undefined
+      || descriptor.enumerable !== true) return null;
+    snapshot[key] = descriptor.value;
+  }
+  return snapshot;
+}
+
+function snapshotStringArray(value) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) return null;
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const lengthDescriptor = descriptors.length;
+  if (!lengthDescriptor || !Object.prototype.hasOwnProperty.call(lengthDescriptor, 'value')
+    || !Number.isSafeInteger(lengthDescriptor.value) || lengthDescriptor.value < 1
+    || lengthDescriptor.value > 1000) return null;
+  const length = lengthDescriptor.value;
+  const actual = Reflect.ownKeys(descriptors);
+  if (actual.length !== length + 1
+    || actual.some((key) => typeof key !== 'string'
+      || (key !== 'length' && !/^(?:0|[1-9][0-9]*)$/u.test(key)))) return null;
+  const snapshot = [];
+  for (let index = 0; index < length; index++) {
+    const descriptor = descriptors[String(index)];
+    if (!descriptor || !Object.prototype.hasOwnProperty.call(descriptor, 'value')
+      || descriptor.get !== undefined || descriptor.set !== undefined
+      || descriptor.enumerable !== true) return null;
+    snapshot.push(descriptor.value);
+  }
+  return Object.freeze(snapshot);
 }
 
 function validRevision(value) {
   return Number.isSafeInteger(value) && value >= 0;
+}
+
+function nextCoachRevision(current) {
+  return validRevision(current) && current < Number.MAX_SAFE_INTEGER
+    ? current + 1
+    : null;
 }
 
 function validRequestId(value) {
