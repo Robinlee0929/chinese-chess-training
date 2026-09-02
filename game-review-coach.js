@@ -158,8 +158,8 @@ export function settleCoachResponse(options) {
     if (!sameIdentity(state.identity, currentIdentity)) {
       return rejectedSettlement(state, 'STALE_TEACHING');
     }
-    const response = snapshotCoachResponse(input.response);
-    if (!response || !validCoachResponse(response, state.request)) {
+    const response = snapshotCoachResponse(input.response, state.request);
+    if (!response) {
       return rejectedSettlement(state, 'INVALID_RESPONSE');
     }
     const successState = deepFreeze({
@@ -252,8 +252,9 @@ function snapshotTeachingMessage(message) {
   const source = snapshotExactDataObject(root.source, SOURCE_KEYS);
   const evidenceRefs = snapshotStringArray(root.evidenceRefs);
   if (!source || !evidenceRefs) return null;
-  const snapshot = deepFreeze({ ...root, evidenceRefs, source });
-  return validTeachingSnapshot(snapshot) ? snapshot : null;
+  const snapshot = { ...root, evidenceRefs, source };
+  if (!validTeachingSnapshot(snapshot)) return null;
+  return deepFreeze(snapshot);
 }
 
 function validTeachingSnapshot(message) {
@@ -275,11 +276,14 @@ function validTeachingSnapshot(message) {
     && message.confidence === TEACHING_CONFIDENCE;
 }
 
-function snapshotCoachResponse(response) {
+function snapshotCoachResponse(response, activeRequest) {
   const root = snapshotExactDataObject(response, RESPONSE_KEYS);
   if (!root) return null;
   const framing = snapshotExactDataObject(root.framing, FRAMING_KEYS);
-  return framing ? deepFreeze({ ...root, framing }) : null;
+  if (!framing) return null;
+  const snapshot = { ...root, framing };
+  if (!validCoachResponse(snapshot, activeRequest)) return null;
+  return deepFreeze(snapshot);
 }
 
 function validCoachResponse(response, activeRequest) {
@@ -379,8 +383,9 @@ function snapshotCoachState(state) {
     framing = snapshotExactDataObject(root.framing, FRAMING_KEYS);
     if (!framing) return null;
   }
-  const snapshot = deepFreeze({ ...root, identity, request, framing });
-  return validCoachStateSnapshot(snapshot) ? snapshot : null;
+  const snapshot = { ...root, identity, request, framing };
+  if (!validCoachStateSnapshot(snapshot)) return null;
+  return deepFreeze(snapshot);
 }
 
 function validCoachStateSnapshot(state) {
@@ -403,6 +408,7 @@ function validIdentity(identity) {
     && Number.isInteger(identity.r3aRevision) && identity.r3aRevision >= 1
     && identity.teachingVersion === TEACHING_VERSION
     && GAME_REVIEW_COACH_ALLOWED_RULES.includes(identity.ruleId)
+    && typeof identity.teachingFingerprint === 'string'
     && /^r3c2-[0-9a-f]{16}$/u.test(identity.teachingFingerprint)
     && validRevision(identity.coachRevision) && identity.coachRevision > 0;
 }
@@ -463,7 +469,7 @@ function snapshotStringArray(value) {
       || descriptor.enumerable !== true) return null;
     snapshot.push(descriptor.value);
   }
-  return Object.freeze(snapshot);
+  return snapshot;
 }
 
 function validRevision(value) {

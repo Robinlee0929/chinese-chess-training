@@ -638,16 +638,110 @@ test('accessor properties are rejected at every consumed depth without invoking 
     'R3C2_ACCESSOR_GETTER_INVOCATIONS_DURING_VALIDATION=0');
 });
 
-test('hostile reflection failures reject without throwing', () => {
-  const hostileProxy = new Proxy({}, {
-    getPrototypeOf() { throw new Error('prototype reflection blocked'); },
+test('hostile scalar objects reject without executing getters or freezing caller input', () => {
+  const hostileScalar = () => {
+    let getterCalls = 0;
+    const value = {};
+    Object.defineProperty(value, 'poison', {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        return '私密內容';
+      },
+    });
+    return { value, getterCalls: () => getterCalls };
+  };
+
+  const title = hostileScalar();
+  const titleMessage = teaching({ title: title.value });
+  assert.equal(createCoachRequestPayload(titleMessage, 'scalar-title'), null);
+  assert.equal(beginCoachRequest({
+    state: createIdleCoachState(), teachingMessage: titleMessage, requestId: 'scalar-title',
+  }).accepted, false);
+  assert.equal(title.getterCalls(), 0, 'R3C2_SCALAR_OBJECT_TITLE_GETTER_INVOCATIONS=0');
+  assert.equal(Object.isFrozen(title.value), false);
+  assert.equal(Object.isFrozen(titleMessage), false);
+
+  const sourceRecordId = hostileScalar();
+  const sourceMessage = teaching({ source: { recordId: sourceRecordId.value } });
+  assert.equal(createCoachRequestPayload(sourceMessage, 'scalar-source'), null);
+  assert.equal(sourceRecordId.getterCalls(), 0,
+    'R3C2_SCALAR_OBJECT_SOURCE_GETTER_INVOCATIONS=0');
+  assert.equal(Object.isFrozen(sourceRecordId.value), false);
+  assert.equal(Object.isFrozen(sourceMessage.source), false);
+
+  const started = begin(teaching(), 'scalar-framing');
+  const framingLeadIn = hostileScalar();
+  const hostileResponse = responseFor(started.request, { leadIn: framingLeadIn.value });
+  const settlement = settle(started, teaching(), hostileResponse);
+  assert.equal(settlement.accepted, false);
+  assert.equal(settlement.state.status, 'loading');
+  assert.equal(settlement.state.framing, null);
+  assert.equal(framingLeadIn.getterCalls(), 0,
+    'R3C2_SCALAR_OBJECT_FRAMING_GETTER_INVOCATIONS=0');
+  assert.equal(Object.isFrozen(framingLeadIn.value), false);
+  assert.equal(Object.isFrozen(hostileResponse), false);
+
+  const revision = hostileScalar();
+  const hostileState = Object.freeze({ ...createIdleCoachState(), revision: revision.value });
+  assert.equal(beginCoachRequest({
+    state: hostileState, teachingMessage: teaching(), requestId: 'scalar-revision',
+  }).accepted, false);
+  const invalidated = invalidateCoachState(hostileState);
+  assert.equal(invalidated.status, 'disabled');
+  assert.equal(invalidated.revision, 0);
+  assert.equal(revision.getterCalls(), 0,
+    'R3C2_SCALAR_OBJECT_REVISION_GETTER_INVOCATIONS=0');
+  assert.equal(Object.isFrozen(revision.value), false);
+
+  const fingerprint = hostileScalar();
+  const validLoading = begin(teaching(), 'scalar-fingerprint').state;
+  const hostileIdentity = Object.freeze({
+    ...validLoading.identity, teachingFingerprint: fingerprint.value,
   });
-  assert.doesNotThrow(() => createCoachRequestPayload(hostileProxy, 'proxy'));
-  assert.equal(createCoachRequestPayload(hostileProxy, 'proxy'), null);
-  assert.doesNotThrow(() => beginCoachRequest(hostileProxy));
-  assert.equal(beginCoachRequest(hostileProxy).accepted, false);
-  assert.doesNotThrow(() => settleCoachResponse(hostileProxy));
-  assert.equal(settleCoachResponse(hostileProxy).accepted, false);
+  const hostileIdentityState = Object.freeze({ ...validLoading, identity: hostileIdentity });
+  assert.equal(invalidateCoachState(hostileIdentityState).status, 'disabled');
+  assert.equal(fingerprint.getterCalls(), 0);
+  assert.equal(Object.isFrozen(fingerprint.value), false);
+
+  assert.ok([title, sourceRecordId, framingLeadIn, revision, fingerprint]
+    .every((hostile) => hostile.getterCalls() === 0),
+  'R3C2_ACCESSOR_GETTER_INVOCATIONS_DURING_VALIDATION=0');
+  assert.ok([
+    title.value, sourceRecordId.value, framingLeadIn.value, revision.value, fingerprint.value,
+  ]
+    .every((value) => !Object.isFrozen(value)),
+  'R3C2_CALLER_OWNED_INVALID_INPUT_NOT_FROZEN=PASS');
+});
+
+test('hostile reflection failures reject without throwing', () => {
+  const hostileProxies = [
+    new Proxy({}, {
+      getPrototypeOf() { throw new Error('prototype reflection blocked'); },
+    }),
+    new Proxy({}, {
+      ownKeys() { throw new Error('descriptor reflection blocked'); },
+    }),
+  ];
+  for (const hostileProxy of hostileProxies) {
+    assert.doesNotThrow(() => createCoachRequestPayload(hostileProxy, 'proxy'));
+    assert.equal(createCoachRequestPayload(hostileProxy, 'proxy'), null);
+    assert.doesNotThrow(() => beginCoachRequest(hostileProxy));
+    assert.equal(beginCoachRequest(hostileProxy).accepted, false);
+    assert.doesNotThrow(() => settleCoachResponse(hostileProxy));
+    assert.equal(settleCoachResponse(hostileProxy).accepted, false);
+
+    const nestedMessage = teaching();
+    nestedMessage.source = hostileProxy;
+    assert.doesNotThrow(() => createCoachRequestPayload(nestedMessage, 'nested-proxy'));
+    assert.equal(createCoachRequestPayload(nestedMessage, 'nested-proxy'), null);
+
+    const started = begin();
+    const nestedResponse = responseFor(started.request);
+    nestedResponse.framing = hostileProxy;
+    assert.doesNotThrow(() => settle(started, teaching(), nestedResponse));
+    assert.equal(settle(started, teaching(), nestedResponse).accepted, false);
+  }
 });
 
 test('homograph policy rejects the pre-fix claim without lossy deletion and keeps generic prose', () => {
@@ -792,7 +886,7 @@ test('accessor snapshot mutants leak or accept unsafe framing on every EOL', asy
 
     const framingMutant = await importReplacedModule(
       candidate,
-      '    const response = snapshotCoachResponse(input.response);',
+      '    const response = snapshotCoachResponse(input.response, state.request);',
       '    const response = input.response;',
       `${eolLabel} accessor framing`,
     );
@@ -812,7 +906,7 @@ test('accessor snapshot mutants leak or accept unsafe framing on every EOL', asy
       enumerable: true,
       get() {
         framingGetterCalls++;
-        return framingGetterCalls <= 5
+        return framingGetterCalls === 1
           ? { leadIn: '慢慢想一想。', encouragement: '你可以再試一次。' }
           : { leadIn: '這步會將軍', encouragement: '<b>可以吃車</b>' };
       },
@@ -825,9 +919,43 @@ test('accessor snapshot mutants leak or accept unsafe framing on every EOL', asy
     assert.throws(() => assert.equal(unsafe.accepted, false),
       (error) => error?.code === 'ERR_ASSERTION',
       `${eolLabel} BROKEN_R3C2_ACCESSOR_TOCTOU_FRAMING_WOULD_FAIL`);
-    assert.ok(framingGetterCalls >= 6, `${eolLabel} framing mutant actually re-read accessor`);
+    assert.ok(framingGetterCalls >= 2, `${eolLabel} framing mutant actually re-read accessor`);
   }
 });
+
+test('pre-validation freeze mutants execute getters and freeze caller input on every EOL',
+  async () => {
+    for (const [eolLabel, candidate] of sourceForms()) {
+      const mutant = await importMutatedModule(
+        candidate,
+        '  const snapshot = { ...root, evidenceRefs, source };',
+        '  deepFreeze(snapshot);',
+        `${eolLabel} pre-validation freeze`,
+      );
+      let getterCalls = 0;
+      const hostileTitle = {};
+      Object.defineProperty(hostileTitle, 'poison', {
+        enumerable: true,
+        get() {
+          getterCalls++;
+          return '私密內容';
+        },
+      });
+      const result = mutant.createCoachRequestPayload(
+        teaching({ title: hostileTitle }), `freeze-mutant-${eolLabel}`,
+      );
+      assert.equal(result, null);
+      assert.throws(() => assert.equal(getterCalls, 0),
+        (error) => error?.code === 'ERR_ASSERTION',
+        `${eolLabel} BROKEN_R3C2_PREVALIDATION_FREEZE_GETTER_WOULD_FAIL`);
+      assert.throws(() => assert.equal(Object.isFrozen(hostileTitle), false),
+        (error) => error?.code === 'ERR_ASSERTION',
+        `${eolLabel} BROKEN_R3C2_FREEZES_INVALID_CALLER_INPUT_WOULD_FAIL`);
+      assert.equal(getterCalls, 1, `${eolLabel} getter mutant actually executed`);
+      assert.equal(Object.isFrozen(hostileTitle), true,
+        `${eolLabel} caller-freeze mutant actually executed`);
+    }
+  });
 
 test('lossy homograph removal mutant restores the exact pre-fix chess-claim bypass', async () => {
   const preFixClaim = '紅馬上前進。';
@@ -1014,7 +1142,7 @@ test('deterministic hostile fuzz covers 3000 cases with replay equivalence', () 
     const outcomes = [];
     const values = [null, undefined, 0, '', [], {}, new Date(0), new Map(), new Set(), () => {}];
     for (let index = 0; index < 3000; index++) {
-      const choice = next() % 8;
+      const choice = next() % 10;
       let result;
       if (choice === 0) result = beginCoachRequest(values[next() % values.length]);
       else if (choice === 1) result = settleCoachResponse(values[next() % values.length]);
@@ -1046,7 +1174,7 @@ test('deterministic hostile fuzz covers 3000 cases with replay equivalence', () 
         result = beginCoachRequest({
           state, teachingMessage: teaching(), requestId: `fuzz-revision-${index}`,
         });
-      } else {
+      } else if (choice === 7) {
         const started = begin(teaching(), `fuzz-framing-${index}`);
         const hostileResponse = responseFor(started.request);
         delete hostileResponse.framing.leadIn;
@@ -1055,6 +1183,35 @@ test('deterministic hostile fuzz covers 3000 cases with replay equivalence', () 
           get() { return index % 2 ? '慢慢想一想。' : '這步會將軍'; },
         });
         result = settle(started, teaching(), hostileResponse);
+      } else if (choice === 8) {
+        let getterCalls = 0;
+        const hostileTitle = {};
+        Object.defineProperty(hostileTitle, 'poison', {
+          enumerable: true,
+          get() { getterCalls++; return '私密內容'; },
+        });
+        result = {
+          result: createCoachRequestPayload(
+            teaching({ title: hostileTitle }), `fuzz-scalar-title-${index}`,
+          ),
+          getterCalls,
+          frozen: Object.isFrozen(hostileTitle),
+        };
+      } else {
+        const started = begin(teaching(), `fuzz-scalar-framing-${index}`);
+        let getterCalls = 0;
+        const hostileLeadIn = {};
+        Object.defineProperty(hostileLeadIn, 'poison', {
+          enumerable: true,
+          get() { getterCalls++; return '這步會將軍'; },
+        });
+        result = {
+          result: settle(started, teaching(), responseFor(started.request, {
+            leadIn: hostileLeadIn,
+          })),
+          getterCalls,
+          frozen: Object.isFrozen(hostileLeadIn),
+        };
       }
       outcomes.push(JSON.stringify(result, (_key, value) => (
         typeof value === 'function' ? '<function>' : value

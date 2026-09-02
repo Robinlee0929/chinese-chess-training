@@ -8,8 +8,8 @@ import {
   hasAnyLegalMove,
   hashBoard,
   repetitionVerdict,
-} from './game.js?v=a53299d76a';
-import { createGameRecord, replayGameRecord } from './game-record.js?v=a53299d76a';
+} from './game.js?v=b35d58d934';
+import { createGameRecord, replayGameRecord } from './game-record.js?v=b35d58d934';
 
 const SIDES = new Set([RED, BLACK]);
 
