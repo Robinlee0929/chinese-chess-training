@@ -338,9 +338,28 @@ function assertMaterialDeltaInvariance(derive = deriveGameReviewTeaching) {
   }
 }
 
-async function importMutatedMapper(from, to, label) {
-  assert.ok(source.includes(from), `${label} mutation target exists`);
-  const mutated = source.replace(from, to);
+function sourceWithLineEnding(candidate, eol) {
+  return candidate.replace(/\r\n|\r|\n/g, '\n').replaceAll('\n', eol);
+}
+
+function injectAfterUniqueLine(candidate, targetLine, injectedLine, label) {
+  const matches = [];
+  for (const eol of ['\r\n', '\n']) {
+    const target = `${targetLine}${eol}`;
+    let index = candidate.indexOf(target);
+    while (index !== -1) {
+      matches.push({ index, target, eol });
+      index = candidate.indexOf(target, index + target.length);
+    }
+  }
+  assert.equal(matches.length, 1, `${label} mutation target occurs exactly once`);
+  const [{ index, target, eol }] = matches;
+  const insertAt = index + target.length;
+  return `${candidate.slice(0, insertAt)}${injectedLine}${eol}${candidate.slice(insertAt)}`;
+}
+
+async function importMutatedMapper(candidate, targetLine, injectedLine, label) {
+  const mutated = injectAfterUniqueLine(candidate, targetLine, injectedLine, label);
   const dataUrl = `data:text/javascript;base64,${Buffer.from(mutated).toString('base64')}`;
   return import(dataUrl);
 }
@@ -483,31 +502,49 @@ test('legal reply counts and material deltas remain jointly irrelevant', () => {
     'ruleId, priority, title, body, evidenceRefs, source and message count are unchanged');
 });
 
-test('unused-field invariance rejects legalReplyCount and materialDelta mutants', async () => {
-  const checkStart = 'function checkDifference(evidence) {\n';
-  const legalReplyMutant = await importMutatedMapper(
-    checkStart,
-    `${checkStart}  if (evidence.candidate.legalReplyCount < evidence.played.legalReplyCount) return null;\n`,
-    'legalReplyCount',
+test('unused-field invariance rejects mutants under LF, CRLF and checkout EOLs', async () => {
+  const checkStart = 'function checkDifference(evidence) {';
+  const legalReplyMutation = '  if (evidence.candidate.legalReplyCount'
+    + ' < evidence.played.legalReplyCount) return null;';
+  const materialMutation = '  if (Object.keys('
+    + 'evidence.candidate.materialDeltaBySide.black).length > 0) return null;';
+  const lfSource = sourceWithLineEnding(source, '\n');
+  const sourceForms = [
+    ['LF', lfSource],
+    ['CRLF', sourceWithLineEnding(source, '\r\n')],
+    ['actual checkout', source],
+  ];
+
+  assert.throws(
+    () => injectAfterUniqueLine('', checkStart, legalReplyMutation, 'missing'),
+    /mutation target occurs exactly once/,
   );
   assert.throws(
-    () => assertLegalReplyCountInvariance(legalReplyMutant.deriveGameReviewTeaching),
-    (error) => error?.code === 'ERR_ASSERTION'
-      && /must ignore legalReplyCount/.test(error.message),
-    'BROKEN_R3C1_USES_LEGAL_REPLY_COUNT_WOULD_FAIL',
+    () => injectAfterUniqueLine(`${lfSource}\n${lfSource}`, checkStart, legalReplyMutation, 'duplicate'),
+    /mutation target occurs exactly once/,
   );
 
-  const materialMutant = await importMutatedMapper(
-    checkStart,
-    `${checkStart}  if (Object.keys(evidence.candidate.materialDeltaBySide.black).length > 0) return null;\n`,
-    'materialDeltaBySide',
-  );
-  assert.throws(
-    () => assertMaterialDeltaInvariance(materialMutant.deriveGameReviewTeaching),
-    (error) => error?.code === 'ERR_ASSERTION'
-      && /must ignore materialDeltaBySide/.test(error.message),
-    'BROKEN_R3C1_USES_MATERIAL_DELTA_WOULD_FAIL',
-  );
+  for (const [eolLabel, candidate] of sourceForms) {
+    const legalReplyMutant = await importMutatedMapper(
+      candidate, checkStart, legalReplyMutation, `${eolLabel} legalReplyCount`,
+    );
+    assert.throws(
+      () => assertLegalReplyCountInvariance(legalReplyMutant.deriveGameReviewTeaching),
+      (error) => error?.code === 'ERR_ASSERTION'
+        && /must ignore legalReplyCount/.test(error.message),
+      `${eolLabel} BROKEN_R3C1_USES_LEGAL_REPLY_COUNT_WOULD_FAIL`,
+    );
+
+    const materialMutant = await importMutatedMapper(
+      candidate, checkStart, materialMutation, `${eolLabel} materialDeltaBySide`,
+    );
+    assert.throws(
+      () => assertMaterialDeltaInvariance(materialMutant.deriveGameReviewTeaching),
+      (error) => error?.code === 'ERR_ASSERTION'
+        && /must ignore materialDeltaBySide/.test(error.message),
+      `${eolLabel} BROKEN_R3C1_USES_MATERIAL_DELTA_WOULD_FAIL`,
+    );
+  }
 });
 
 test('malformed and unsupported evidence fail closed', () => {
