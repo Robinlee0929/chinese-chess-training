@@ -1178,6 +1178,29 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
   color: var(--text);
   line-height: 1.55;
 }
+.game-review-teaching .game-review-coach-framing {
+  color: #c9e8df;
+}
+.game-review-coach-button {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 9px;
+  padding: 8px 10px;
+  color: #102a25;
+  border-color: #65b7a4;
+  background: linear-gradient(180deg, #b7e5d8, #79c4b1);
+  font-size: 12px;
+  font-weight: 700;
+}
+.game-review-coach-button:hover:not(:disabled) {
+  background: linear-gradient(180deg, #c9eee4, #8bd0be);
+}
+.game-review-coach-status {
+  min-height: 0;
+  color: var(--muted) !important;
+  font-size: 11px;
+}
+.game-review-coach-status:empty { display: none; }
 @media (max-width: 420px) {
   .game-review-evidence-moves { grid-template-columns: 1fr; }
   .game-review-teaching { padding: 8px; }

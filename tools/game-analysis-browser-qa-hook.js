@@ -33,6 +33,52 @@ let reviewSeenForNormalAiResume = false;
 let normalAiResumeTriggered = false;
 const qaParams = new URLSearchParams(location.search);
 const reviewAiQaMode = qaParams.get('reviewAi');
+const reviewCoachQaMode = qaParams.get('reviewCoach');
+let reviewCoachRequestCount = 0;
+let reviewCoachActiveCount = 0;
+let reviewCoachMaxActiveCount = 0;
+
+if (reviewCoachQaMode) {
+  Object.defineProperty(globalThis, '__CHINESE_CHESS_REVIEW_COACH_REQUESTER__', {
+    configurable: true,
+    value(request, { signal }) {
+      return new Promise((resolve, reject) => {
+        reviewCoachRequestCount++;
+        reviewCoachActiveCount++;
+        reviewCoachMaxActiveCount = Math.max(reviewCoachMaxActiveCount, reviewCoachActiveCount);
+        let active = true;
+        const finish = (callback, value) => {
+          if (!active) return;
+          active = false;
+          reviewCoachActiveCount--;
+          callback(value);
+        };
+        const timer = setTimeout(() => {
+          if (reviewCoachQaMode === 'reject') {
+            finish(reject, new Error('Controlled Review coach failure.'));
+            return;
+          }
+          const response = {
+            version: request.version,
+            requestId: request.requestId,
+            sourceRuleId: request.sourceRuleId,
+            style: request.style,
+            framing: {
+              leadIn: '可以一起看看這個地方。',
+              encouragement: '下次也可以先停一下想想。',
+            },
+          };
+          if (reviewCoachQaMode === 'malformed') response.extra = true;
+          finish(resolve, response);
+        }, reviewCoachQaMode === 'stale' ? 2500 : 120);
+        signal.addEventListener('abort', () => {
+          clearTimeout(timer);
+          finish(reject, new Error('Controlled Review coach abort.'));
+        }, { once: true });
+      });
+    },
+  });
+}
 
 if (reviewAiQaMode) {
   const NativeWorker = globalThis.Worker;
@@ -205,7 +251,10 @@ function readProbe() {
   const review = chess.gameReview;
   const reviewAi = chess.gameReviewAi;
   const reviewEvidence = chess.gameReviewEvidence;
+  const reviewCoach = chess.gameReviewCoach;
   const teaching = document.getElementById('gameReviewTeaching');
+  const coachButton = document.getElementById('btnGameReviewCoach');
+  const coachStatus = document.getElementById('gameReviewCoachStatus');
   return {
     ready: true,
     appState: chess.appState,
@@ -233,6 +282,20 @@ function readProbe() {
       title: document.getElementById('gameReviewTeachingTitle')?.textContent || '',
       body: document.getElementById('gameReviewTeachingBody')?.textContent || '',
     } : null,
+    reviewCoach: {
+      state: reviewCoach,
+      buttonVisible: !!coachButton && !coachButton.classList.contains('hidden'),
+      buttonDisabled: !!coachButton?.disabled,
+      buttonBusy: coachButton?.getAttribute('aria-busy') || null,
+      buttonHeight: coachButton?.getBoundingClientRect().height || 0,
+      leadIn: document.getElementById('gameReviewCoachLeadIn')?.textContent || '',
+      encouragement: document.getElementById('gameReviewCoachEncouragement')?.textContent || '',
+      status: coachStatus?.textContent || '',
+      activeElementId: document.activeElement?.id || '',
+      requestCount: reviewCoachRequestCount,
+      activeCount: reviewCoachActiveCount,
+      maxActiveCount: reviewCoachMaxActiveCount,
+    },
     analysis: analysis ? {
       sourceRecordId: analysis.sourceRecordId,
       sourcePly: analysis.sourcePly,

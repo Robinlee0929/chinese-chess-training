@@ -22,6 +22,14 @@ import {
 } from './game-review-ai.js';
 import { createGameReviewEvidence } from './game-review-evidence.js';
 import { deriveGameReviewTeaching } from './game-review-teaching.js';
+import {
+  createDisabledCoachState,
+  createIdleCoachState,
+  createTeachingFingerprint,
+  beginCoachRequest,
+  settleCoachResponse,
+  invalidateCoachState,
+} from './game-review-coach.js';
 
 const source = readFileSync(new URL('./main.js', import.meta.url), 'utf8');
 const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
@@ -154,6 +162,7 @@ function harness({
   records = [], serialized, readError, writeError, confirm = true,
   mode = 'pvp', turn = RED, realRenderer = false, rendererMutation = null,
   reviewAiMutation = null, teachingMutation = null, workerCreationError = false,
+  coachEnabled = false, coachMutation = null,
 } = {}) {
   let stored = serialized === undefined
     ? (records.length ? JSON.stringify({ version: 1, records }) : null)
@@ -176,6 +185,33 @@ function harness({
     get serialized() { return stored; },
   };
   const gameRecordStore = createGameRecordStore({ storage });
+  const coachRequests = [];
+  let activeCoachRequests = 0;
+  let maxActiveCoachRequests = 0;
+  const gameReviewCoachRequester = coachEnabled ? (request, { signal }) => {
+    const pending = {
+      request: structuredClone(request),
+      signal,
+      active: true,
+      resolve: null,
+      reject: null,
+    };
+    activeCoachRequests++;
+    maxActiveCoachRequests = Math.max(maxActiveCoachRequests, activeCoachRequests);
+    const finish = () => {
+      if (!pending.active) return false;
+      pending.active = false;
+      activeCoachRequests--;
+      return true;
+    };
+    const promise = new Promise((resolve, reject) => {
+      pending.resolve = (value) => { if (finish()) resolve(value); };
+      pending.reject = (error = new Error('mock rejection')) => { if (finish()) reject(error); };
+    });
+    signal.addEventListener('abort', () => pending.reject(new Error('mock aborted')), { once: true });
+    coachRequests.push(pending);
+    return promise;
+  } : null;
   const liveBoard = initialBoard();
   const reviewAiWorkers = [];
   class FakeReviewAiWorker {
@@ -245,11 +281,20 @@ function harness({
     gameReviewAiState: createGameReviewAiState(),
     gameReviewAiWorker: null,
     gameReviewEvidenceState: null,
+    gameReviewCoachRequester,
+    gameReviewCoachState: coachEnabled ? createIdleCoachState() : createDisabledCoachState(),
+    gameReviewCoachRequest: null,
+    gameReviewCoachRequestSequence: 0,
+    gameReviewCoachStatusMessage: '',
+    coachRequests,
+    get activeCoachRequests() { return activeCoachRequests; },
+    get maxActiveCoachRequests() { return maxActiveCoachRequests; },
     reviewAiWorkers,
     reviewAiRequestCount: 0,
     engineSearches: 0,
     gameRuleEvaluations: 0,
     gameRuleCallsByName: {},
+    networkRequests: 0,
     renderedBoard: liveBoard,
     renderCount: 0,
     productionRenderCallCount: 0,
@@ -273,6 +318,20 @@ function harness({
     settleGameReviewAiResponse,
     createGameReviewEvidence,
     deriveGameReviewTeaching,
+    createTeachingFingerprint,
+    createIdleCoachState,
+    beginCoachRequest: (options) => beginCoachRequest({
+      state: options.state,
+      teachingMessage: options.teachingMessage,
+      requestId: options.requestId,
+    }),
+    settleCoachResponse: (options) => settleCoachResponse({
+      state: options.state,
+      currentTeachingMessage: options.currentTeachingMessage,
+      response: options.response,
+    }),
+    invalidateCoachState,
+    AbortController,
     GAME_RECORD_MODE_LABELS: Object.freeze({
       pvp: '雙人對弈', easy: '人機・簡單', medium: '人機・中等', hard: '人機・困難',
     }),
@@ -312,8 +371,13 @@ function harness({
     gameReviewEvidenceFactsSection: domNode(),
     gameReviewEvidenceFacts: domNode(),
     gameReviewTeaching: domNode(true),
+    gameReviewCoachLeadIn: domNode(true),
     gameReviewTeachingTitle: domNode(),
     gameReviewTeachingBody: domNode(),
+    gameReviewCoachEncouragement: domNode(true),
+    btnGameReviewCoach: domNode(true, 'button'),
+    gameReviewCoachStatus: domNode(),
+    staleCoachState: null,
     btnGameReviewCreatePuzzle: domNode(),
     btnGameReviewBack: domNode(),
     btnGameReviewDelete: domNode(true),
@@ -367,6 +431,10 @@ function harness({
       context.engineSearches++;
       return null;
     },
+    fetch() {
+      context.networkRequests++;
+      return Promise.resolve({ ok: true });
+    },
     legalMoves() {
       context.gameRuleEvaluations++;
       context.gameRuleCallsByName.legalMoves = (context.gameRuleCallsByName.legalMoves || 0) + 1;
@@ -403,6 +471,10 @@ function harness({
     },
   });
   const names = [
+    'currentGameReviewTeachingMessage', 'gameReviewCoachMatchesTeaching',
+    'invalidateGameReviewCoach', 'renderGameReviewCoach',
+    'finishGameReviewCoachFailure', 'handleGameReviewCoachResponse',
+    'requestGameReviewCoach',
     'terminateGameReviewAiWorker', 'invalidateGameReviewAi',
     'gameReviewEvidenceTerminalText', 'gameReviewEvidenceFactTexts',
     'renderGameReviewTeaching', 'renderGameReviewEvidence', 'renderGameReviewAi',
@@ -458,6 +530,71 @@ function harness({
       '  const [message] = deriveGameReviewTeaching(evidence);',
       '  legalMoves(gameReviewSession.snapshot.board, 0, 0);\n  const [message] = deriveGameReviewTeaching(evidence);',
     );
+  }
+  if (coachMutation) {
+    const replaceIn = (name, target, replacement) => {
+      const index = names.indexOf(name);
+      assert.notEqual(index, -1, `coach mutation function exists: ${name}`);
+      const before = mainFunctions[index];
+      mainFunctions[index] = before.replace(target, replacement);
+      assert.notEqual(mainFunctions[index], before, `coach mutation applied: ${coachMutation}`);
+    };
+    if (coachMutation === 'auto-request') {
+      replaceIn(
+        'renderGameReviewTeaching',
+        '  renderGameReviewCoach(message ?? null);',
+        '  renderGameReviewCoach(message ?? null);\n  if (message) requestGameReviewCoach();',
+      );
+    } else if (coachMutation === 'duplicate') {
+      replaceIn(
+        'requestGameReviewCoach',
+        '    state: gameReviewCoachState,',
+        '    state: createIdleCoachState(gameReviewCoachState.revision),',
+      );
+      replaceIn(
+        'requestGameReviewCoach',
+        /\s*\|\| gameReviewCoachRequest\s*\|\| gameReviewCoachState\.status === 'loading'/,
+        '',
+      );
+    } else if (coachMutation === 'remove-canonical-loading') {
+      replaceIn(
+        'renderGameReviewCoach',
+        "  const framing = available && gameReviewCoachState.status === 'success'",
+        "  if (loading) { gameReviewTeachingTitle.textContent = ''; gameReviewTeachingBody.textContent = ''; }\n  const framing = available && gameReviewCoachState.status === 'success'",
+      );
+    } else if (coachMutation === 'rewrite-canonical') {
+      replaceIn(
+        'handleGameReviewCoachResponse',
+        '  gameReviewCoachRequest = null;',
+        '  gameReviewTeachingTitle.textContent = response.framing.leadIn;\n  gameReviewTeachingBody.textContent = response.framing.encouragement;\n  gameReviewCoachRequest = null;',
+      );
+    } else if (coachMutation === 'accept-unvalidated') {
+      replaceIn(
+        'handleGameReviewCoachResponse',
+        '  if (!settled.accepted) return finishGameReviewCoachFailure(activeRequest);',
+        "  if (!settled.accepted) {\n    gameReviewCoachRequest = null;\n    gameReviewCoachState = Object.freeze({ ...gameReviewCoachState, status: 'success', framing: response.framing });\n    renderGameReviewCoach(message);\n    return true;\n  }",
+      );
+    } else if (coachMutation === 'real-network') {
+      replaceIn(
+        'requestGameReviewCoach',
+        '    pending = gameReviewCoachRequester(started.request, { signal: controller.signal });',
+        "    fetch('coach-test');\n    pending = gameReviewCoachRequester(started.request, { signal: controller.signal });",
+      );
+    } else if (coachMutation === 'storage-write') {
+      replaceIn(
+        'requestGameReviewCoach',
+        '    pending = gameReviewCoachRequester(started.request, { signal: controller.signal });',
+        "    storage.setItem('coach-test', '1');\n    pending = gameReviewCoachRequester(started.request, { signal: controller.signal });",
+      );
+    } else if (coachMutation === 'engine-call') {
+      replaceIn(
+        'requestGameReviewCoach',
+        '    pending = gameReviewCoachRequester(started.request, { signal: controller.signal });',
+        "    findBestMove(); legalMoves();\n    pending = gameReviewCoachRequester(started.request, { signal: controller.signal });",
+      );
+    } else {
+      assert.fail(`unknown coach mutation: ${coachMutation}`);
+    }
   }
   vm.runInContext([...rendererHelpers, rendererSource, ...mainFunctions].filter(Boolean).join('\n'), context);
   return context;
@@ -575,6 +712,42 @@ function syntheticTeachingEvidence(base, kind) {
     throw new TypeError(`Unknown synthetic teaching fixture: ${kind}`);
   }
   return fixture;
+}
+
+function prepareEligibleCoach(ctx, id = 'review-coach-ui') {
+  const saved = record(id);
+  if (!ctx.gameRecordStore.getGameRecord(id)) ctx.gameRecordStore.saveGameRecord(saved);
+  assert.equal(ctx.openStoredGameReview(id, ctx.btnGameRecords), true);
+  assert.equal(ctx.navigateGameReview(0), true);
+  assert.equal(ctx.requestGameReviewAiCandidate(), true);
+  const worker = ctx.reviewAiWorkers.at(-1);
+  worker.emit(successfulReviewAiResponse(worker, { to: { r: 3, c: 3 } }));
+  assert.equal(ctx.gameReviewEvidenceState.comparison.status, 'DIFFERENT');
+  assert.equal(ctx.gameReviewTeaching.classList.contains('hidden'), false);
+  return {
+    saved,
+    title: ctx.gameReviewTeachingTitle.textContent,
+    body: ctx.gameReviewTeachingBody.textContent,
+  };
+}
+
+function validCoachResponse(pending, overrides = {}) {
+  return {
+    version: pending.request.version,
+    requestId: pending.request.requestId,
+    sourceRuleId: pending.request.sourceRuleId,
+    style: pending.request.style,
+    framing: {
+      leadIn: '可以一起看看這個地方。',
+      encouragement: '下次也可以先停一下想想。',
+    },
+    ...overrides,
+  };
+}
+
+async function flushCoachSettlement() {
+  await Promise.resolve();
+  await Promise.resolve();
 }
 
 function assertFactualR3bLanguage(text, label = 'R3B user-visible text') {
@@ -1301,6 +1474,236 @@ test('rendered R3C templates remain child-neutral and forbidden-language mutatio
   }
 });
 
+test('R3C2-A2 capability gating, explicit request, loading and validated success preserve canonical teaching', async () => {
+  const disabled = harness({ records: [record('coach-disabled')], realRenderer: true });
+  prepareEligibleCoach(disabled, 'coach-disabled');
+  assert.equal(disabled.btnGameReviewCoach.classList.contains('hidden'), true,
+    'capability disabled keeps the coach button absent');
+  assert.equal(disabled.requestGameReviewCoach(), false);
+  assert.equal(disabled.coachRequests.length, 0);
+
+  const ctx = harness({ records: [record('coach-enabled')], realRenderer: true, coachEnabled: true });
+  assert.equal(ctx.btnGameReviewCoach.classList.contains('hidden'), true, 'R3C1 absent has no coach action');
+  assert.equal(ctx.openStoredGameReview('coach-enabled', ctx.btnGameRecords), true);
+  assert.equal(ctx.navigateGameReview(0), true);
+  assert.equal(ctx.requestGameReviewAiCandidate(), true);
+  const aiWorker = ctx.reviewAiWorkers.at(-1);
+  aiWorker.emit(successfulReviewAiResponse(aiWorker));
+  assert.equal(ctx.gameReviewEvidenceState.comparison.status, 'MATCH');
+  assert.equal(ctx.btnGameReviewCoach.classList.contains('hidden'), true, 'MATCH has no coach action');
+  assert.equal(ctx.requestGameReviewAiCandidate(), true);
+  const differentWorker = ctx.reviewAiWorkers.at(-1);
+  differentWorker.emit(successfulReviewAiResponse(differentWorker, { to: { r: 3, c: 3 } }));
+  const canonical = {
+    title: ctx.gameReviewTeachingTitle.textContent,
+    body: ctx.gameReviewTeachingBody.textContent,
+  };
+  assert.equal(ctx.coachRequests.length, 0,
+    'BROKEN_R3C2_A2_AUTO_REQUEST_ON_RENDER_WOULD_FAIL');
+  assert.equal(ctx.btnGameReviewCoach.classList.contains('hidden'), false);
+  assert.equal(ctx.requestGameReviewCoach(), true);
+  assert.equal(ctx.coachRequests.length, 1);
+  assert.deepEqual(Object.keys(ctx.coachRequests[0].request).sort(),
+    ['locale', 'requestId', 'sourceRuleId', 'style', 'version']);
+  assert.equal(ctx.gameReviewCoachState.status, 'loading');
+  assert.equal(ctx.btnGameReviewCoach.disabled, true);
+  assert.equal(ctx.btnGameReviewCoach.getAttribute('aria-busy'), 'true');
+  assert.equal(ctx.gameReviewCoachStatus.textContent, 'AI 教練整理中…');
+  assert.deepEqual({
+    title: ctx.gameReviewTeachingTitle.textContent,
+    body: ctx.gameReviewTeachingBody.textContent,
+  }, canonical, 'BROKEN_R3C2_A2_REMOVES_R3C1_DURING_LOADING_WOULD_FAIL');
+  assert.equal(ctx.requestGameReviewCoach(), false);
+  assert.equal(ctx.coachRequests.length, 1,
+    'BROKEN_R3C2_A2_DUPLICATE_REQUEST_WOULD_FAIL');
+  assert.equal(ctx.maxActiveCoachRequests, 1);
+  ctx.coachRequests[0].resolve(validCoachResponse(ctx.coachRequests[0]));
+  await flushCoachSettlement();
+  assert.equal(ctx.gameReviewCoachState.status, 'success');
+  assert.equal(ctx.gameReviewCoachLeadIn.textContent, '可以一起看看這個地方。');
+  assert.equal(ctx.gameReviewCoachEncouragement.textContent, '下次也可以先停一下想想。');
+  assert.equal(ctx.gameReviewCoachStatus.textContent, 'AI 教練已整理完成。');
+  assert.deepEqual({
+    title: ctx.gameReviewTeachingTitle.textContent,
+    body: ctx.gameReviewTeachingBody.textContent,
+  }, canonical, 'BROKEN_R3C2_A2_REWRITES_CANONICAL_TEACHING_WOULD_FAIL');
+});
+
+test('R3C2-A2 malformed, unsafe and rejected mock responses fail back to unchanged R3C1', async () => {
+  const exercise = async (id, settle) => {
+    const ctx = harness({ records: [record(id)], realRenderer: true, coachEnabled: true });
+    const canonical = prepareEligibleCoach(ctx, id);
+    assert.equal(ctx.requestGameReviewCoach(), true);
+    settle(ctx.coachRequests[0]);
+    await flushCoachSettlement();
+    assert.equal(ctx.gameReviewCoachState.status, 'idle');
+    assert.equal(ctx.gameReviewCoachLeadIn.textContent, '');
+    assert.equal(ctx.gameReviewCoachEncouragement.textContent, '');
+    assert.deepEqual({
+      title: ctx.gameReviewTeachingTitle.textContent,
+      body: ctx.gameReviewTeachingBody.textContent,
+    }, { title: canonical.title, body: canonical.body });
+    assert.match(ctx.gameReviewCoachStatus.textContent, /原教學提示保持不變/);
+  };
+  await exercise('coach-extra-key', (pending) => pending.resolve({
+    ...validCoachResponse(pending), extra: true,
+  }));
+  await exercise('coach-wrong-id', (pending) => pending.resolve({
+    ...validCoachResponse(pending), requestId: 'wrong-request',
+  }));
+  await exercise('coach-wrong-rule', (pending) => pending.resolve({
+    ...validCoachResponse(pending), sourceRuleId: 'capture-difference',
+  }));
+  await exercise('coach-unsafe-fact', (pending) => pending.resolve(validCoachResponse(pending, {
+    framing: { leadIn: '這步形成將軍。', encouragement: '下次也可以先停一下想想。' },
+  })));
+  await exercise('coach-quality', (pending) => pending.resolve(validCoachResponse(pending, {
+    framing: { leadIn: '這是最佳選擇。', encouragement: '下次也可以先停一下想想。' },
+  })));
+  await exercise('coach-rejection', (pending) => pending.reject());
+});
+
+test('R3C2-A2 ply, record, R3A, exit and R2 boundaries invalidate without resurrection', async () => {
+  const pendingPly = harness({ records: [record('coach-stale-ply')], realRenderer: true, coachEnabled: true });
+  const canonicalPly = prepareEligibleCoach(pendingPly, 'coach-stale-ply');
+  pendingPly.requestGameReviewCoach();
+  const stalePly = pendingPly.coachRequests[0];
+  pendingPly.navigateGameReview('next');
+  stalePly.resolve(validCoachResponse(stalePly));
+  await flushCoachSettlement();
+  assert.equal(pendingPly.gameReviewCoachState.status, 'idle');
+  assert.equal(pendingPly.gameReviewCoachLeadIn.textContent, '',
+    'BROKEN_R3C2_A2_STALE_PLY_RESPONSE_WOULD_FAIL');
+  assert.notEqual(pendingPly.gameReviewTeachingTitle.textContent, canonicalPly.title);
+
+  const recordB = record('coach-record-b', 2);
+  const switched = harness({ records: [record('coach-record-a'), recordB], realRenderer: true, coachEnabled: true });
+  prepareEligibleCoach(switched, 'coach-record-a');
+  switched.requestGameReviewCoach();
+  const staleRecord = switched.coachRequests[0];
+  switched.openStoredGameReview(recordB.id, switched.btnGameRecords);
+  staleRecord.resolve(validCoachResponse(staleRecord));
+  await flushCoachSettlement();
+  assert.equal(switched.gameReviewSession.record.id, recordB.id);
+  assert.equal(switched.gameReviewCoachLeadIn.textContent, '',
+    'BROKEN_R3C2_A2_STALE_RECORD_RESPONSE_WOULD_FAIL');
+
+  const r3a = harness({ records: [record('coach-r3a')], realRenderer: true, coachEnabled: true });
+  prepareEligibleCoach(r3a, 'coach-r3a');
+  r3a.requestGameReviewCoach();
+  r3a.coachRequests[0].resolve(validCoachResponse(r3a.coachRequests[0]));
+  await flushCoachSettlement();
+  assert.notEqual(r3a.gameReviewCoachLeadIn.textContent, '');
+  assert.equal(r3a.requestGameReviewAiCandidate(), true);
+  assert.equal(r3a.gameReviewCoachLeadIn.textContent, '', 'new R3A clears coach framing immediately');
+  r3a.reviewAiWorkers.at(-1).fail();
+  assert.equal(r3a.gameReviewAiState.status, 'error');
+  assert.equal(r3a.gameReviewCoachLeadIn.textContent, '', 'R3A error cannot restore coach framing');
+
+  const exited = harness({ records: [record('coach-exit')], realRenderer: true, coachEnabled: true });
+  prepareEligibleCoach(exited, 'coach-exit');
+  exited.requestGameReviewCoach();
+  const staleExit = exited.coachRequests[0];
+  exited.exitGameRecordFlow();
+  staleExit.resolve(validCoachResponse(staleExit));
+  await flushCoachSettlement();
+  assert.equal(exited.appState, 'NORMAL_GAME');
+  assert.equal(exited.gameReviewCoachState.status, 'idle');
+
+  const r2 = harness({ records: [record('coach-r2')], realRenderer: true, coachEnabled: true });
+  prepareEligibleCoach(r2, 'coach-r2');
+  r2.requestGameReviewCoach();
+  const staleR2 = r2.coachRequests[0];
+  r2.invalidateGameReviewAi();
+  r2.appState = 'GAME_ANALYSIS';
+  r2.renderGameReviewCoach(null);
+  staleR2.resolve(validCoachResponse(staleR2));
+  await flushCoachSettlement();
+  assert.equal(r2.btnGameReviewCoach.classList.contains('hidden'), true);
+  r2.appState = 'GAME_REVIEW';
+  r2.renderGameReviewAi();
+  assert.equal(r2.gameReviewCoachLeadIn.textContent, '',
+    'BROKEN_R3C2_A2_R2_RESURRECTION_WOULD_FAIL');
+});
+
+test('R3C2-A2 observable mutants trip auto, duplicate, canonical, validator and zero-dependency gates', async () => {
+  const auto = harness({ records: [record('coach-mut-auto')], realRenderer: true,
+    coachEnabled: true, coachMutation: 'auto-request' });
+  prepareEligibleCoach(auto, 'coach-mut-auto');
+  assert.equal(auto.coachRequests.length, 1,
+    'BROKEN_R3C2_A2_AUTO_REQUEST_ON_RENDER_WOULD_FAIL');
+
+  const duplicate = harness({ records: [record('coach-mut-duplicate')], realRenderer: true,
+    coachEnabled: true, coachMutation: 'duplicate' });
+  prepareEligibleCoach(duplicate, 'coach-mut-duplicate');
+  duplicate.requestGameReviewCoach();
+  duplicate.requestGameReviewCoach();
+  assert.equal(duplicate.coachRequests.length, 2,
+    'BROKEN_R3C2_A2_DUPLICATE_REQUEST_WOULD_FAIL');
+
+  const removed = harness({ records: [record('coach-mut-removed')], realRenderer: true,
+    coachEnabled: true, coachMutation: 'remove-canonical-loading' });
+  const removedCanonical = prepareEligibleCoach(removed, 'coach-mut-removed');
+  removed.requestGameReviewCoach();
+  assert.notEqual(removed.gameReviewTeachingTitle.textContent, removedCanonical.title,
+    'BROKEN_R3C2_A2_REMOVES_R3C1_DURING_LOADING_WOULD_FAIL');
+
+  const rewritten = harness({ records: [record('coach-mut-rewrite')], realRenderer: true,
+    coachEnabled: true, coachMutation: 'rewrite-canonical' });
+  const rewriteCanonical = prepareEligibleCoach(rewritten, 'coach-mut-rewrite');
+  rewritten.requestGameReviewCoach();
+  rewritten.coachRequests[0].resolve(validCoachResponse(rewritten.coachRequests[0]));
+  await flushCoachSettlement();
+  assert.notEqual(rewritten.gameReviewTeachingTitle.textContent, rewriteCanonical.title,
+    'BROKEN_R3C2_A2_REWRITES_CANONICAL_TEACHING_WOULD_FAIL');
+
+  const unsafe = harness({ records: [record('coach-mut-validator')], realRenderer: true,
+    coachEnabled: true, coachMutation: 'accept-unvalidated' });
+  prepareEligibleCoach(unsafe, 'coach-mut-validator');
+  unsafe.requestGameReviewCoach();
+  unsafe.coachRequests[0].resolve(validCoachResponse(unsafe.coachRequests[0], {
+    framing: { leadIn: '這步形成將軍。', encouragement: '這是最佳選擇。' },
+  }));
+  await flushCoachSettlement();
+  assert.equal(unsafe.gameReviewCoachLeadIn.textContent, '這步形成將軍。',
+    'BROKEN_R3C2_A2_ACCEPTS_UNVALIDATED_RESPONSE_WOULD_FAIL');
+
+  for (const [mutation, field, label] of [
+    ['real-network', 'networkRequests', 'BROKEN_R3C2_A2_REAL_NETWORK_CALL_WOULD_FAIL'],
+    ['storage-write', null, 'BROKEN_R3C2_A2_STORAGE_WRITE_WOULD_FAIL'],
+    ['engine-call', 'engineSearches', 'BROKEN_R3C2_A2_ENGINE_CALL_WOULD_FAIL'],
+  ]) {
+    const ctx = harness({ records: [record(`coach-mut-${mutation}`)], realRenderer: true,
+      coachEnabled: true, coachMutation: mutation });
+    prepareEligibleCoach(ctx, `coach-mut-${mutation}`);
+    const writesBefore = ctx.storage.writes;
+    const rulesBefore = ctx.gameRuleEvaluations;
+    ctx.requestGameReviewCoach();
+    const observed = mutation === 'storage-write'
+      ? ctx.storage.writes - writesBefore
+      : (mutation === 'engine-call'
+        ? (ctx.engineSearches + ctx.gameRuleEvaluations - rulesBefore)
+        : ctx[field]);
+    assert.ok(observed > 0, label);
+  }
+
+  const canonical = harness({ records: [record('coach-purity')], realRenderer: true, coachEnabled: true });
+  prepareEligibleCoach(canonical, 'coach-purity');
+  const before = {
+    storage: canonical.storage.writes,
+    engine: canonical.engineSearches,
+    rules: canonical.gameRuleEvaluations,
+    network: canonical.networkRequests,
+  };
+  canonical.requestGameReviewCoach();
+  assert.deepEqual({
+    storage: canonical.storage.writes,
+    engine: canonical.engineSearches,
+    rules: canonical.gameRuleEvaluations,
+    network: canonical.networkRequests,
+  }, before);
+});
+
 test('source and DOM contain explicit read-only, accessibility and responsive guards', () => {
   assert.match(functionSource('doMove'), /if\s*\(!normalGameActive\(\)\)\s*return/);
   assert.match(source, /if \(appState === APP_STATE\.GAME_RECORD_LIBRARY \|\| appState === APP_STATE\.GAME_REVIEW\) return;\s*\n\s*const hit = pick\(e\)/);
@@ -1316,8 +1719,9 @@ test('source and DOM contain explicit read-only, accessibility and responsive gu
   assert.match(html, /id="gameReviewTeaching"[^>]*class="game-review-teaching hidden"[^>]*aria-labelledby="gameReviewTeachingHeading"/);
   assert.match(html, /id="gameReviewTeachingHeading">教學提示<\/h3>/);
   const teachingMarkup = html.match(/<section id="gameReviewTeaching"[^]*?<\/section>/)?.[0] || '';
-  assert.doesNotMatch(teachingMarkup, /aria-live|role="status"/,
-    'R3C adds no separate live region');
+  assert.equal((teachingMarkup.match(/aria-live="polite"/g) || []).length, 1,
+    'R3C2 has one polite status region');
+  assert.match(teachingMarkup, /id="btnGameReviewCoach"[^>]*aria-controls="[^"]+"[^>]*aria-busy="false"/);
   assert.doesNotMatch(
     html.match(/<section id="gameAnalysisView"[^]*?<\/section>/)?.[0] || '',
     /gameReviewTeaching|教學提示/,
@@ -1327,6 +1731,7 @@ test('source and DOM contain explicit read-only, accessibility and responsive gu
     'R3C uses no separate mutable teaching state');
   assert.match(functionSource('renderGameReviewTeaching'), /deriveGameReviewTeaching\(evidence\)/);
   assert.equal((html.match(/id="btnGameReviewAiAnalyze"/g) || []).length, 1, 'R3B adds no second action');
+  assert.equal((html.match(/id="btnGameReviewCoach"/g) || []).length, 1, 'R3C2 adds one bounded action');
   assert.doesNotMatch(html, /最佳著|比較好|比較差|你走錯了|失誤|大漏著|白送|掉子|懸子|優勢|勝率|評分/);
   assert.match(source, /setAttribute\('aria-current', 'step'\)/);
   assert.match(source, /ArrowLeft: 'previous'/);
@@ -1336,5 +1741,14 @@ test('source and DOM contain explicit read-only, accessibility and responsive gu
   assert.match(css, /@media \(max-width: 900px\)[^]*#gameRecordPanel/);
   assert.match(css, /min-height: 44px/);
   assert.match(css, /\.game-review-teaching/);
+  assert.match(css, /\.game-review-coach-button[^]*?min-height: 44px/);
   assert.match(css, /prefers-reduced-motion/);
+  const coachPath = [
+    functionSource('requestGameReviewCoach'),
+    functionSource('handleGameReviewCoachResponse'),
+    functionSource('renderGameReviewCoach'),
+  ].join('\n');
+  assert.doesNotMatch(coachPath, /\b(?:fetch|XMLHttpRequest|WebSocket|EventSource|sendBeacon)\b/);
+  assert.doesNotMatch(coachPath, /\b(?:localStorage|sessionStorage|indexedDB|gameRecordStore|puzzleStore)\b/);
+  assert.doesNotMatch(coachPath, /\b(?:findBestMove|legalMoves|applyMove|inCheck|repetitionVerdict)\b/);
 });

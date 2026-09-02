@@ -1,5 +1,5 @@
 // Pure, memory-only human review. Machine output never becomes a board choice.
-import { selectionKey } from './puzzle-photo-recognition.js?v=b35d58d934';
+import { selectionKey } from './puzzle-photo-recognition.js?v=58273955d5';
 
 export const UNREVIEWED = 'UNREVIEWED';
 export const CONFIRMED_EMPTY = 'CONFIRMED_EMPTY';

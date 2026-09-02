@@ -69,7 +69,7 @@
   "isBasedOn": "https://github.com/doggy8088/chinese-chess"
 }
 </script>
-<link rel="stylesheet" href="./css/style.css?v=b35d58d934">
+<link rel="stylesheet" href="./css/style.css?v=58273955d5">
 <script type="importmap">
 {
   "imports": {
@@ -536,8 +536,15 @@
             <section id="gameReviewTeaching" class="game-review-teaching hidden"
               aria-labelledby="gameReviewTeachingHeading">
               <h3 id="gameReviewTeachingHeading">教學提示</h3>
+              <p id="gameReviewCoachLeadIn" class="game-review-coach-framing hidden"></p>
               <strong id="gameReviewTeachingTitle"></strong>
               <p id="gameReviewTeachingBody"></p>
+              <p id="gameReviewCoachEncouragement" class="game-review-coach-framing hidden"></p>
+              <button id="btnGameReviewCoach" type="button" class="game-review-coach-button hidden"
+                aria-controls="gameReviewCoachStatus gameReviewCoachLeadIn gameReviewCoachEncouragement"
+                aria-busy="false">AI 教練再說明</button>
+              <p id="gameReviewCoachStatus" class="game-review-coach-status"
+                role="status" aria-live="polite" aria-atomic="true"></p>
             </section>
           </div>
         </section>
@@ -615,6 +622,6 @@
   <div id="toast" class="hidden" role="status"></div>
 </div>
 
-<script type="module" src="./main.js?v=b35d58d934"></script>
+<script type="module" src="./main.js?v=58273955d5"></script>
 </body>
 </html>

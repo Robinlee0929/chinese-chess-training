@@ -23,6 +23,14 @@ import {
 } from './game-review-ai.js';
 import { createGameReviewEvidence } from './game-review-evidence.js';
 import { deriveGameReviewTeaching } from './game-review-teaching.js';
+import {
+  createDisabledCoachState,
+  createIdleCoachState,
+  createTeachingFingerprint,
+  beginCoachRequest,
+  settleCoachResponse,
+  invalidateCoachState,
+} from './game-review-coach.js';
 
 // Execute the real UI lifecycle functions with a deterministic clock and minimal
 // rendering/DOM doubles. No browser globals are injected and no UI logic is copied.
@@ -35,6 +43,7 @@ function functionSource(name) {
 const noop = () => {};
 function node() {
   const classes = new Set();
+  const attributes = new Map();
   return { classList: {
     add: (...keys) => keys.forEach((key) => classes.add(key)),
     remove: (...keys) => keys.forEach((key) => classes.delete(key)),
@@ -44,7 +53,9 @@ function node() {
       return enabled;
     },
     contains: (key) => classes.has(key),
-  }, removeAttribute(key) { delete this[key]; }, focus() { this.focused = true; },
+  }, setAttribute(key, value) { attributes.set(key, String(value)); },
+  getAttribute(key) { return attributes.get(key) ?? null; },
+  removeAttribute(key) { attributes.delete(key); delete this[key]; }, focus() { this.focused = true; },
   style: {}, value: '', textContent: '', innerHTML: '', disabled: false };
 }
 const photoCanvasNames = ['calibrationCornerCanvas', 'calibrationRectifiedCanvas',
@@ -80,6 +91,16 @@ function harness(options = {}) {
     storage: analyticsStorage,
     now: () => new Date(Date.UTC(2026, 7, 30, 15, 0, analyticsTick++)).toISOString(),
   });
+  const coachRequests = [];
+  const gameReviewCoachRequester = options.coachEnabled ? (request, { signal }) => {
+    const pending = { request: structuredClone(request), signal, resolve: null, reject: null };
+    const promise = new Promise((resolve, reject) => {
+      pending.resolve = resolve;
+      pending.reject = reject;
+    });
+    coachRequests.push(pending);
+    return promise;
+  } : null;
   let gameRecordSerialized = options.gameRecordSerialized ?? null;
   let gameRecordReads = 0;
   let gameRecordWrites = 0;
@@ -134,6 +155,10 @@ function harness(options = {}) {
     practiceToken: 0, appState: 'NORMAL_GAME', editorState: null, recorderState: null,
     gameReviewSession: null, gameReviewPuzzleReturnContext: null, reviewAiInvalidations: 0,
     gameReviewEvidenceState: null, r4StaleEvidence: null,
+    gameReviewCoachRequester,
+    gameReviewCoachState: options.coachEnabled ? createIdleCoachState() : createDisabledCoachState(),
+    gameReviewCoachRequest: null, gameReviewCoachRequestSequence: 0,
+    gameReviewCoachStatusMessage: '', coachRequests, staleCoachState: null,
     practiceState: null, activeSavedPuzzleId: null, practiceCompletionRecorded: false,
     practiceHintLevel: 0, practiceHint: null, practiceAttempt: null, hintMarkerRoles: [],
     practiceAnalyticsStore, analyticsStorage,
@@ -165,7 +190,20 @@ function harness(options = {}) {
     invalidateGameReviewAi: () => {
       context.reviewAiInvalidations++;
       context.gameReviewEvidenceState = null;
+      context.invalidateGameReviewCoach?.();
     },
+    deriveGameReviewTeaching, createTeachingFingerprint, invalidateCoachState,
+    beginCoachRequest: (input) => beginCoachRequest({
+      state: input.state,
+      teachingMessage: input.teachingMessage,
+      requestId: input.requestId,
+    }),
+    settleCoachResponse: (input) => settleCoachResponse({
+      state: input.state,
+      currentTeachingMessage: input.currentTeachingMessage,
+      response: input.response,
+    }),
+    AbortController,
     decodePhotoObjectUrl: async () => ({ naturalWidth: 4, naturalHeight: 3 }),
     document: { querySelector: () => ({ checked: false }) },
     window: { confirm: () => false },
@@ -192,6 +230,9 @@ function harness(options = {}) {
     'practiceTurnText', 'practiceTurnDot', 'practiceProgress', 'practiceMistakes',
     'practiceMessage', 'practiceHintMessage', 'btnPracticeHint', 'btnPracticeRestart', 'btnReviewGame',
     'btnPracticeExit']) context[name] = node();
+  for (const name of ['gameReviewTeaching', 'gameReviewCoachLeadIn', 'gameReviewTeachingTitle',
+    'gameReviewTeachingBody', 'gameReviewCoachEncouragement', 'btnGameReviewCoach',
+    'gameReviewCoachStatus']) context[name] = node();
   for (const name of photoCanvasNames) context[name] = name === 'recognitionTargetCanvas'
     ? photoCanvas(112, 112) : photoCanvas();
   context.lastFromMark = { visible: false };
@@ -203,7 +244,10 @@ function harness(options = {}) {
       map: { disposed: false, dispose() { this.disposed = true; } } }, { shared: true }],
   });
   context.ease = (k) => k;
-  const names = ['tween', 'stepTweens', 'pieceAt', 'releasePieceMesh', 'rebuildPieceMeshes', 'buildScene',
+  const names = ['currentGameReviewTeachingMessage', 'gameReviewCoachMatchesTeaching',
+    'invalidateGameReviewCoach', 'renderGameReviewCoach', 'renderGameReviewTeaching',
+    'finishGameReviewCoachFailure', 'handleGameReviewCoachResponse', 'requestGameReviewCoach',
+    'tween', 'stepTweens', 'pieceAt', 'releasePieceMesh', 'rebuildPieceMeshes', 'buildScene',
     'checkBoardMeshInvariant', 'syncEditorScene', 'syncRecorderScene', 'syncPracticeScene',
     'requestAIMove', 'maybeAIMove',
     'animateCapture', 'doMove', 'finishMove', 'cloneNormalGameRecordBoard',
@@ -245,6 +289,7 @@ function harness(options = {}) {
     return candidate;
   });
   vm.runInContext(lifecycleSources.join('\n'), context);
+  context.renderGameReview = () => context.renderGameReviewTeaching(context.gameReviewEvidenceState);
   const realMaybeAIMove = context.maybeAIMove;
   context.maybeAIMove = (...args) => {
     context.aiMaybeMoveCalls++;
@@ -570,6 +615,61 @@ test('R4 entry clears accepted R3B/R3C evidence and exact Review return never re
   }
   assert.equal(detected?.code, 'ERR_ASSERTION');
   assert.match(detected.message, /BROKEN_R4_RETURN_RESURRECTS_R3B_EVIDENCE/);
+});
+
+test('R4 handoff invalidates successful R3C2 framing and exact Review return cannot resurrect it', async () => {
+  const reviewSession = r4ReviewFixture('r4-r3c2-no-resurrection');
+  const evidence = acceptedR3bEvidence(reviewSession, {
+    from: { r: 2, c: 3 }, to: { r: 3, c: 3 },
+  });
+  const ctx = harness({ coachEnabled: true });
+  ctx.appState = ctx.APP_STATE.GAME_REVIEW;
+  ctx.gameReviewSession = reviewSession;
+  ctx.gameReviewEvidenceState = evidence;
+  ctx.renderGameReview();
+  const canonical = {
+    title: ctx.gameReviewTeachingTitle.textContent,
+    body: ctx.gameReviewTeachingBody.textContent,
+  };
+  assert.equal(ctx.btnGameReviewCoach.classList.contains('hidden'), false);
+  assert.equal(ctx.requestGameReviewCoach(), true);
+  assert.equal(ctx.coachRequests.length, 1);
+  const pending = ctx.coachRequests[0];
+  pending.resolve({
+    version: pending.request.version,
+    requestId: pending.request.requestId,
+    sourceRuleId: pending.request.sourceRuleId,
+    style: pending.request.style,
+    framing: {
+      leadIn: '可以一起看看這個地方。',
+      encouragement: '下次也可以先停一下想想。',
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(ctx.gameReviewCoachState.status, 'success');
+  assert.equal(ctx.gameReviewCoachLeadIn.textContent, '可以一起看看這個地方。');
+  same({
+    title: ctx.gameReviewTeachingTitle.textContent,
+    body: ctx.gameReviewTeachingBody.textContent,
+  }, canonical);
+
+  const invoker = node();
+  assert.equal(ctx.createPuzzleFromGameReview(invoker), true);
+  assert.equal(ctx.appState, ctx.APP_STATE.PUZZLE_EDITOR);
+  assert.equal(ctx.gameReviewCoachState.status, 'idle');
+  assert.equal(ctx.gameReviewCoachLeadIn.textContent, '');
+  assert.equal(ctx.gameReviewCoachEncouragement.textContent, '');
+  assert.equal(ctx.btnGameReviewCoach.classList.contains('hidden'), true);
+  ctx.exitEditor();
+  assert.equal(ctx.appState, ctx.APP_STATE.GAME_REVIEW);
+  assert.equal(ctx.gameReviewSession.record.id, reviewSession.record.id);
+  assert.equal(ctx.gameReviewSession.selectedPly, reviewSession.selectedPly);
+  assert.equal(ctx.gameReviewEvidenceState, null);
+  assert.equal(ctx.gameReviewCoachLeadIn.textContent, '',
+    'BROKEN_R3C2_A2_R4_RESURRECTION_WOULD_FAIL');
+  assert.equal(ctx.gameReviewCoachEncouragement.textContent, '');
+  assert.equal(ctx.btnGameReviewCoach.classList.contains('hidden'), true);
+  assert.equal(invoker.focused, true);
 });
 
 test('negative control: using live turn for Review handoff fails the divergence regression', () => {
@@ -1036,7 +1136,7 @@ test('unfinished normal, restart, mode switch, puzzle entry/exit and pagehide ne
   ctx.enterEditor();
   ctx.exitEditor();
   assert.equal(ctx.gameRecordStorage.writes, 0);
-  assert.match(source, /window\.addEventListener\('pagehide', saveViewPrefs\)/);
+  assert.match(source, /window\.addEventListener\('pagehide', \(\) => \{[^]*?saveViewPrefs\(\);[^]*?\}\)/);
   assert.doesNotMatch(source, /(?:beforeunload|unload|pagehide)[^\n]*GameRecord/i);
 });
 
