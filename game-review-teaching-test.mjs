@@ -123,17 +123,140 @@ function pathExists(root, path) {
   return true;
 }
 
+function tokenizeDependencySyntax(candidate) {
+  const tokens = [];
+  let index = 0;
+  const identifierStart = (character) => /[A-Za-z_$]/.test(character || '');
+  const identifierPart = (character) => /[A-Za-z0-9_$]/.test(character || '');
+
+  const readString = (quote) => {
+    const start = ++index;
+    while (index < candidate.length) {
+      if (candidate[index] === '\\') {
+        index += 2;
+      } else if (candidate[index] === quote) {
+        tokens.push({ type: 'string', value: candidate.slice(start, index) });
+        index++;
+        return;
+      } else {
+        index++;
+      }
+    }
+    tokens.push({ type: 'string', value: candidate.slice(start) });
+  };
+
+  const readCode = (stopAtTemplateBrace = false) => {
+    let braceDepth = 0;
+    while (index < candidate.length) {
+      const character = candidate[index];
+      if (/\s/.test(character)) {
+        index++;
+        continue;
+      }
+      if (character === '/' && candidate[index + 1] === '/') {
+        index += 2;
+        while (index < candidate.length && !/[\r\n]/.test(candidate[index])) index++;
+        continue;
+      }
+      if (character === '/' && candidate[index + 1] === '*') {
+        index += 2;
+        while (index < candidate.length
+          && !(candidate[index] === '*' && candidate[index + 1] === '/')) index++;
+        index = Math.min(candidate.length, index + 2);
+        continue;
+      }
+      if (character === '"' || character === "'") {
+        readString(character);
+        continue;
+      }
+      if (character === '`') {
+        index++;
+        while (index < candidate.length) {
+          if (candidate[index] === '\\') {
+            index += 2;
+          } else if (candidate[index] === '`') {
+            index++;
+            break;
+          } else if (candidate[index] === '$' && candidate[index + 1] === '{') {
+            index += 2;
+            readCode(true);
+          } else {
+            index++;
+          }
+        }
+        continue;
+      }
+      if (stopAtTemplateBrace && character === '}' && braceDepth === 0) {
+        index++;
+        return;
+      }
+      if (identifierStart(character)) {
+        const start = index++;
+        while (identifierPart(candidate[index])) index++;
+        tokens.push({ type: 'identifier', value: candidate.slice(start, index) });
+        continue;
+      }
+      if (character === '{') braceDepth++;
+      if (character === '}' && braceDepth > 0) braceDepth--;
+      tokens.push({ type: 'punctuator', value: character });
+      index++;
+    }
+  };
+
+  readCode();
+  return tokens;
+}
+
 function productionDependencies(candidate) {
+  const tokens = tokenizeDependencySyntax(candidate);
   const dependencies = [];
-  const scanners = [
-    ['static-import', /(?:^|[;\n])\s*import\s+(?!\s*\()(?:(?:[^;"']+?)\s+from\s+)?(["'])([^"']+)\1/gm],
-    ['export-from', /\bexport\s+(?:\*|\{[^}]*\})(?:\s+as\s+\w+)?\s+from\s+(["'])([^"']+)\1/gm],
-    ['dynamic-import', /\bimport\s*\(/g],
-    ['commonjs-require', /\brequire\s*\(/g],
-  ];
-  for (const [kind, pattern] of scanners) {
-    for (const match of candidate.matchAll(pattern)) {
-      dependencies.push({ kind, specifier: match[2] ?? '<computed>' });
+  const tokenIs = (token, type, value) => token?.type === type && token.value === value;
+  const add = (kind, token) => dependencies.push({
+    kind,
+    specifier: token?.type === 'string' ? token.value : '<computed>',
+  });
+
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index];
+    const previous = tokens[index - 1];
+    const next = tokens[index + 1];
+    if (tokenIs(token, 'identifier', 'import')
+      && !tokenIs(previous, 'punctuator', '.')) {
+      if (tokenIs(next, 'punctuator', '.')) continue; // import.meta
+      if (tokenIs(next, 'punctuator', '(')) {
+        add('dynamic-import', tokens[index + 2]);
+        continue;
+      }
+      if (next?.type === 'string') {
+        add('static-import', next);
+        continue;
+      }
+      for (let cursor = index + 1; cursor < tokens.length; cursor++) {
+        if (tokenIs(tokens[cursor], 'punctuator', ';')) break;
+        if (tokenIs(tokens[cursor], 'identifier', 'from')
+          && tokens[cursor + 1]?.type === 'string') {
+          add('static-import', tokens[cursor + 1]);
+          break;
+        }
+      }
+      continue;
+    }
+    if (tokenIs(token, 'identifier', 'export')
+      && (tokenIs(next, 'punctuator', '*') || tokenIs(next, 'punctuator', '{'))) {
+      for (let cursor = index + 1; cursor < tokens.length; cursor++) {
+        if (tokenIs(tokens[cursor], 'punctuator', ';')) break;
+        if (tokenIs(tokens[cursor], 'identifier', 'from')
+          && tokens[cursor + 1]?.type === 'string') {
+          add('export-from', tokens[cursor + 1]);
+          break;
+        }
+      }
+      continue;
+    }
+    if (tokenIs(token, 'identifier', 'require')
+      && !tokenIs(previous, 'punctuator', '.')
+      && tokenIs(next, 'punctuator', '(')) {
+      add('commonjs-require', tokens[index + 2]);
     }
   }
   return dependencies;
@@ -529,13 +652,24 @@ test('production mapper has zero dependencies and import mutants are rejected', 
     'R3C1_PRODUCTION_IMPORT_COUNT=0');
   const dependencyMutants = [
     ["import './game-review-ai.js?v=123';\n", 'BROKEN_R3C1_IMPORTS_GAME_REVIEW_AI_QUERY_WOULD_FAIL'],
+    ["import './game.js';\n", 'side-effect production import'],
     ["import './game.js#test';\n", 'side-effect import'],
     ["import { findBestMove } from './ai.js?v=abc';\n", 'static import declaration'],
     ["import {\n  findBestMove,\n} from './ai.js?v=multiline';\n", 'multiline static import'],
+    ["import/**/rules from './game.js?v=comment-static';\n", 'comment-separated static import'],
+    ["import\n/* comment */\nrules from './game.js?v=multiline-comment';\n", 'multiline comment static import'],
     ["export { createGameReviewAiState } from './game-review-ai.js#x';\n", 'export-from dependency'],
+    ["export { legalMoves }/**/from './game.js';\n", 'comment-separated named export-from'],
+    ["export * /**/ from './game.js';\n", 'comment-separated star export-from'],
     ["const mod = await import('./game-review-ai.js?v=123');\n", 'dynamic import'],
+    ["const mod = await import /* comment */ ('./game.js');\n", 'spaced comment dynamic import'],
+    ["const mod = await import/**/('./game.js?v=comment-bypass');\n", 'BROKEN_R3C1_COMMENT_SEPARATED_IMPORT_WOULD_FAIL'],
+    ["const mod = await import\n/* comment */\n('./game.js');\n", 'multiline comment dynamic import'],
     ["const specifier = './game.js'; const computed = await import(specifier);\n", 'computed dynamic import'],
     ["const rules = require('./game.js');\n", 'CommonJS require'],
+    ["const rules = require/**/('./game.js');\n", 'comment-separated CommonJS require'],
+    ["function hiddenProductionDependency() { return import/**/(\"./game.js?v=comment-bypass\"); }\n",
+      'exact previous comment-separated bypass'],
   ];
   for (const [prefix, label] of dependencyMutants) {
     assert.throws(
@@ -553,6 +687,26 @@ test('production mapper has zero dependencies and import mutants are rejected', 
       && /zero production dependencies/.test(error.message),
     'BROKEN_R3C1_TEACHES_FROM_RAW_BOARD_WOULD_FAIL',
   );
+});
+
+test('dependency scanner ignores comments and literal text but scans template expressions', () => {
+  const harmless = [
+    '// import("./fake.js")',
+    '/* require("./fake.js") */',
+    'const text = "import(\'./fake.js\')";',
+    "const other = 'require(\"./fake.js\")';",
+    'const word = "important";',
+    "const template = `import('./fake.js')`;",
+    'const metadata = import.meta;',
+    'const objectCall = object.require("./not-commonjs.js");',
+  ].join('\n');
+  assert.deepEqual(productionDependencies(harmless), [],
+    'comments, strings, plain template text, import.meta and member calls are not dependencies');
+
+  const templateExpression = "const value = `${import('./game.js?v=template-expression')}`;";
+  assert.deepEqual(productionDependencies(templateExpression), [{
+    kind: 'dynamic-import', specifier: './game.js?v=template-expression',
+  }], 'executable template expressions remain tokenized');
 });
 
 test('forbidden-language guard detects capturable-loss and best-move mutations', () => {
