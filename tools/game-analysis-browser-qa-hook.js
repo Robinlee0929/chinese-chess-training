@@ -37,6 +37,152 @@ const reviewCoachQaMode = qaParams.get('reviewCoach');
 let reviewCoachRequestCount = 0;
 let reviewCoachActiveCount = 0;
 let reviewCoachMaxActiveCount = 0;
+let reviewCoachLateDeliveryCount = 0;
+const coachDomTestsEnabled = qaParams.get('coachDomTests') === '1';
+const coachDomAudit = { failures: [], expectedFailures: [], keyboard: [], settlements: [],
+  targets: [], networkCalls: [], domMutationsRun: false };
+
+// Browser regression recipe (test server injection only):
+// ?qa=r3a&reviewAi=different&reviewCoach=hostile&coachDomTests=1
+// Open Review, first ply, AI analysis; Tab to coach, press native Enter/Space.
+// Repeat at 1280x900, 390x844 and 360x800, moving focus elsewhere before settlement.
+// The probe's coachDomAudit must have no failures, both trusted keyboard keys,
+// preserved loading/settlement focus, and all five DOM mutation gates EXPECTED_FAIL.
+// reviewCoach=reject/malformed cover failure; hostile intentionally ignores abort.
+// These assertions operate on the actual production HTML, CSS and mounted nodes.
+function coachDomAssert(condition, label) {
+  if (!condition) throw new Error(label);
+}
+
+function assertCoachKeyboard(button) {
+  coachDomAssert(button?.tagName === 'BUTTON' && button.type === 'button'
+    && button.tabIndex >= 0 && !button.disabled && button.getClientRects().length > 0,
+  'BROKEN_R3C2_A2_KEYBOARD_ACCESS_WOULD_FAIL');
+}
+
+function assertCoachFocus(button, expectedFocus) {
+  coachDomAssert(button.isConnected && document.getElementById('btnGameReviewCoach') === button
+    && document.activeElement === expectedFocus,
+  'BROKEN_R3C2_A2_LOADING_FOCUS_LOSS_WOULD_FAIL');
+}
+
+function assertCoachLiveRegions() {
+  const status = document.getElementById('gameReviewCoachStatus');
+  const teaching = document.getElementById('gameReviewTeaching');
+  const isLive = (element) => ['status', 'alert', 'log'].includes(element.getAttribute('role'))
+    || (element.hasAttribute('aria-live') && element.getAttribute('aria-live') !== 'off');
+  const regions = [...document.querySelectorAll('[id^="gameReviewCoach"], #gameReviewTeaching *')]
+    .filter(isLive);
+  coachDomAssert(regions.length === 1 && regions[0] === status,
+    'BROKEN_R3C2_A2_DUPLICATE_LIVE_REGION_WOULD_FAIL');
+  for (let parent = status.parentElement; parent; parent = parent.parentElement) {
+    coachDomAssert(!isLive(parent) && parent.getAttribute('aria-atomic') !== 'true',
+      'BROKEN_R3C2_A2_NESTED_LIVE_REGION_WOULD_FAIL');
+  }
+  coachDomAssert(status.getAttribute('aria-live') === 'polite'
+    && !status.contains(document.getElementById('gameReviewTeachingTitle'))
+    && !status.contains(document.getElementById('gameReviewTeachingBody'))
+    && !teaching.closest('[aria-live]:not([aria-live="off"])'),
+  'BROKEN_R3C2_A2_NESTED_LIVE_REGION_WOULD_FAIL');
+}
+
+function assertCoachTouchTarget(button) {
+  const rect = button.getBoundingClientRect();
+  coachDomAssert(rect.width >= 44 && rect.height >= 44,
+    'BROKEN_R3C2_A2_TOUCH_TARGET_SHRINK_WOULD_FAIL');
+  return { viewport: `${innerWidth}x${innerHeight}`, width: rect.width, height: rect.height };
+}
+
+function coachCanonical() {
+  return ['gameReviewTeachingTitle', 'gameReviewTeachingBody'].map(id => document.getElementById(id).textContent);
+}
+
+function assertCoachCanonical(canonical) {
+  coachDomAssert(JSON.stringify(coachCanonical()) === JSON.stringify(canonical)
+    && document.getElementById('gameReviewTeaching').getClientRects().length > 0,
+  'BROKEN_R3C2_A2_REMOVES_R3C1_DURING_LOADING_WOULD_FAIL');
+}
+
+function runCoachDomMutations(button) {
+  const expectFailure = (label, mutate, restore, verify) => {
+    let caught = null;
+    mutate();
+    try { verify(); } catch (error) { caught = error; } finally { restore(); }
+    coachDomAssert(caught?.message === label, `DOM_MUTANT_SURVIVED: ${label}`);
+    coachDomAudit.expectedFailures.push(label);
+  };
+  const replacement = button.cloneNode(true);
+  expectFailure('BROKEN_R3C2_A2_LOADING_FOCUS_LOSS_WOULD_FAIL',
+    () => button.replaceWith(replacement), () => { replacement.replaceWith(button); button.focus(); },
+    () => assertCoachFocus(button, button));
+  const originalTabindex = button.getAttribute('tabindex');
+  expectFailure('BROKEN_R3C2_A2_KEYBOARD_ACCESS_WOULD_FAIL',
+    () => button.setAttribute('tabindex', '-1'),
+    () => originalTabindex === null ? button.removeAttribute('tabindex') : button.setAttribute('tabindex', originalTabindex),
+    () => assertCoachKeyboard(button));
+  const status = document.getElementById('gameReviewCoachStatus');
+  const parent = status.parentNode;
+  const next = status.nextSibling;
+  expectFailure('BROKEN_R3C2_A2_NESTED_LIVE_REGION_WOULD_FAIL',
+    () => document.getElementById('gameReviewAiPanel').append(status),
+    () => parent.insertBefore(status, next), assertCoachLiveRegions);
+  const duplicate = status.cloneNode(true);
+  duplicate.id = 'gameReviewCoachDuplicateStatus';
+  expectFailure('BROKEN_R3C2_A2_DUPLICATE_LIVE_REGION_WOULD_FAIL',
+    () => parent.append(duplicate), () => duplicate.remove(), assertCoachLiveRegions);
+  const originalStyle = button.getAttribute('style');
+  expectFailure('BROKEN_R3C2_A2_TOUCH_TARGET_SHRINK_WOULD_FAIL',
+    () => { button.style.cssText = 'width:20px!important;min-width:0!important;max-width:20px!important;height:20px!important;min-height:0!important;padding:0!important;border:0!important'; },
+    () => originalStyle === null ? button.removeAttribute('style') : button.setAttribute('style', originalStyle),
+    () => assertCoachTouchTarget(button));
+  coachDomAudit.domMutationsRun = true;
+}
+
+function auditCoachDom(action) {
+  try { action(); } catch (error) { coachDomAudit.failures.push(error.message); }
+}
+
+if (coachDomTestsEnabled) {
+  // Observe native browser keyboard activation; synthetic dispatch is not accepted.
+  const keyboardAudit = (event) => {
+    const button = event.target;
+    if (button.id !== 'btnGameReviewCoach' || !event.isTrusted
+      || !((event.type === 'keydown' && event.key === 'Enter')
+        || (event.type === 'keyup' && event.key === ' '))) return;
+    const before = reviewCoachRequestCount;
+    const wasLoading = button.getAttribute('aria-disabled') === 'true';
+    const canonical = coachCanonical();
+    setTimeout(() => auditCoachDom(() => {
+      assertCoachKeyboard(button);
+      assertCoachFocus(button, button);
+      assertCoachCanonical(canonical);
+      assertCoachLiveRegions();
+      const target = assertCoachTouchTarget(button);
+      coachDomAssert(reviewCoachRequestCount - before === (wasLoading ? 0 : 1), 'KEYBOARD_REQUEST_COUNT');
+      coachDomAudit.keyboard.push({ key: event.key === ' ' ? 'Space' : 'Enter', trusted: true,
+        requests: reviewCoachRequestCount - before, focusPreserved: true });
+      coachDomAudit.targets.push(target);
+      if (!coachDomAudit.domMutationsRun) runCoachDomMutations(button);
+    }), 0);
+  };
+  document.addEventListener('keydown', keyboardAudit, true);
+  document.addEventListener('keyup', keyboardAudit, true);
+  // Instrument API attempts without adding any request or endpoint of our own.
+  for (const [object, key] of [[window, 'fetch'], [XMLHttpRequest.prototype, 'open'], [navigator, 'sendBeacon']]) {
+    const native = object[key];
+    object[key] = function (...args) {
+      coachDomAudit.networkCalls.push(key);
+      return Reflect.apply(native, this, args);
+    };
+  }
+  for (const key of ['WebSocket', 'EventSource']) {
+    const Native = window[key];
+    window[key] = new Proxy(Native, { construct(target, args) {
+      coachDomAudit.networkCalls.push(key);
+      return Reflect.construct(target, args);
+    } });
+  }
+}
 
 if (reviewCoachQaMode) {
   Object.defineProperty(globalThis, '__CHINESE_CHESS_REVIEW_COACH_REQUESTER__', {
@@ -47,11 +193,24 @@ if (reviewCoachQaMode) {
         reviewCoachActiveCount++;
         reviewCoachMaxActiveCount = Math.max(reviewCoachMaxActiveCount, reviewCoachActiveCount);
         let active = true;
+        const canonical = coachDomTestsEnabled ? coachCanonical() : null;
         const finish = (callback, value) => {
           if (!active) return;
           active = false;
           reviewCoachActiveCount--;
+          const expectedFocus = document.activeElement;
+          if (signal.aborted) reviewCoachLateDeliveryCount++;
           callback(value);
+          if (coachDomTestsEnabled) queueMicrotask(() => auditCoachDom(() => {
+            coachDomAssert(document.activeElement === expectedFocus, 'NO_SETTLE_FOCUS_STEAL');
+            if (!signal.aborted) assertCoachCanonical(canonical);
+            else {
+              for (const id of ['gameReviewCoachLeadIn', 'gameReviewCoachEncouragement', 'gameReviewCoachStatus']) {
+                coachDomAssert(document.getElementById(id).textContent === '', 'HOSTILE_LATE_COMPLETION_RENDERED');
+              }
+            }
+            coachDomAudit.settlements.push({ aborted: signal.aborted, focusPreserved: true });
+          }));
         };
         const timer = setTimeout(() => {
           if (reviewCoachQaMode === 'reject') {
@@ -70,8 +229,9 @@ if (reviewCoachQaMode) {
           };
           if (reviewCoachQaMode === 'malformed') response.extra = true;
           finish(resolve, response);
-        }, reviewCoachQaMode === 'stale' ? 2500 : 120);
+        }, coachDomTestsEnabled ? 5000 : (reviewCoachQaMode === 'stale' || reviewCoachQaMode === 'hostile' ? 2500 : 120));
         signal.addEventListener('abort', () => {
+          if (reviewCoachQaMode === 'hostile') return;
           clearTimeout(timer);
           finish(reject, new Error('Controlled Review coach abort.'));
         }, { once: true });
@@ -287,6 +447,7 @@ function readProbe() {
       buttonVisible: !!coachButton && !coachButton.classList.contains('hidden'),
       buttonDisabled: !!coachButton?.disabled,
       buttonBusy: coachButton?.getAttribute('aria-busy') || null,
+      buttonAriaDisabled: coachButton?.getAttribute('aria-disabled') || null,
       buttonHeight: coachButton?.getBoundingClientRect().height || 0,
       leadIn: document.getElementById('gameReviewCoachLeadIn')?.textContent || '',
       encouragement: document.getElementById('gameReviewCoachEncouragement')?.textContent || '',
@@ -295,6 +456,8 @@ function readProbe() {
       requestCount: reviewCoachRequestCount,
       activeCount: reviewCoachActiveCount,
       maxActiveCount: reviewCoachMaxActiveCount,
+      lateDeliveryCount: reviewCoachLateDeliveryCount,
+      domAudit: coachDomTestsEnabled ? coachDomAudit : null,
     },
     analysis: analysis ? {
       sourceRecordId: analysis.sourceRecordId,

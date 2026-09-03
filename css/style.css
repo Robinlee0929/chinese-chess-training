@@ -1192,7 +1192,11 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
   font-size: 12px;
   font-weight: 700;
 }
-.game-review-coach-button:hover:not(:disabled) {
+.game-review-coach-button[aria-disabled="true"] {
+  opacity: 0.65;
+  cursor: progress;
+}
+.game-review-coach-button:hover:not([aria-disabled="true"]) {
   background: linear-gradient(180deg, #c9eee4, #8bd0be);
 }
 .game-review-coach-status {

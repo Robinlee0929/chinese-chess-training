@@ -22,6 +22,7 @@ import {
 } from './game-review-ai.js';
 import { createGameReviewEvidence } from './game-review-evidence.js';
 import { deriveGameReviewTeaching } from './game-review-teaching.js';
+import { createGameAnalysis } from './game-analysis.js';
 import {
   createDisabledCoachState,
   createIdleCoachState,
@@ -195,6 +196,7 @@ function harness({
       active: true,
       resolve: null,
       reject: null,
+      resolutionsDelivered: 0,
     };
     activeCoachRequests++;
     maxActiveCoachRequests = Math.max(maxActiveCoachRequests, activeCoachRequests);
@@ -205,10 +207,12 @@ function harness({
       return true;
     };
     const promise = new Promise((resolve, reject) => {
-      pending.resolve = (value) => { if (finish()) resolve(value); };
+      pending.resolve = (value) => {
+        if (finish()) { pending.resolutionsDelivered++; resolve(value); }
+      };
       pending.reject = (error = new Error('mock rejection')) => { if (finish()) reject(error); };
     });
-    signal.addEventListener('abort', () => pending.reject(new Error('mock aborted')), { once: true });
+    // Intentionally hostile: AbortSignal is observable but cannot prevent delivery.
     coachRequests.push(pending);
     return promise;
   } : null;
@@ -295,6 +299,7 @@ function harness({
     gameRuleEvaluations: 0,
     gameRuleCallsByName: {},
     networkRequests: 0,
+    coachResponseDeliveries: 0,
     renderedBoard: liveBoard,
     renderCount: 0,
     productionRenderCallCount: 0,
@@ -308,6 +313,7 @@ function harness({
     gameRecordStore,
     storage,
     createGameReview,
+    createGameAnalysis,
     firstGameReviewPly,
     previousGameReviewPly,
     nextGameReviewPly,
@@ -347,6 +353,7 @@ function harness({
     gameRecordLibraryView: domNode(),
     gameReviewView: domNode(true),
     gameAnalysisView: domNode(true),
+    gameAnalysisHeading: domNode(),
     gameRecordLibraryHeading: domNode(),
     gameReviewHeading: domNode(),
     gameReviewMeta: domNode(),
@@ -421,6 +428,7 @@ function harness({
       return context.libraryView;
     },
     refreshHUD() {},
+    renderGameAnalysis() {},
     checkBoardMeshInvariant: () => ({ ok: true, errors: [] }),
     toast: (message) => context.messages.push(message),
     createGameReviewAiWorker: () => {
@@ -483,6 +491,7 @@ function harness({
     'enterGameRecordLibrary', 'showGameRecordLibrary', 'openGameReview',
     'openLastCompletedGameReview', 'openStoredGameReview', 'navigateGameReview',
     'deleteGameRecordFromLibrary', 'exitGameReview', 'exitGameRecordFlow',
+    'enterGameAnalysis', 'returnToGameReview',
   ];
   // In realRenderer mode these are byte-identical production functions from main.js.
   // Only low-level DOM, mesh rebuilding, HUD, audio/confetti, and storage boundaries are doubled.
@@ -574,6 +583,25 @@ function harness({
         '  if (!settled.accepted) return finishGameReviewCoachFailure(activeRequest);',
         "  if (!settled.accepted) {\n    gameReviewCoachRequest = null;\n    gameReviewCoachState = Object.freeze({ ...gameReviewCoachState, status: 'success', framing: response.framing });\n    renderGameReviewCoach(message);\n    return true;\n  }",
       );
+    } else if (coachMutation === 'remove-stale-guard') {
+      replaceIn('handleGameReviewCoachResponse',
+        /  if \(activeRequest !== gameReviewCoachRequest\r?\n    \|\| appState !== APP_STATE\.GAME_REVIEW\r?\n    \|\| !gameReviewSession\) return false;/,
+        '  // Broken: deliver stale requests to the current-state settlement gate.');
+    } else if (coachMutation === 'stale-settlement') {
+      replaceIn('handleGameReviewCoachResponse',
+        'function handleGameReviewCoachResponse(activeRequest, response) {',
+        `function handleGameReviewCoachResponse(activeRequest, response) {
+          if (activeRequest !== gameReviewCoachRequest) {
+            gameReviewCoachLeadIn.textContent = response.framing.leadIn;
+            gameReviewCoachEncouragement.textContent = response.framing.encouragement;
+            gameReviewCoachStatus.textContent = 'stale response';
+            return true;
+          }`);
+    } else if (coachMutation === 'r2-no-invalidate') {
+      replaceIn('enterGameAnalysis', '  invalidateGameReviewAi();', '  // Broken: retain Review coach.');
+    } else if (coachMutation === 'r2-restore') {
+      replaceIn('returnToGameReview', '  renderGameReview();',
+        "  renderGameReview();\n  gameReviewCoachLeadIn.textContent = '可以一起看看這個地方。';");
     } else if (coachMutation === 'real-network') {
       replaceIn(
         'requestGameReviewCoach',
@@ -597,6 +625,17 @@ function harness({
     }
   }
   vm.runInContext([...rendererHelpers, rendererSource, ...mainFunctions].filter(Boolean).join('\n'), context);
+  const realCoachResponse = context.handleGameReviewCoachResponse;
+  const realCoachSettlement = context.settleCoachResponse;
+  context.coachSettlementCalls = 0;
+  context.settleCoachResponse = (...args) => {
+    context.coachSettlementCalls++;
+    return realCoachSettlement(...args);
+  };
+  context.handleGameReviewCoachResponse = (...args) => {
+    context.coachResponseDeliveries++;
+    return realCoachResponse(...args);
+  };
   return context;
 }
 
@@ -1506,7 +1545,8 @@ test('R3C2-A2 capability gating, explicit request, loading and validated success
   assert.deepEqual(Object.keys(ctx.coachRequests[0].request).sort(),
     ['locale', 'requestId', 'sourceRuleId', 'style', 'version']);
   assert.equal(ctx.gameReviewCoachState.status, 'loading');
-  assert.equal(ctx.btnGameReviewCoach.disabled, true);
+  assert.equal(ctx.btnGameReviewCoach.disabled, false);
+  assert.equal(ctx.btnGameReviewCoach.getAttribute('aria-disabled'), 'true');
   assert.equal(ctx.btnGameReviewCoach.getAttribute('aria-busy'), 'true');
   assert.equal(ctx.gameReviewCoachStatus.textContent, 'AI 教練整理中…');
   assert.deepEqual({
@@ -1614,16 +1654,98 @@ test('R3C2-A2 ply, record, R3A, exit and R2 boundaries invalidate without resurr
   prepareEligibleCoach(r2, 'coach-r2');
   r2.requestGameReviewCoach();
   const staleR2 = r2.coachRequests[0];
-  r2.invalidateGameReviewAi();
-  r2.appState = 'GAME_ANALYSIS';
-  r2.renderGameReviewCoach(null);
+  assert.equal(r2.enterGameAnalysis(), true);
+  assert.equal(r2.appState, 'GAME_ANALYSIS');
   staleR2.resolve(validCoachResponse(staleR2));
   await flushCoachSettlement();
   assert.equal(r2.btnGameReviewCoach.classList.contains('hidden'), true);
-  r2.appState = 'GAME_REVIEW';
-  r2.renderGameReviewAi();
+  assert.equal(r2.returnToGameReview(), true);
   assert.equal(r2.gameReviewCoachLeadIn.textContent, '',
     'BROKEN_R3C2_A2_R2_RESURRECTION_WOULD_FAIL');
+});
+
+async function assertHostileCoachBoundary(boundary, coachMutation = null, successful = false) {
+  const label = {
+    ply: 'BROKEN_R3C2_A2_STALE_PLY_RESPONSE_WOULD_FAIL',
+    record: 'BROKEN_R3C2_A2_STALE_RECORD_RESPONSE_WOULD_FAIL',
+    r2: 'BROKEN_R3C2_A2_R2_RESURRECTION_WOULD_FAIL',
+  }[boundary];
+  const ctx = harness({ records: [record('hostile-a'), record('hostile-b', 2)],
+    realRenderer: true, coachEnabled: true, coachMutation });
+  prepareEligibleCoach(ctx, 'hostile-a');
+  const sourceReview = ctx.gameReviewSession;
+  ctx.requestGameReviewCoach();
+  const pending = ctx.coachRequests[0];
+  if (successful) {
+    pending.resolve(validCoachResponse(pending));
+    await flushCoachSettlement();
+    assert.equal(ctx.gameReviewCoachState.status, 'success', label);
+  }
+  if (boundary === 'ply') ctx.navigateGameReview('next');
+  else if (boundary === 'record') ctx.openStoredGameReview('hostile-b', ctx.btnGameRecords);
+  else {
+    assert.equal(ctx.enterGameAnalysis(), true, label);
+    assert.equal(ctx.appState, 'GAME_ANALYSIS', label);
+    assert.equal(ctx.gameAnalysisState.sourceRecordId, sourceReview.record.id, label);
+    assert.equal(ctx.gameAnalysisState.sourcePly, sourceReview.selectedPly, label);
+  }
+  const absent = () => {
+    assert.equal(ctx.gameReviewCoachState.status, 'idle', label);
+    for (const element of [ctx.gameReviewCoachLeadIn, ctx.gameReviewCoachEncouragement,
+      ctx.gameReviewCoachStatus]) assert.equal(element.textContent, '', label);
+    assert.equal(ctx.btnGameReviewCoach.classList.contains('hidden'), true, label);
+    assert.equal(ctx.gameReviewEvidenceState, null, label);
+    if (ctx.appState === 'GAME_REVIEW') {
+      assert.equal(ctx.gameReviewTeaching.classList.contains('hidden'), true, label);
+      assert.equal(ctx.gameReviewTeachingTitle.textContent, '', label);
+      assert.equal(ctx.gameReviewTeachingBody.textContent, '', label);
+    } else {
+      assert.equal(ctx.gameReviewView.classList.contains('hidden'), true, label);
+    }
+  };
+  absent();
+  if (!successful) {
+    assert.equal(pending.signal.aborted, true, 'production must still request cancellation');
+    assert.equal(pending.resolutionsDelivered, 0);
+    const deliveredBefore = ctx.coachResponseDeliveries;
+    const settledBefore = ctx.coachSettlementCalls;
+    pending.resolve(validCoachResponse(pending));
+    await flushCoachSettlement();
+    assert.equal(pending.resolutionsDelivered, 1, 'hostile promise really resolved AFTER abort');
+    assert.equal(ctx.coachResponseDeliveries, deliveredBefore + 1,
+      'old response actually reached the production settlement entry');
+    assert.equal(ctx.coachSettlementCalls, settledBefore, label);
+    absent();
+  }
+  if (boundary === 'r2') {
+    assert.equal(ctx.returnToGameReview(), true, label);
+    assert.equal(ctx.appState, 'GAME_REVIEW', label);
+    assert.equal(ctx.gameReviewSession, sourceReview, label);
+    absent();
+    assert.equal(ctx.coachRequests.length, 1, 'return never starts another coach request');
+  }
+}
+
+for (const boundary of ['ply', 'record', 'r2']) {
+  test(`hostile non-aborting coach really delivers after production ${boundary} invalidation`, async () => {
+    await assertHostileCoachBoundary(boundary);
+  });
+}
+test('actual production R2 entry and return discard successful coach framing', async () => {
+  await assertHostileCoachBoundary('r2', null, true);
+});
+test('hostile late-completion and actual R2 mutants fail the same lifecycle assertions', async () => {
+  for (const [boundary, mutation, successful] of [
+    ['ply', 'remove-stale-guard', false], ['record', 'remove-stale-guard', false],
+    ['r2', 'remove-stale-guard', false],
+    ['ply', 'stale-settlement', false], ['record', 'stale-settlement', false],
+    ['r2', 'stale-settlement', false], ['r2', 'r2-no-invalidate', false],
+    ['r2', 'r2-no-invalidate', true], ['r2', 'r2-restore', true],
+  ]) {
+    await assert.rejects(() => assertHostileCoachBoundary(boundary, mutation, successful),
+      error => error.code === 'ERR_ASSERTION' && /BROKEN_R3C2_A2_/.test(error.message),
+      `${mutation} must fail an observable coach lifecycle assertion`);
+  }
 });
 
 test('R3C2-A2 observable mutants trip auto, duplicate, canonical, validator and zero-dependency gates', async () => {
@@ -1741,7 +1863,7 @@ test('source and DOM contain explicit read-only, accessibility and responsive gu
   assert.match(css, /@media \(max-width: 900px\)[^]*#gameRecordPanel/);
   assert.match(css, /min-height: 44px/);
   assert.match(css, /\.game-review-teaching/);
-  assert.match(css, /\.game-review-coach-button[^]*?min-height: 44px/);
+  assert.match(css.match(/\.game-review-coach-button\s*\{([^}]+)\}/)?.[1] || '', /min-height: 44px/);
   assert.match(css, /prefers-reduced-motion/);
   const coachPath = [
     functionSource('requestGameReviewCoach'),

@@ -7,9 +7,9 @@ import {
   ROWS, COLS, RED, BLACK,
   initialBoard, legalMoves, applyMove, inCheck,
   hasAnyLegalMove, name, notation, hashBoard, repetitionVerdict,
-} from './game.js?v=58273955d5';
-import { createGameRecord } from './game-record.js?v=58273955d5';
-import { createGameRecordStore } from './game-record-store.js?v=58273955d5';
+} from './game.js?v=51be239e94';
+import { createGameRecord } from './game-record.js?v=51be239e94';
+import { createGameRecordStore } from './game-record-store.js?v=51be239e94';
 import {
   createGameReview,
   createGameRecordLibraryView,
@@ -18,15 +18,15 @@ import {
   nextGameReviewPly,
   lastGameReviewPly,
   selectGameReviewPly,
-} from './game-review.js?v=58273955d5';
+} from './game-review.js?v=51be239e94';
 import {
   createGameReviewAiState,
   invalidateGameReviewAiState,
   beginGameReviewAiRequest,
   settleGameReviewAiResponse,
-} from './game-review-ai.js?v=58273955d5';
-import { createGameReviewEvidence } from './game-review-evidence.js?v=58273955d5';
-import { deriveGameReviewTeaching } from './game-review-teaching.js?v=58273955d5';
+} from './game-review-ai.js?v=51be239e94';
+import { createGameReviewEvidence } from './game-review-evidence.js?v=51be239e94';
+import { deriveGameReviewTeaching } from './game-review-teaching.js?v=51be239e94';
 import {
   createDisabledCoachState,
   createIdleCoachState,
@@ -34,15 +34,15 @@ import {
   beginCoachRequest,
   settleCoachResponse,
   invalidateCoachState,
-} from './game-review-coach.js?v=58273955d5';
+} from './game-review-coach.js?v=51be239e94';
 import {
   createGameAnalysis,
   gameAnalysisLegalMoves,
   applyGameAnalysisMove,
   undoGameAnalysisMove,
   resetGameAnalysis,
-} from './game-analysis.js?v=58273955d5';
-import { createGameReviewPuzzleHandoff } from './game-review-puzzle-handoff.js?v=58273955d5';
+} from './game-analysis.js?v=51be239e94';
+import { createGameReviewPuzzleHandoff } from './game-review-puzzle-handoff.js?v=51be239e94';
 import {
   PuzzleEditorError,
   createEditorState,
@@ -52,7 +52,7 @@ import {
   setEditorSideToMove,
   confirmAuthoredPosition,
   exportAuthoredPosition,
-} from './puzzle-editor.js?v=58273955d5';
+} from './puzzle-editor.js?v=51be239e94';
 import {
   PuzzleRecorderError,
   createRecorder,
@@ -62,7 +62,7 @@ import {
   finishRecording,
   exportRecorderBoard,
   exportRecordedResult,
-} from './puzzle-recorder.js?v=58273955d5';
+} from './puzzle-recorder.js?v=51be239e94';
 import {
   PuzzlePracticeError,
   PRACTICE_HINT_MAX_LEVEL,
@@ -72,12 +72,12 @@ import {
   derivePracticeHint,
   restartPractice,
   exportPracticeSnapshot,
-} from './puzzle-practice.js?v=58273955d5';
-import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=58273955d5';
+} from './puzzle-practice.js?v=51be239e94';
+import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=51be239e94';
 import {
   PracticeAnalyticsError,
   createPracticeAnalyticsStore,
-} from './puzzle-analytics.js?v=58273955d5';
+} from './puzzle-analytics.js?v=51be239e94';
 import {
   PUZZLE_TRANSFER_FORMAT,
   PUZZLE_TRANSFER_SCHEMA_VERSION,
@@ -85,7 +85,7 @@ import {
   PuzzleTransferError,
   serializePuzzleExport,
   parsePuzzleImport,
-} from './puzzle-transfer.js?v=58273955d5';
+} from './puzzle-transfer.js?v=51be239e94';
 import {
   PHOTO_MAX_ZOOM,
   PHOTO_MIN_ZOOM,
@@ -99,7 +99,7 @@ import {
   validatePhotoMetadata,
   zoomPhotoIn,
   zoomPhotoOut,
-} from './puzzle-photo.js?v=58273955d5';
+} from './puzzle-photo.js?v=51be239e94';
 import {
   CALIBRATION_CANONICAL_HEIGHT,
   CALIBRATION_CANONICAL_WIDTH,
@@ -115,7 +115,7 @@ import {
   setCorner,
   transformPoint,
   validateQuadrilateral,
-} from './puzzle-photo-calibration.js?v=58273955d5';
+} from './puzzle-photo-calibration.js?v=51be239e94';
 import {
   PuzzlePhotoRecognitionError,
   RECOGNITION_OCCUPANCY_EMPTY,
@@ -127,7 +127,7 @@ import {
   isRecognitionTokenCurrent,
   recognizeIntersections,
   selectionKey,
-} from './puzzle-photo-recognition.js?v=58273955d5';
+} from './puzzle-photo-recognition.js?v=51be239e94';
 import {
   addTemplate,
   createPieceTypeSessionToken,
@@ -137,13 +137,13 @@ import {
   normalizePiecePatch,
   removeTemplatesForSource,
   suggestUnresolvedPieceTypes,
-} from './puzzle-photo-piece-types.js?v=58273955d5';
+} from './puzzle-photo-piece-types.js?v=51be239e94';
 import {
   UNREVIEWED, PuzzlePhotoReviewError,
   createReviewState, buildReviewQueue, selectReviewCandidate, confirmEmpty, confirmPiece,
   nextCandidate, previousCandidate, nextUnresolved, acceptHighConfidenceEmpty,
   undoBulkEmpty, resetReview, rescanReview, reviewProgress, confirmedSelections, buildReviewedBoard,
-} from './puzzle-photo-review.js?v=58273955d5';
+} from './puzzle-photo-review.js?v=51be239e94';
 
 // ---------------- 常數 ----------------
 const CELL = 1;
@@ -730,7 +730,7 @@ let gameReviewCoachStatusMessage = '';
 let aiWorker = null;
 let aiModule = null;   // Worker 不可用時的主執行緒後備
 try {
-  aiWorker = new Worker(new URL('./ai-worker.js?v=58273955d5', import.meta.url), { type: 'module' });
+  aiWorker = new Worker(new URL('./ai-worker.js?v=51be239e94', import.meta.url), { type: 'module' });
   aiWorker.onmessage = (e) => onAIResult(e.data);
   aiWorker.onerror = () => {
     aiWorker = null;
@@ -753,7 +753,7 @@ function requestAIMove() {
   if (aiWorker) {
     aiWorker.postMessage(payload);
   } else {
-    (aiModule ??= import('./ai.js?v=58273955d5')).then(({ findBestMove }) => {
+    (aiModule ??= import('./ai.js?v=51be239e94')).then(({ findBestMove }) => {
       setTimeout(() => {
         if (token !== aiToken) return;
         onAIResult({ token, result: findBestMove(payload.board, payload.side, payload.level, payload.recent) });
@@ -2534,6 +2534,7 @@ function invalidateGameReviewCoach() {
   gameReviewCoachEncouragement.textContent = '';
   btnGameReviewCoach.classList.add('hidden');
   btnGameReviewCoach.disabled = false;
+  btnGameReviewCoach.setAttribute('aria-disabled', 'false');
   btnGameReviewCoach.setAttribute('aria-busy', 'false');
   gameReviewCoachStatus.textContent = '';
 }
@@ -2553,7 +2554,8 @@ function renderGameReviewCoach(message) {
   gameReviewCoachEncouragement.classList.toggle('hidden', !framing);
   gameReviewCoachEncouragement.textContent = framing?.encouragement ?? '';
   btnGameReviewCoach.classList.toggle('hidden', !available);
-  btnGameReviewCoach.disabled = loading;
+  // Keep the mounted native button focusable while the request guard blocks reuse.
+  btnGameReviewCoach.setAttribute('aria-disabled', String(loading));
   btnGameReviewCoach.setAttribute('aria-busy', String(loading));
   gameReviewCoachStatus.textContent = loading
     ? 'AI 教練整理中…'
@@ -2703,7 +2705,7 @@ function handleGameReviewAiResponse(worker, response) {
 }
 
 function createGameReviewAiWorker() {
-  return new Worker(new URL('./ai-worker.js?v=58273955d5', import.meta.url), { type: 'module' });
+  return new Worker(new URL('./ai-worker.js?v=51be239e94', import.meta.url), { type: 'module' });
 }
 
 function requestGameReviewAiCandidate() {

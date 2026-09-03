@@ -286,6 +286,12 @@ function harness(options = {}) {
       assert.match(candidate, /gameReviewEvidenceState = r4StaleEvidence/,
         'R4 resurrection negative control reinjects stale evidence');
     }
+    if (name === 'exitEditor' && options.r4CoachResurrection) {
+      const before = candidate;
+      candidate = candidate.replace('    renderGameReview();',
+        "    renderGameReview();\n    gameReviewCoachLeadIn.textContent = '可以一起看看這個地方。';");
+      assert.notEqual(candidate, before, 'R4 coach resurrection mutation applied');
+    }
     return candidate;
   });
   vm.runInContext(lifecycleSources.join('\n'), context);
@@ -617,12 +623,12 @@ test('R4 entry clears accepted R3B/R3C evidence and exact Review return never re
   assert.match(detected.message, /BROKEN_R4_RETURN_RESURRECTS_R3B_EVIDENCE/);
 });
 
-test('R4 handoff invalidates successful R3C2 framing and exact Review return cannot resurrect it', async () => {
+async function assertR4CoachReturn(options = {}) {
   const reviewSession = r4ReviewFixture('r4-r3c2-no-resurrection');
   const evidence = acceptedR3bEvidence(reviewSession, {
     from: { r: 2, c: 3 }, to: { r: 3, c: 3 },
   });
-  const ctx = harness({ coachEnabled: true });
+  const ctx = harness({ coachEnabled: true, ...options });
   ctx.appState = ctx.APP_STATE.GAME_REVIEW;
   ctx.gameReviewSession = reviewSession;
   ctx.gameReviewEvidenceState = evidence;
@@ -670,6 +676,14 @@ test('R4 handoff invalidates successful R3C2 framing and exact Review return can
   assert.equal(ctx.gameReviewCoachEncouragement.textContent, '');
   assert.equal(ctx.btnGameReviewCoach.classList.contains('hidden'), true);
   assert.equal(invoker.focused, true);
+}
+test('R4 handoff invalidates successful R3C2 framing and exact Review return cannot resurrect it', async () => {
+  await assertR4CoachReturn();
+});
+test('R4 coach resurrection mutant fails the actual production return regression', async () => {
+  await assert.rejects(() => assertR4CoachReturn({ r4CoachResurrection: true }),
+    error => error.code === 'ERR_ASSERTION'
+      && /BROKEN_R3C2_A2_R4_RESURRECTION_WOULD_FAIL/.test(error.message));
 });
 
 test('negative control: using live turn for Review handoff fails the divergence regression', () => {
