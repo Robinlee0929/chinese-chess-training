@@ -13,21 +13,194 @@ import {
   GAME_REVIEW_COACH_MAX_SEGMENT_CODEPOINTS,
   GAME_REVIEW_COACH_STYLE,
   GAME_REVIEW_COACH_VERSION,
+  GAME_REVIEW_COACH_MODEL_PROFILES,
+  selectCoachModelProfile,
+  validateCoachRequestPayload,
   invalidateCoachState,
   settleCoachResponse,
 } from './game-review-coach.js';
 
 const source = readFileSync(new URL('./game-review-coach.js', import.meta.url), 'utf8');
 const OUTBOUND_KEYS = Object.freeze([
-  'version', 'requestId', 'locale', 'sourceRuleId', 'style',
+  'version', 'requestId', 'locale', 'sourceRuleId', 'style', 'modelProfile',
 ]);
 const RESPONSE_KEYS = Object.freeze([
-  'version', 'requestId', 'sourceRuleId', 'style', 'framing',
+  'version', 'requestId', 'sourceRuleId', 'style', 'modelProfile', 'framing',
 ]);
 const STATE_KEYS = Object.freeze([
-  'version', 'status', 'revision', 'identity', 'request', 'framing',
+  'version', 'status', 'revision', 'identity', 'request', 'framing', 'modelProfile',
 ]);
 const clone = (value) => structuredClone(value);
+
+// Historical transport fixtures stay literal and are never a compatibility runtime.
+const HISTORICAL_V1_REQUEST = Object.freeze({ version: 1, requestId: 'historical-v1',
+  locale: 'zh-Hant', sourceRuleId: 'check-difference', style: 'child-neutral-teacher-v1' });
+
+test('v2 literal schema, three profiles, private identity and historical rejection', () => {
+  assert.equal(GAME_REVIEW_COACH_VERSION, 2);
+  assert.deepEqual(GAME_REVIEW_COACH_MODEL_PROFILES, ['economy', 'balanced', 'quality']);
+  assert.equal(createIdleCoachState().modelProfile, 'economy');
+  assert.equal(validateCoachRequestPayload(HISTORICAL_V1_REQUEST), false);
+  assert.equal(validateCoachRequestPayload({ ...HISTORICAL_V1_REQUEST, modelProfile: 'economy' }), false);
+  assert.equal(validateCoachRequestPayload({ ...HISTORICAL_V1_REQUEST, version: 2 }), false);
+  for (const modelProfile of ['economy', 'balanced', 'quality']) {
+    const message = teaching();
+    const fingerprint = createTeachingFingerprint(message);
+    const state = createIdleCoachState(0, modelProfile);
+    const result = beginCoachRequest({ state, teachingMessage: message, requestId: 'v2', modelProfile });
+    assert.equal(result.accepted, true);
+    assert.equal(result.request.version, 2);
+    assertExactKeys(result.request, ['version', 'requestId', 'locale', 'sourceRuleId', 'style', 'modelProfile']);
+    assert.equal(validateCoachRequestPayload(result.request), true);
+    assert.equal(result.request.modelProfile, modelProfile);
+    assert.equal(result.state.identity.modelProfile, modelProfile);
+    assert.equal(result.state.request.modelProfile, modelProfile);
+    assert.equal(result.state.identity.teachingFingerprint, fingerprint);
+    assert.deepEqual(Object.keys(result.state.identity).sort(), ['recordId', 'ply', 'positionKey',
+      'r3aRevision', 'teachingVersion', 'ruleId', 'teachingFingerprint', 'coachRevision', 'modelProfile'].sort());
+    const accepted = settleCoachResponse({ state: result.state, currentTeachingMessage: message,
+      currentModelProfile: modelProfile, response: responseFor(result.request) });
+    assert.equal(accepted.accepted, true);
+    for (const bad of [undefined, 'unknown', 'gpt-anything', modelProfile === 'quality' ? 'economy' : 'quality']) {
+      assert.equal(settleCoachResponse({ state: result.state, currentTeachingMessage: message,
+        currentModelProfile: modelProfile, response: { ...responseFor(result.request), modelProfile: bad } }).accepted, false);
+    }
+    assert.equal(createTeachingFingerprint(message), fingerprint);
+    assert.equal(invalidateCoachState(accepted.state).modelProfile, modelProfile);
+  }
+});
+
+test('profile inputs have no coercion, implicit fallback, extra authority or getter execution', () => {
+  const request = createCoachRequestPayload(teaching(), 'profile-input', 'economy');
+  const state = createIdleCoachState();
+  for (const bad of [undefined, null, '', 'Economy', ' ECONOMY', 'economy ', 'unknown', 'gpt-anything',
+    [], {}, new String('economy'), 0, true]) {
+    assert.equal(createCoachRequestPayload(teaching(), 'bad', bad), null);
+    assert.equal(validateCoachRequestPayload({ ...request, modelProfile: bad }), false);
+    assert.equal(beginCoachRequest({ state, teachingMessage: teaching(), requestId: 'bad', modelProfile: bad }).accepted, false);
+    assert.equal(selectCoachModelProfile(state, bad), state);
+  }
+  assert.equal(beginCoachRequest({ state, teachingMessage: teaching(), requestId: 'missing' }).accepted, false);
+  for (const key of ['model', 'modelId', 'providerModel', 'openaiModel', 'provider', 'apiKey',
+    'board', 'recordId', 'GameRecord', 'prompt', 'title', 'body', 'score', 'PV']) {
+    assert.equal(validateCoachRequestPayload({ ...request, [key]: 'injected' }), false);
+    const started = begin();
+    assert.equal(settle(started, teaching(), { ...responseFor(started.request), [key]: 'injected' }).accepted, false);
+  }
+  let calls = 0;
+  const hostile = { state, teachingMessage: teaching(), requestId: 'accessor-profile' };
+  Object.defineProperty(hostile, 'modelProfile', { enumerable: true, get() { calls++; return 'economy'; } });
+  const descriptors = Object.getOwnPropertyDescriptors(hostile);
+  assert.equal(beginCoachRequest(hostile).accepted, false);
+  assert.equal(calls, 0, 'R3C2_MODEL_PROFILE_ACCESSOR_GETTER_INVOCATIONS=0');
+  assert.equal(Object.isFrozen(hostile), false);
+  assert.deepEqual(Object.getOwnPropertyDescriptors(hostile), descriptors);
+  const response = responseFor(begin().request);
+  Object.defineProperty(response, 'modelProfile', { enumerable: true, get() { calls++; return 'economy'; } });
+  assert.equal(settle(begin(), teaching(), response).accepted, false);
+  assert.equal(calls, 0);
+});
+
+test('profile transition preserves same state, invalidates loading/success and prevents ABA reuse', () => {
+  for (const state of [createIdleCoachState(), createDisabledCoachState(), begin().state, settle(begin()).state]) {
+    assert.equal(selectCoachModelProfile(state, 'economy'), state);
+    assert.equal(selectCoachModelProfile(state, 'unknown'), state);
+    const next = selectCoachModelProfile(state, 'quality');
+    assert.equal(next.revision, state.revision + 1);
+    assert.equal(next.modelProfile, 'quality');
+    assert.equal(next.status, state.status === 'disabled' ? 'disabled' : 'idle');
+    assert.equal(next.framing, null);
+    assert.equal(next.request, null);
+    assert.equal(next.identity, null);
+  }
+  const old = begin();
+  assert.equal(settleCoachResponse({ state: old.state, currentTeachingMessage: teaching(),
+    currentModelProfile: 'quality', response: responseFor(old.request) }).accepted, false);
+  const back = selectCoachModelProfile(selectCoachModelProfile(old.state, 'quality'), 'economy');
+  const latest = begin(teaching(), 'latest', back);
+  assert.equal(settle(latest, teaching(), responseFor(old.request)).accepted, false);
+  const exhausted = createIdleCoachState(Number.MAX_SAFE_INTEGER, 'balanced');
+  const inert = selectCoachModelProfile(exhausted, 'quality');
+  assert.equal(inert.status, 'disabled');
+  assert.equal(inert.revision, Number.MAX_SAFE_INTEGER);
+  assert.equal(inert.modelProfile, 'balanced');
+});
+
+test('profile accessors and hostile scalar values reject throughout transport, state and settlement', () => {
+  const started = begin();
+  let calls = 0;
+  const accessor = target => {
+    const copy = { ...target };
+    Object.defineProperty(copy, 'modelProfile', { enumerable: true, get() { calls++; return 'economy'; } });
+    return copy;
+  };
+  const request = accessor(started.request);
+  assert.equal(validateCoachRequestPayload(request), false);
+  assert.equal(Object.isFrozen(request), false);
+  for (const field of ['root', 'identity', 'request']) {
+    const state = field === 'root' ? Object.freeze(accessor(started.state))
+      : Object.freeze({ ...started.state, [field]: Object.freeze(accessor(started.state[field])) });
+    assert.equal(settleCoachResponse({ state, currentTeachingMessage: teaching(), currentModelProfile: 'economy',
+      response: responseFor(started.request) }).accepted, false);
+  }
+  const options = { state: started.state, currentTeachingMessage: teaching(), response: responseFor(started.request) };
+  Object.defineProperty(options, 'currentModelProfile', { enumerable: true, get() { calls++; return 'economy'; } });
+  assert.equal(settleCoachResponse(options).accepted, false);
+  assert.equal(Object.isFrozen(options), false);
+  const hostileScalar = { get poison() { calls++; return 'private'; } };
+  assert.equal(createCoachRequestPayload(teaching(), 'hostile-profile', hostileScalar), null);
+  assert.equal(validateCoachRequestPayload({ ...started.request, modelProfile: hostileScalar }), false);
+  assert.equal(Object.isFrozen(hostileScalar), false);
+  assert.equal(calls, 0, 'profile getter calls remain zero at every consumed depth');
+});
+
+test('profile mutation gates execute broken production code on LF and CRLF', async () => {
+  const detects = (label, assertion) => assert.throws(assertion,
+    error => error?.code === 'ERR_ASSERTION', label);
+  for (const [eol, candidate] of sourceForms()) {
+    const permissive = await importReplacedModule(candidate,
+      "  return typeof value === 'string' && GAME_REVIEW_COACH_MODEL_PROFILES.includes(value);",
+      "  return typeof value === 'string';", eol);
+    detects('BROKEN_R3C2_MODEL_PROFILE_UNKNOWN_WOULD_FAIL', () =>
+      assert.equal(permissive.createCoachRequestPayload(teaching(), 'mut', 'unknown'), null));
+    detects('BROKEN_R3C2_ARBITRARY_MODEL_ID_WOULD_FAIL', () =>
+      assert.equal(permissive.createCoachRequestPayload(teaching(), 'mut', 'gpt-anything'), null));
+    const provider = await importMutatedModule(candidate, '    style: GAME_REVIEW_COACH_STYLE,',
+      "    provider: 'arbitrary',", eol);
+    detects('BROKEN_R3C2_MODEL_PROVIDER_FIELD_WOULD_FAIL', () =>
+      assertExactKeys(provider.createCoachRequestPayload(teaching(), 'mut', 'economy'), OUTBOUND_KEYS));
+    const missing = await importMutatedModule(candidate,
+      'export function createCoachRequestPayload(teachingMessage, requestId, modelProfile) {',
+      "  const broken = { ...createCoachRequestPayloadFromSnapshot(snapshotTeachingMessage(teachingMessage), requestId, modelProfile) }; delete broken.modelProfile; return broken;", eol);
+    detects('BROKEN_R3C2_MODEL_PROFILE_NOT_SENT_WOULD_FAIL', () =>
+      assertExactKeys(missing.createCoachRequestPayload(teaching(), 'mut', 'economy'), OUTBOUND_KEYS));
+    const mismatch = await importReplacedModule(candidate,
+      '    && response.modelProfile === activeRequest.modelProfile', '    && true', eol);
+    const started = begin();
+    detects('BROKEN_R3C2_MODEL_PROFILE_RESPONSE_MISMATCH_WOULD_FAIL', () =>
+      assert.equal(mismatch.settleCoachResponse({ state: started.state, currentTeachingMessage: teaching(),
+        currentModelProfile: 'economy', response: { ...responseFor(started.request), modelProfile: 'quality' } }).accepted, false));
+    let changed = replaceUniqueLine(candidate,
+      "    if (!validModelProfile(input.currentModelProfile) || input.currentModelProfile !== state.modelProfile) {",
+      '    if (false) {', eol);
+    changed = replaceUniqueLine(changed,
+      '    const currentIdentity = createIdentity(currentTeachingMessage, state.identity.coachRevision, input.currentModelProfile);',
+      '    const currentIdentity = createIdentity(currentTeachingMessage, state.identity.coachRevision, state.modelProfile);', eol);
+    const stale = await import(`data:text/javascript;base64,${Buffer.from(changed).toString('base64')}`);
+    detects('BROKEN_R3C2_MODEL_PROFILE_CHANGED_DURING_REQUEST_WOULD_FAIL', () =>
+      assert.equal(stale.settleCoachResponse({ state: started.state, currentTeachingMessage: teaching(),
+        currentModelProfile: 'quality', response: responseFor(started.request) }).accepted, false));
+    const accessor = await importReplacedModule(candidate,
+      "    const input = snapshotExactDataObject(options, ['state', 'teachingMessage', 'requestId', 'modelProfile']);",
+      '    const input = { ...options };', eol);
+    let calls = 0;
+    const hostile = { state: createIdleCoachState(), teachingMessage: teaching(), requestId: 'mut',
+      get modelProfile() { calls++; return 'economy'; } };
+    assert.equal(accessor.beginCoachRequest(hostile).accepted, true);
+    detects('BROKEN_R3C2_MODEL_PROFILE_ACCESSOR_WOULD_FAIL', () => assert.equal(calls, 0));
+    assert.equal(calls, 1, 'mutant executed the getter');
+  }
+});
 
 function teaching(overrides = {}) {
   const base = {
@@ -52,10 +225,11 @@ function teaching(overrides = {}) {
 
 function responseFor(request, framing = {}) {
   return {
-    version: GAME_REVIEW_COACH_VERSION,
+    version: 2,
     requestId: request.requestId,
     sourceRuleId: request.sourceRuleId,
     style: request.style,
+    modelProfile: request.modelProfile,
     framing: {
       leadIn: '先停一下，慢慢想一想。',
       encouragement: '你可以照自己的步調思考。',
@@ -65,13 +239,13 @@ function responseFor(request, framing = {}) {
 }
 
 function begin(message = teaching(), requestId = 'request-001', state = createIdleCoachState()) {
-  const result = beginCoachRequest({ state, teachingMessage: message, requestId });
+  const result = beginCoachRequest({ modelProfile: 'economy', state, teachingMessage: message, requestId });
   assert.equal(result.accepted, true);
   return result;
 }
 
 function settle(beginResult, message = teaching(), response = responseFor(beginResult.request)) {
-  return settleCoachResponse({
+  return settleCoachResponse({ currentModelProfile: 'economy',
     state: beginResult.state,
     currentTeachingMessage: message,
     response,
@@ -295,17 +469,17 @@ test('disabled and idle states are exact immutable values', () => {
   const idle = createIdleCoachState(4);
   assertExactKeys(disabled, STATE_KEYS);
   assert.deepEqual(disabled, {
-    version: 1, status: 'disabled', revision: 0, identity: null, request: null, framing: null,
+    version: 2, status: 'disabled', revision: 0, identity: null, request: null, framing: null, modelProfile: 'economy',
   });
   assert.deepEqual(idle, {
-    version: 1, status: 'idle', revision: 4, identity: null, request: null, framing: null,
+    version: 2, status: 'idle', revision: 4, identity: null, request: null, framing: null, modelProfile: 'economy',
   });
   assertDeepFrozen(disabled);
   assertDeepFrozen(idle);
 });
 
 test('disabled state cannot begin or build a sendable request', () => {
-  const result = beginCoachRequest({
+  const result = beginCoachRequest({ modelProfile: 'economy',
     state: createDisabledCoachState(), teachingMessage: teaching(), requestId: 'disabled-request',
   });
   assert.equal(result.accepted, false);
@@ -313,16 +487,17 @@ test('disabled state cannot begin or build a sendable request', () => {
   assert.equal(result.reason, 'DISABLED');
 });
 
-test('valid begin emits the exact five-key outbound payload and localizes identity', () => {
+test('valid begin emits the exact six-key v2 outbound payload and localizes identity', () => {
   const input = teaching();
   const before = clone(input);
   const result = begin(input);
   assert.deepEqual(result.request, {
-    version: 1,
+    version: 2,
     requestId: 'request-001',
     locale: GAME_REVIEW_COACH_LOCALE,
     sourceRuleId: 'check-difference',
     style: GAME_REVIEW_COACH_STYLE,
+    modelProfile: 'economy',
   });
   assertExactKeys(result.request, OUTBOUND_KEYS);
   for (const key of [
@@ -355,7 +530,7 @@ test('same-move, unknown-rule and malformed teaching messages fail closed', () =
     { ...teaching(), extra: true },
     { ...teaching(), title: '' },
   ]) {
-    const result = beginCoachRequest({
+    const result = beginCoachRequest({ modelProfile: 'economy',
       state: createIdleCoachState(), teachingMessage: message, requestId: 'bad-teaching',
     });
     assert.equal(result.accepted, false);
@@ -364,9 +539,9 @@ test('same-move, unknown-rule and malformed teaching messages fail closed', () =
 });
 
 test('request identifiers are bounded opaque strings', () => {
-  assert.ok(createCoachRequestPayload(teaching(), 'x'.repeat(64)));
+  assert.ok(createCoachRequestPayload(teaching(), 'x'.repeat(64), 'economy'));
   for (const requestId of ['', ' x', 'x y', 'x\n', 'x'.repeat(65), 1, null]) {
-    assert.equal(createCoachRequestPayload(teaching(), requestId), null);
+    assert.equal(createCoachRequestPayload(teaching(), requestId, 'economy'), null);
   }
 });
 
@@ -519,9 +694,9 @@ test('invalidate removes active and successful framing, advances revision and re
   const oldResponse = responseFor(started.request);
   const invalidatedLoading = invalidateCoachState(started.state);
   assert.deepEqual(invalidatedLoading, {
-    version: 1, status: 'idle', revision: 2, identity: null, request: null, framing: null,
+    version: 2, status: 'idle', revision: 2, identity: null, request: null, framing: null, modelProfile: 'economy',
   });
-  assert.equal(settleCoachResponse({
+  assert.equal(settleCoachResponse({ currentModelProfile: 'economy',
     state: invalidatedLoading, currentTeachingMessage: teaching(), response: oldResponse,
   }).accepted, false);
 
@@ -582,8 +757,8 @@ test('accessor properties are rejected at every consumed depth without invoking 
   const messageAccessor = teaching();
   delete messageAccessor.ruleId;
   accessor(messageAccessor, 'ruleId', 'check-difference');
-  assert.equal(createCoachRequestPayload(messageAccessor, 'accessor-message'), null);
-  const accessorBegin = beginCoachRequest({
+  assert.equal(createCoachRequestPayload(messageAccessor, 'accessor-message', 'economy'), null);
+  const accessorBegin = beginCoachRequest({ modelProfile: 'economy',
     state: createIdleCoachState(), teachingMessage: messageAccessor, requestId: 'accessor-message',
   });
   assert.equal(accessorBegin.accepted, false);
@@ -593,7 +768,7 @@ test('accessor properties are rejected at every consumed depth without invoking 
   const sourceAccessor = teaching();
   delete sourceAccessor.source.recordId;
   accessor(sourceAccessor.source, 'recordId', 'coach-fixture');
-  assert.equal(createCoachRequestPayload(sourceAccessor, 'accessor-source'), null);
+  assert.equal(createCoachRequestPayload(sourceAccessor, 'accessor-source', 'economy'), null);
 
   const evidenceAccessor = teaching();
   const evidenceRefs = [];
@@ -609,7 +784,7 @@ test('accessor properties are rejected at every consumed depth without invoking 
   getterCounts.push(() => evidenceGetterCalls);
   evidenceRefs.length = 1;
   evidenceAccessor.evidenceRefs = evidenceRefs;
-  assert.equal(createCoachRequestPayload(evidenceAccessor, 'accessor-array'), null);
+  assert.equal(createCoachRequestPayload(evidenceAccessor, 'accessor-array', 'economy'), null);
 
   const started = begin();
   const response = responseFor(started.request);
@@ -623,7 +798,7 @@ test('accessor properties are rejected at every consumed depth without invoking 
   accessor(topLevelResponse, 'framing', safeFraming);
   assert.equal(settle(started, teaching(), topLevelResponse).accepted, false);
 
-  const optionAccessor = {};
+  const optionAccessor = { modelProfile: 'economy', teachingMessage: teaching(), requestId: 'accessor-options' };
   accessor(optionAccessor, 'state', createIdleCoachState());
   assert.equal(beginCoachRequest(optionAccessor).accepted, false);
 
@@ -631,7 +806,7 @@ test('accessor properties are rejected at every consumed depth without invoking 
   delete stateAccessor.revision;
   accessor(stateAccessor, 'revision', 0);
   Object.freeze(stateAccessor);
-  assert.equal(beginCoachRequest({
+  assert.equal(beginCoachRequest({ modelProfile: 'economy',
     state: stateAccessor, teachingMessage: teaching(), requestId: 'accessor-state',
   }).accepted, false);
   assert.ok(getterCounts.every((readCount) => readCount() === 0),
@@ -654,8 +829,8 @@ test('hostile scalar objects reject without executing getters or freezing caller
 
   const title = hostileScalar();
   const titleMessage = teaching({ title: title.value });
-  assert.equal(createCoachRequestPayload(titleMessage, 'scalar-title'), null);
-  assert.equal(beginCoachRequest({
+  assert.equal(createCoachRequestPayload(titleMessage, 'scalar-title', 'economy'), null);
+  assert.equal(beginCoachRequest({ modelProfile: 'economy',
     state: createIdleCoachState(), teachingMessage: titleMessage, requestId: 'scalar-title',
   }).accepted, false);
   assert.equal(title.getterCalls(), 0, 'R3C2_SCALAR_OBJECT_TITLE_GETTER_INVOCATIONS=0');
@@ -664,7 +839,7 @@ test('hostile scalar objects reject without executing getters or freezing caller
 
   const sourceRecordId = hostileScalar();
   const sourceMessage = teaching({ source: { recordId: sourceRecordId.value } });
-  assert.equal(createCoachRequestPayload(sourceMessage, 'scalar-source'), null);
+  assert.equal(createCoachRequestPayload(sourceMessage, 'scalar-source', 'economy'), null);
   assert.equal(sourceRecordId.getterCalls(), 0,
     'R3C2_SCALAR_OBJECT_SOURCE_GETTER_INVOCATIONS=0');
   assert.equal(Object.isFrozen(sourceRecordId.value), false);
@@ -684,7 +859,7 @@ test('hostile scalar objects reject without executing getters or freezing caller
 
   const revision = hostileScalar();
   const hostileState = Object.freeze({ ...createIdleCoachState(), revision: revision.value });
-  assert.equal(beginCoachRequest({
+  assert.equal(beginCoachRequest({ modelProfile: 'economy',
     state: hostileState, teachingMessage: teaching(), requestId: 'scalar-revision',
   }).accepted, false);
   const invalidated = invalidateCoachState(hostileState);
@@ -724,8 +899,8 @@ test('hostile reflection failures reject without throwing', () => {
     }),
   ];
   for (const hostileProxy of hostileProxies) {
-    assert.doesNotThrow(() => createCoachRequestPayload(hostileProxy, 'proxy'));
-    assert.equal(createCoachRequestPayload(hostileProxy, 'proxy'), null);
+    assert.doesNotThrow(() => createCoachRequestPayload(hostileProxy, 'proxy', 'economy'));
+    assert.equal(createCoachRequestPayload(hostileProxy, 'proxy', 'economy'), null);
     assert.doesNotThrow(() => beginCoachRequest(hostileProxy));
     assert.equal(beginCoachRequest(hostileProxy).accepted, false);
     assert.doesNotThrow(() => settleCoachResponse(hostileProxy));
@@ -733,8 +908,8 @@ test('hostile reflection failures reject without throwing', () => {
 
     const nestedMessage = teaching();
     nestedMessage.source = hostileProxy;
-    assert.doesNotThrow(() => createCoachRequestPayload(nestedMessage, 'nested-proxy'));
-    assert.equal(createCoachRequestPayload(nestedMessage, 'nested-proxy'), null);
+    assert.doesNotThrow(() => createCoachRequestPayload(nestedMessage, 'nested-proxy', 'economy'));
+    assert.equal(createCoachRequestPayload(nestedMessage, 'nested-proxy', 'economy'), null);
 
     const started = begin();
     const nestedResponse = responseFor(started.request);
@@ -785,24 +960,24 @@ test('revision exhaustion stays safe, inert and stale-response resistant', () =>
   const oldResponse = responseFor(atMax.request);
   const exhausted = invalidateCoachState(atMax.state);
   assert.deepEqual(exhausted, {
-    version: 1,
+    version: 2,
     status: 'disabled',
     revision: Number.MAX_SAFE_INTEGER,
     identity: null,
     request: null,
-    framing: null,
+    framing: null, modelProfile: 'economy',
   });
-  assert.equal(settleCoachResponse({
+  assert.equal(settleCoachResponse({ currentModelProfile: 'economy',
     state: exhausted, currentTeachingMessage: message, response: oldResponse,
   }).accepted, false);
-  const retry = beginCoachRequest({
+  const retry = beginCoachRequest({ modelProfile: 'economy',
     state: exhausted, teachingMessage: message, requestId: 'max-revision-request',
   });
   assert.equal(retry.accepted, false);
   assert.equal(retry.reason, 'DISABLED');
 
   const idleAtMax = createIdleCoachState(Number.MAX_SAFE_INTEGER);
-  const exhaustedBegin = beginCoachRequest({
+  const exhaustedBegin = beginCoachRequest({ modelProfile: 'economy',
     state: idleAtMax, teachingMessage: message, requestId: 'exhausted-begin',
   });
   assert.equal(exhaustedBegin.accepted, false);
@@ -812,14 +987,14 @@ test('revision exhaustion stays safe, inert and stale-response resistant', () =>
 
   for (const revision of [NaN, Infinity, -Infinity, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
     const hostileState = Object.freeze({
-      version: 1,
+      version: 2,
       status: 'idle',
       revision,
       identity: null,
       request: null,
-      framing: null,
+      framing: null, modelProfile: 'economy',
     });
-    const result = beginCoachRequest({
+    const result = beginCoachRequest({ modelProfile: 'economy',
       state: hostileState, teachingMessage: message, requestId: 'invalid-revision',
     });
     assert.equal(result.accepted, false, String(revision));
@@ -864,8 +1039,8 @@ test('accessor snapshot mutants leak or accept unsafe framing on every EOL', asy
   for (const [eolLabel, candidate] of sourceForms()) {
     const outboundMutant = await importMutatedModule(
       candidate,
-      'export function createCoachRequestPayload(teachingMessage, requestId) {',
-      "  return deepFreeze({ version: 1, requestId, locale: 'zh-Hant', sourceRuleId: teachingMessage.ruleId, style: 'child-neutral-teacher-v1' });",
+      'export function createCoachRequestPayload(teachingMessage, requestId, modelProfile) {',
+      "  return deepFreeze({ version: 2, requestId, locale: 'zh-Hant', sourceRuleId: teachingMessage.ruleId, style: 'child-neutral-teacher-v1', modelProfile });",
       `${eolLabel} accessor outbound`,
     );
     let outboundGetterCalls = 0;
@@ -878,7 +1053,7 @@ test('accessor snapshot mutants leak or accept unsafe framing on every EOL', asy
         return accessorMessage.body;
       },
     });
-    const leaked = outboundMutant.createCoachRequestPayload(accessorMessage, 'accessor-leak');
+    const leaked = outboundMutant.createCoachRequestPayload(accessorMessage, 'accessor-leak', 'economy');
     assert.throws(() => assert.equal(leaked, null),
       (error) => error?.code === 'ERR_ASSERTION',
       `${eolLabel} BROKEN_R3C2_ACCESSOR_TOCTOU_LEAK_WOULD_FAIL`);
@@ -890,17 +1065,18 @@ test('accessor snapshot mutants leak or accept unsafe framing on every EOL', asy
       '    const response = input.response;',
       `${eolLabel} accessor framing`,
     );
-    const started = framingMutant.beginCoachRequest({
+    const started = framingMutant.beginCoachRequest({ modelProfile: 'economy',
       state: framingMutant.createIdleCoachState(),
       teachingMessage: teaching(),
       requestId: 'accessor-framing',
     });
     let framingGetterCalls = 0;
     const hostileResponse = {
-      version: 1,
+      version: 2,
       requestId: started.request.requestId,
       sourceRuleId: started.request.sourceRuleId,
       style: started.request.style,
+      modelProfile: started.request.modelProfile,
     };
     Object.defineProperty(hostileResponse, 'framing', {
       enumerable: true,
@@ -911,7 +1087,7 @@ test('accessor snapshot mutants leak or accept unsafe framing on every EOL', asy
           : { leadIn: '這步會將軍', encouragement: '<b>可以吃車</b>' };
       },
     });
-    const unsafe = framingMutant.settleCoachResponse({
+    const unsafe = framingMutant.settleCoachResponse({ currentModelProfile: 'economy',
       state: started.state,
       currentTeachingMessage: teaching(),
       response: hostileResponse,
@@ -942,7 +1118,7 @@ test('pre-validation freeze mutants execute getters and freeze caller input on e
         },
       });
       const result = mutant.createCoachRequestPayload(
-        teaching({ title: hostileTitle }), `freeze-mutant-${eolLabel}`,
+        teaching({ title: hostileTitle }), `freeze-mutant-${eolLabel}`, 'economy',
       );
       assert.equal(result, null);
       assert.throws(() => assert.equal(getterCalls, 0),
@@ -971,11 +1147,11 @@ test('lossy homograph removal mutant restores the exact pre-fix chess-claim bypa
       "  value = value.replace(/(?:馬上|將來)/gu, '');",
       `${eolLabel} lossy homograph`,
     );
-    const mutantStarted = mutant.beginCoachRequest({
+    const mutantStarted = mutant.beginCoachRequest({ modelProfile: 'economy',
       state: mutant.createIdleCoachState(), teachingMessage: teaching(), requestId: 'lossy-homograph',
     });
     const mutantResponse = responseFor(mutantStarted.request, { leadIn: preFixClaim });
-    const accepted = mutant.settleCoachResponse({
+    const accepted = mutant.settleCoachResponse({ currentModelProfile: 'economy',
       state: mutantStarted.state,
       currentTeachingMessage: teaching(),
       response: mutantResponse,
@@ -994,7 +1170,7 @@ test('overflow and wrap mutants violate the bounded revision contract on every E
       '  return current + 1;',
       `${eolLabel} revision overflow`,
     );
-    const overflow = overflowMutant.beginCoachRequest({
+    const overflow = overflowMutant.beginCoachRequest({ modelProfile: 'economy',
       state: overflowMutant.createIdleCoachState(Number.MAX_SAFE_INTEGER),
       teachingMessage: teaching(),
       requestId: 'overflow-mutant',
@@ -1009,19 +1185,19 @@ test('overflow and wrap mutants violate the bounded revision contract on every E
       '  if (current === Number.MAX_SAFE_INTEGER) return 0;',
       `${eolLabel} revision wrap`,
     );
-    const original = wrapMutant.beginCoachRequest({
+    const original = wrapMutant.beginCoachRequest({ modelProfile: 'economy',
       state: wrapMutant.createIdleCoachState(Number.MAX_SAFE_INTEGER - 1),
       teachingMessage: teaching(),
       requestId: 'wrapped-request',
     });
     const oldResponse = responseFor(original.request);
     const wrapped = wrapMutant.invalidateCoachState(original.state);
-    const replacement = wrapMutant.beginCoachRequest({
+    const replacement = wrapMutant.beginCoachRequest({ modelProfile: 'economy',
       state: wrapped,
       teachingMessage: teaching(),
       requestId: 'wrapped-request',
     });
-    const stale = wrapMutant.settleCoachResponse({
+    const stale = wrapMutant.settleCoachResponse({ currentModelProfile: 'economy',
       state: replacement.state,
       currentTeachingMessage: teaching(),
       response: oldResponse,
@@ -1051,7 +1227,7 @@ test('exact outbound allowlist rejects isolated raw-data and arbitrary-interface
     for (const [eolLabel, candidate] of sourceForms()) {
       for (const [mutation, label] of mutations) {
         const mutant = await importMutatedModule(candidate, target, mutation, `${eolLabel} ${label}`);
-        const payload = mutant.createCoachRequestPayload(teaching(), 'mutation-request');
+        const payload = mutant.createCoachRequestPayload(teaching(), 'mutation-request', 'economy');
         assert.throws(() => assertExactKeys(payload, OUTBOUND_KEYS),
           (error) => error?.code === 'ERR_ASSERTION', `${eolLabel} ${label}`);
       }
@@ -1076,11 +1252,11 @@ test('stale invalidation and canonical fallback mutants execute and fail on ever
       '  return state;',
       `${eolLabel} stale`,
     );
-    const staleStarted = staleMutant.beginCoachRequest({
+    const staleStarted = staleMutant.beginCoachRequest({ modelProfile: 'economy',
       state: staleMutant.createIdleCoachState(), teachingMessage: teaching(), requestId: 'stale-r1',
     });
     const staleState = staleMutant.invalidateCoachState(staleStarted.state);
-    const staleSettled = staleMutant.settleCoachResponse({
+    const staleSettled = staleMutant.settleCoachResponse({ currentModelProfile: 'economy',
       state: staleState,
       currentTeachingMessage: teaching(),
       response: responseFor(staleStarted.request),
@@ -1095,12 +1271,12 @@ test('stale invalidation and canonical fallback mutants execute and fail on ever
       '      title: currentTeachingMessage.title,',
       `${eolLabel} fallback`,
     );
-    const fallbackStarted = fallbackMutant.beginCoachRequest({
+    const fallbackStarted = fallbackMutant.beginCoachRequest({ modelProfile: 'economy',
       state: fallbackMutant.createIdleCoachState(),
       teachingMessage: teaching(),
       requestId: 'fallback-r1',
     });
-    const fallbackSettled = fallbackMutant.settleCoachResponse({
+    const fallbackSettled = fallbackMutant.settleCoachResponse({ currentModelProfile: 'economy',
       state: fallbackStarted.state,
       currentTeachingMessage: teaching(),
       response: responseFor(fallbackStarted.request),
@@ -1115,7 +1291,7 @@ test('stale invalidation and canonical fallback mutants execute and fail on ever
 });
 
 test('API-key, engine and storage source mutants fail guards on LF, CRLF and checkout EOLs', () => {
-  const target = 'export const GAME_REVIEW_COACH_VERSION = 1;';
+  const target = 'export const GAME_REVIEW_COACH_VERSION = 2;';
   const mutants = [
     ["const OPENAI_API_KEY = 'secret';", 'BROKEN_R3C2_BROWSER_API_KEY_WOULD_FAIL'],
     ["import/**/'./game.js';", 'BROKEN_R3C2_CALLS_ENGINE_WOULD_FAIL'],
@@ -1151,7 +1327,7 @@ test('deterministic hostile fuzz covers 3000 cases with replay equivalence', () 
         const started = begin(teaching(), `fuzz-${index}`);
         const text = `${String.fromCodePoint(0x4e00 + (next() % 100))}${index}`;
         result = settle(started, teaching(), responseFor(started.request, { leadIn: text }));
-      } else if (choice === 4) result = createCoachRequestPayload(teaching(), `fuzz-${next()}`);
+      } else if (choice === 4) result = createCoachRequestPayload(teaching(), `fuzz-${next()}`, 'economy');
       else if (choice === 5) {
         const accessorMessage = teaching();
         delete accessorMessage.ruleId;
@@ -1159,7 +1335,7 @@ test('deterministic hostile fuzz covers 3000 cases with replay equivalence', () 
           enumerable: true,
           get() { return index % 2 ? 'check-difference' : accessorMessage.body; },
         });
-        result = createCoachRequestPayload(accessorMessage, `fuzz-accessor-${index}`);
+        result = createCoachRequestPayload(accessorMessage, `fuzz-accessor-${index}`, 'economy');
       } else if (choice === 6) {
         const revisions = [
           Number.MAX_SAFE_INTEGER - 1,
@@ -1171,7 +1347,7 @@ test('deterministic hostile fuzz covers 3000 cases with replay equivalence', () 
           1.5,
         ];
         const state = createIdleCoachState(revisions[next() % revisions.length]);
-        result = beginCoachRequest({
+        result = beginCoachRequest({ modelProfile: 'economy',
           state, teachingMessage: teaching(), requestId: `fuzz-revision-${index}`,
         });
       } else if (choice === 7) {
@@ -1192,7 +1368,7 @@ test('deterministic hostile fuzz covers 3000 cases with replay equivalence', () 
         });
         result = {
           result: createCoachRequestPayload(
-            teaching({ title: hostileTitle }), `fuzz-scalar-title-${index}`,
+            teaching({ title: hostileTitle }), `fuzz-scalar-title-${index}`, 'economy',
           ),
           getterCalls,
           frozen: Object.isFrozen(hostileTitle),

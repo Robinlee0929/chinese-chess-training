@@ -29,6 +29,7 @@ import {
   createTeachingFingerprint,
   beginCoachRequest,
   settleCoachResponse,
+  selectCoachModelProfile,
   invalidateCoachState,
 } from './game-review-coach.js';
 
@@ -197,10 +198,12 @@ function harness(options = {}) {
       state: input.state,
       teachingMessage: input.teachingMessage,
       requestId: input.requestId,
+      modelProfile: input.modelProfile,
     }),
     settleCoachResponse: (input) => settleCoachResponse({
       state: input.state,
       currentTeachingMessage: input.currentTeachingMessage,
+      currentModelProfile: input.currentModelProfile,
       response: input.response,
     }),
     AbortController,
@@ -232,7 +235,7 @@ function harness(options = {}) {
     'btnPracticeExit']) context[name] = node();
   for (const name of ['gameReviewTeaching', 'gameReviewCoachLeadIn', 'gameReviewTeachingTitle',
     'gameReviewTeachingBody', 'gameReviewCoachEncouragement', 'btnGameReviewCoach',
-    'gameReviewCoachStatus']) context[name] = node();
+    'gameReviewCoachStatus', 'gameReviewCoachProfileControl', 'gameReviewCoachModelProfile']) context[name] = node();
   for (const name of photoCanvasNames) context[name] = name === 'recognitionTargetCanvas'
     ? photoCanvas(112, 112) : photoCanvas();
   context.lastFromMark = { visible: false };
@@ -629,6 +632,7 @@ async function assertR4CoachReturn(options = {}) {
     from: { r: 2, c: 3 }, to: { r: 3, c: 3 },
   });
   const ctx = harness({ coachEnabled: true, ...options });
+  ctx.gameReviewCoachState = selectCoachModelProfile(ctx.gameReviewCoachState, options.modelProfile ?? 'economy');
   ctx.appState = ctx.APP_STATE.GAME_REVIEW;
   ctx.gameReviewSession = reviewSession;
   ctx.gameReviewEvidenceState = evidence;
@@ -646,6 +650,7 @@ async function assertR4CoachReturn(options = {}) {
     requestId: pending.request.requestId,
     sourceRuleId: pending.request.sourceRuleId,
     style: pending.request.style,
+    modelProfile: pending.request.modelProfile,
     framing: {
       leadIn: '可以一起看看這個地方。',
       encouragement: '下次也可以先停一下想想。',
@@ -663,6 +668,8 @@ async function assertR4CoachReturn(options = {}) {
   assert.equal(ctx.createPuzzleFromGameReview(invoker), true);
   assert.equal(ctx.appState, ctx.APP_STATE.PUZZLE_EDITOR);
   assert.equal(ctx.gameReviewCoachState.status, 'idle');
+  assert.equal(ctx.gameReviewCoachState.modelProfile, options.modelProfile ?? 'economy');
+  assert.equal(ctx.gameReviewCoachProfileControl.classList.contains('hidden'), true);
   assert.equal(ctx.gameReviewCoachLeadIn.textContent, '');
   assert.equal(ctx.gameReviewCoachEncouragement.textContent, '');
   assert.equal(ctx.btnGameReviewCoach.classList.contains('hidden'), true);
@@ -678,7 +685,7 @@ async function assertR4CoachReturn(options = {}) {
   assert.equal(invoker.focused, true);
 }
 test('R4 handoff invalidates successful R3C2 framing and exact Review return cannot resurrect it', async () => {
-  await assertR4CoachReturn();
+  for (const modelProfile of ['economy', 'balanced', 'quality']) await assertR4CoachReturn({ modelProfile });
 });
 test('R4 coach resurrection mutant fails the actual production return regression', async () => {
   await assert.rejects(() => assertR4CoachReturn({ r4CoachResurrection: true }),

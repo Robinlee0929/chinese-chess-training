@@ -6,8 +6,8 @@ import {
   inCheck,
   name,
   repetitionVerdict,
-} from './game.js?v=51be239e94';
-import { createGameAnalysis, applyGameAnalysisMove } from './game-analysis.js?v=51be239e94';
+} from './game.js?v=79cf894baf';
+import { createGameAnalysis, applyGameAnalysisMove } from './game-analysis.js?v=79cf894baf';
 
 export const GAME_REVIEW_EVIDENCE_KIND = 'review-move-comparison';
 export const GAME_REVIEW_EVIDENCE_CANONICAL = 'CANONICAL_FACT';

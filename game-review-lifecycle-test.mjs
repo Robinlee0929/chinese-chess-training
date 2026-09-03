@@ -30,7 +30,10 @@ import {
   beginCoachRequest,
   settleCoachResponse,
   invalidateCoachState,
+  selectCoachModelProfile,
 } from './game-review-coach.js';
+import { readCoachModelProfilePreference, writeCoachModelProfilePreference,
+  COACH_MODEL_PROFILE_STORAGE_KEY } from './coach-model-profile-preference.js';
 
 const source = readFileSync(new URL('./main.js', import.meta.url), 'utf8');
 const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
@@ -163,7 +166,8 @@ function harness({
   records = [], serialized, readError, writeError, confirm = true,
   mode = 'pvp', turn = RED, realRenderer = false, rendererMutation = null,
   reviewAiMutation = null, teachingMutation = null, workerCreationError = false,
-  coachEnabled = false, coachMutation = null,
+  coachEnabled = false, coachMutation = null, coachEol = null,
+  profileValue = null, profileStorageError = null,
 } = {}) {
   let stored = serialized === undefined
     ? (records.length ? JSON.stringify({ version: 1, records }) : null)
@@ -330,13 +334,18 @@ function harness({
       state: options.state,
       teachingMessage: options.teachingMessage,
       requestId: options.requestId,
+      modelProfile: options.modelProfile,
     }),
     settleCoachResponse: (options) => settleCoachResponse({
       state: options.state,
       currentTeachingMessage: options.currentTeachingMessage,
+      currentModelProfile: options.currentModelProfile,
       response: options.response,
     }),
     invalidateCoachState,
+    selectCoachModelProfile,
+    writeCoachModelProfilePreference,
+    readCoachModelProfilePreference,
     AbortController,
     GAME_RECORD_MODE_LABELS: Object.freeze({
       pvp: '雙人對弈', easy: '人機・簡單', medium: '人機・中等', hard: '人機・困難',
@@ -384,6 +393,8 @@ function harness({
     gameReviewCoachEncouragement: domNode(true),
     btnGameReviewCoach: domNode(true, 'button'),
     gameReviewCoachStatus: domNode(),
+    gameReviewCoachProfileControl: domNode(true),
+    gameReviewCoachModelProfile: domNode(),
     staleCoachState: null,
     btnGameReviewCreatePuzzle: domNode(),
     btnGameReviewBack: domNode(),
@@ -483,6 +494,7 @@ function harness({
     'invalidateGameReviewCoach', 'renderGameReviewCoach',
     'finishGameReviewCoachFailure', 'handleGameReviewCoachResponse',
     'requestGameReviewCoach',
+    'changeGameReviewCoachModelProfile',
     'terminateGameReviewAiWorker', 'invalidateGameReviewAi',
     'gameReviewEvidenceTerminalText', 'gameReviewEvidenceFactTexts',
     'renderGameReviewTeaching', 'renderGameReviewEvidence', 'renderGameReviewAi',
@@ -513,7 +525,10 @@ function harness({
       `const review = gameReviewSession;\n  ${mutations[rendererMutation]}`,
     );
   }
-  const mainFunctions = names.map(functionSource);
+  const mainFunctions = names.map(name => {
+    const text = functionSource(name);
+    return coachEol ? text.replace(/\r\n?/g, '\n').replace(/\n/g, coachEol) : text;
+  });
   if (reviewAiMutation === 'doMove') {
     const index = names.indexOf('handleGameReviewAiResponse');
     mainFunctions[index] = mainFunctions[index].replace(
@@ -548,7 +563,10 @@ function harness({
       mainFunctions[index] = before.replace(target, replacement);
       assert.notEqual(mainFunctions[index], before, `coach mutation applied: ${coachMutation}`);
     };
-    if (coachMutation === 'auto-request') {
+    if (coachMutation === 'profile-auto-request') {
+      replaceIn('changeGameReviewCoachModelProfile', '  return true;',
+        '  requestGameReviewCoach();\n  return true;');
+    } else if (coachMutation === 'auto-request') {
       replaceIn(
         'renderGameReviewTeaching',
         '  renderGameReviewCoach(message ?? null);',
@@ -624,6 +642,34 @@ function harness({
       assert.fail(`unknown coach mutation: ${coachMutation}`);
     }
   }
+  context.profileReads = 0;
+  context.profileWrites = [];
+  context.profileStorageAccesses = 0;
+  context.profileRaw = profileValue;
+  const profileStorage = {
+    getItem(key) {
+      assert.equal(key, COACH_MODEL_PROFILE_STORAGE_KEY);
+      context.profileReads++;
+      if (profileStorageError === 'read') throw new Error('read denied');
+      return context.profileRaw;
+    },
+    setItem(key, value) {
+      assert.equal(key, COACH_MODEL_PROFILE_STORAGE_KEY);
+      assert.ok(['economy', 'balanced', 'quality'].includes(value));
+      context.profileWrites.push([key, value]);
+      if (profileStorageError === 'write') throw new Error('quota');
+      context.profileRaw = value;
+    },
+  };
+  Object.defineProperty(context, 'localStorage', { get() {
+    context.profileStorageAccesses++;
+    if (profileStorageError === 'getter') throw new Error('SecurityError');
+    return profileStorage;
+  } });
+  // Execute the real capability-gated initialization, not a copied test decision.
+  const initialization = source.match(/let gameReviewCoachState = gameReviewCoachRequester[^]*?: createDisabledCoachState\(\);/)[0];
+  context.createDisabledCoachState = createDisabledCoachState;
+  vm.runInContext(initialization.replace('let gameReviewCoachState', 'globalThis.gameReviewCoachState'), context);
   vm.runInContext([...rendererHelpers, rendererSource, ...mainFunctions].filter(Boolean).join('\n'), context);
   const realCoachResponse = context.handleGameReviewCoachResponse;
   const realCoachSettlement = context.settleCoachResponse;
@@ -776,6 +822,7 @@ function validCoachResponse(pending, overrides = {}) {
     requestId: pending.request.requestId,
     sourceRuleId: pending.request.sourceRuleId,
     style: pending.request.style,
+    modelProfile: pending.request.modelProfile,
     framing: {
       leadIn: '可以一起看看這個地方。',
       encouragement: '下次也可以先停一下想想。',
@@ -1543,7 +1590,7 @@ test('R3C2-A2 capability gating, explicit request, loading and validated success
   assert.equal(ctx.requestGameReviewCoach(), true);
   assert.equal(ctx.coachRequests.length, 1);
   assert.deepEqual(Object.keys(ctx.coachRequests[0].request).sort(),
-    ['locale', 'requestId', 'sourceRuleId', 'style', 'version']);
+    ['locale', 'modelProfile', 'requestId', 'sourceRuleId', 'style', 'version']);
   assert.equal(ctx.gameReviewCoachState.status, 'loading');
   assert.equal(ctx.btnGameReviewCoach.disabled, false);
   assert.equal(ctx.btnGameReviewCoach.getAttribute('aria-disabled'), 'true');
@@ -1824,6 +1871,150 @@ test('R3C2-A2 observable mutants trip auto, duplicate, canonical, validator and 
     rules: canonical.gameRuleEvaluations,
     network: canonical.networkRequests,
   }, before);
+});
+
+test('A3 real initialization gates preference access and isolates invalid/blocked storage', () => {
+  for (const value of [null, 'balanced', 'quality', 'gpt-anything', ' Economy', '"quality"']) {
+    const disabled = harness({ profileValue: value });
+    assert.equal(disabled.profileStorageAccesses, 0);
+    assert.equal(disabled.profileReads, 0);
+    assert.equal(disabled.profileWrites.length, 0);
+    const ctx = harness({ coachEnabled: true, profileValue: value });
+    assert.equal(ctx.profileReads, 1);
+    assert.equal(ctx.gameReviewCoachState.modelProfile, ['balanced', 'quality'].includes(value) ? value : 'economy');
+    assert.equal(ctx.profileRaw, value, 'initialization never rewrites invalid preferences');
+    assert.equal(ctx.profileWrites.length, 0);
+  }
+  for (const profileStorageError of ['getter', 'read', 'write']) {
+    const ctx = harness({ records: [record('profile-storage')], realRenderer: true,
+      coachEnabled: true, profileStorageError });
+    prepareEligibleCoach(ctx, 'profile-storage');
+    ctx.gameReviewCoachModelProfile.value = 'quality';
+    assert.equal(ctx.changeGameReviewCoachModelProfile(), true);
+    assert.equal(ctx.gameReviewCoachState.modelProfile, 'quality');
+    assert.equal(ctx.requestGameReviewCoach(), true);
+    assert.equal(ctx.coachRequests[0].request.modelProfile, 'quality');
+  }
+});
+
+test('A3 explicit selection is the only profile write path; same/invalid choices and render are inert', async () => {
+  const ctx = harness({ records: [record('profile-write')], realRenderer: true, coachEnabled: true });
+  const canonical = prepareEligibleCoach(ctx, 'profile-write');
+  for (const value of ['economy', 'unknown']) {
+    ctx.gameReviewCoachModelProfile.value = value;
+    assert.equal(ctx.changeGameReviewCoachModelProfile(), false);
+  }
+  assert.equal(ctx.profileWrites.length, 0);
+  const gameWrites = ctx.storage.writes;
+  const engine = ctx.engineSearches;
+  const rules = ctx.gameRuleEvaluations;
+  for (const value of ['balanced', 'quality', 'economy']) {
+    ctx.gameReviewCoachModelProfile.value = value;
+    assert.equal(ctx.changeGameReviewCoachModelProfile(), true);
+    ctx.renderGameReviewTeaching(ctx.gameReviewEvidenceState);
+    assert.equal(ctx.gameReviewCoachModelProfile.value, value);
+    assert.equal(ctx.coachRequests.length, 0, 'BROKEN_R3C2_PROFILE_SWITCH_AUTO_REQUEST_WOULD_FAIL');
+  }
+  assert.deepEqual(ctx.profileWrites, ['balanced', 'quality', 'economy'].map(value => [COACH_MODEL_PROFILE_STORAGE_KEY, value]));
+  ctx.requestGameReviewCoach();
+  ctx.coachRequests[0].resolve(validCoachResponse(ctx.coachRequests[0]));
+  await flushCoachSettlement();
+  ctx.requestGameReviewCoach();
+  ctx.coachRequests[1].reject();
+  await flushCoachSettlement();
+  assert.equal(ctx.profileWrites.length, 3, 'request/success/error/render do not persist');
+  assert.equal(ctx.storage.writes, gameWrites);
+  assert.equal(ctx.engineSearches, engine);
+  assert.equal(ctx.gameRuleEvaluations, rules);
+  assert.equal(ctx.networkRequests, 0);
+  assert.deepEqual({ title: ctx.gameReviewTeachingTitle.textContent, body: ctx.gameReviewTeachingBody.textContent },
+    { title: canonical.title, body: canonical.body });
+});
+
+async function assertProfileSwitchLifecycle(coachMutation = null, coachEol = '\n') {
+  const ctx = harness({ records: [record('profile-stale')], realRenderer: true, coachEnabled: true,
+    coachMutation, coachEol });
+  const canonical = prepareEligibleCoach(ctx, 'profile-stale');
+  ctx.requestGameReviewCoach();
+  const old = ctx.coachRequests[0];
+  const revision = ctx.gameReviewCoachState.revision;
+  ctx.gameReviewCoachModelProfile.value = 'quality';
+  ctx.changeGameReviewCoachModelProfile();
+  assert.equal(old.signal.aborted, true);
+  assert.equal(ctx.gameReviewCoachState.status, 'idle');
+  assert.equal(ctx.gameReviewCoachState.revision, revision + 1);
+  assert.equal(ctx.gameReviewCoachLeadIn.textContent, '');
+  assert.equal(ctx.coachRequests.length, 1, 'BROKEN_R3C2_PROFILE_SWITCH_AUTO_REQUEST_WOULD_FAIL');
+  ctx.gameReviewCoachModelProfile.value = 'economy';
+  ctx.changeGameReviewCoachModelProfile();
+  ctx.requestGameReviewCoach();
+  const latest = ctx.coachRequests.at(-1);
+  latest.resolve(validCoachResponse(latest, { framing: { leadIn: '慢慢想一想。', encouragement: '可以再試一次。' } }));
+  await flushCoachSettlement();
+  const before = { lead: ctx.gameReviewCoachLeadIn.textContent, status: ctx.gameReviewCoachStatus.textContent,
+    state: ctx.gameReviewCoachState, writes: ctx.profileWrites.length };
+  assert.equal(before.lead, '慢慢想一想。');
+  old.resolve(validCoachResponse(old));
+  await flushCoachSettlement();
+  assert.equal(old.resolutionsDelivered, 1, 'hostile old response really arrived');
+  assert.equal(ctx.coachResponseDeliveries, 2);
+  assert.equal(ctx.gameReviewCoachLeadIn.textContent, before.lead, 'BROKEN_R3C2_PROFILE_SWITCH_STALE_RESPONSE_WOULD_FAIL');
+  assert.equal(ctx.gameReviewCoachStatus.textContent, before.status);
+  assert.equal(ctx.gameReviewCoachState, before.state);
+  assert.equal(ctx.profileWrites.length, before.writes);
+  assert.deepEqual({ title: ctx.gameReviewTeachingTitle.textContent, body: ctx.gameReviewTeachingBody.textContent },
+    { title: canonical.title, body: canonical.body });
+}
+
+test('A3 loading switch and economy-quality-economy keep late responses out of newer success', async () => {
+  await assertProfileSwitchLifecycle();
+});
+
+test('A3 old rejection cannot clear a newer profile request or write preferences', async () => {
+  const ctx = harness({ records: [record('profile-reject')], realRenderer: true, coachEnabled: true });
+  prepareEligibleCoach(ctx, 'profile-reject');
+  ctx.requestGameReviewCoach();
+  const old = ctx.coachRequests[0];
+  ctx.gameReviewCoachModelProfile.value = 'balanced';
+  ctx.changeGameReviewCoachModelProfile();
+  ctx.requestGameReviewCoach();
+  const current = ctx.gameReviewCoachRequest;
+  old.reject();
+  await flushCoachSettlement();
+  assert.equal(ctx.gameReviewCoachRequest, current);
+  assert.equal(ctx.gameReviewCoachState.status, 'loading');
+  assert.equal(ctx.profileWrites.length, 1);
+});
+
+test('A3 selection mutation gates execute production handlers in both LF and CRLF', async () => {
+  for (const eol of ['\n', '\r\n']) {
+    await assertProfileSwitchLifecycle(null, eol);
+    const automatic = harness({ records: [record('profile-auto')], realRenderer: true, coachEnabled: true,
+      coachMutation: 'profile-auto-request', coachEol: eol });
+    prepareEligibleCoach(automatic, 'profile-auto');
+    automatic.gameReviewCoachModelProfile.value = 'balanced';
+    automatic.changeGameReviewCoachModelProfile();
+    assert.equal(automatic.coachRequests.length, 1, 'mutant actually requested');
+    assert.throws(() => assert.equal(automatic.coachRequests.length, 0), error => error.code === 'ERR_ASSERTION',
+      'BROKEN_R3C2_PROFILE_SWITCH_AUTO_REQUEST_WOULD_FAIL');
+    await assert.rejects(() => assertProfileSwitchLifecycle('stale-settlement', eol),
+      error => error.code === 'ERR_ASSERTION' && /BROKEN_R3C2_PROFILE_SWITCH_STALE_RESPONSE_WOULD_FAIL/.test(error.message));
+  }
+});
+
+test('A3 R2 hides the selector, retains profile, and returns without requests or framing', () => {
+  const ctx = harness({ records: [record('profile-r2')], realRenderer: true, coachEnabled: true,
+    profileValue: 'balanced' });
+  prepareEligibleCoach(ctx, 'profile-r2');
+  ctx.requestGameReviewCoach();
+  ctx.enterGameAnalysis(ctx.btnGameReviewAnalyze);
+  assert.equal(ctx.gameReviewCoachProfileControl.classList.contains('hidden'), true);
+  assert.equal(ctx.gameReviewCoachState.modelProfile, 'balanced');
+  ctx.returnToGameReview();
+  assert.equal(ctx.coachRequests.length, 1);
+  assert.equal(ctx.gameReviewCoachLeadIn.textContent, '');
+  assert.equal(ctx.gameReviewCoachState.modelProfile, 'balanced');
+  assert.equal(ctx.profileWrites.length, 0);
 });
 
 test('source and DOM contain explicit read-only, accessibility and responsive guards', () => {

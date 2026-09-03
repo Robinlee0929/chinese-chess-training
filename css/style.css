@@ -1192,6 +1192,14 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
   font-size: 12px;
   font-weight: 700;
 }
+.game-review-coach-profile label { display: block; margin-top: 10px; }
+.game-review-coach-profile select {
+  width: 100%; max-width: 100%; min-height: 44px; box-sizing: border-box;
+  margin-top: 6px; padding: 8px; font: inherit;
+  color: inherit; background: #252525; border: 1px solid #888; border-radius: 6px;
+}
+.game-review-coach-profile select:focus-visible { outline: 2px solid #e6b96b; outline-offset: 2px; }
+.game-review-coach-profile p { font-size: 0.85em; }
 .game-review-coach-button[aria-disabled="true"] {
   opacity: 0.65;
   cursor: progress;

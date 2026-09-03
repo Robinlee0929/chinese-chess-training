@@ -89,6 +89,16 @@ python -m http.server 8000
 
 ## 執行需求
 
+### R3C2-A3 模擬教練模型設定
+
+Coach request／response 現在使用 v2，request 精確六鍵：`version`、`requestId`、`locale`、`sourceRuleId`、`style`、`modelProfile`；不提供 v1 相容 runtime。Provider-neutral profiles 固定為 `economy`（經濟，預設）、`balanced`（平衡）、`quality`（高階）。原生選單只在啟用 mock requester 且有可用複盤教學時顯示，選擇只驗證 mock 契約，不代表已連接模型或有實測品質差異。
+
+只有使用者明確切換不同合法設定時，會將原始 profile 字串寫入 `chinese-chess-training:coach-model-profile:v1`。異常值讀取後使用 economy，不自動覆寫；儲存受阻不影響本頁操作。預設關閉路徑不讀寫此偏好。請求、回應、framing、棋局資料、API key、實際模型 ID 和供應商 ID 都不寫入這項偏好，A1 純契約仍沒有儲存依賴。
+
+切換設定會清除 framing、作廢並 abort 舊請求，不自動發出新請求。Profile 綁定本機 stale identity；包括 economy→quality→economy 的舊回應也不得覆蓋新畫面。R3C-1 canonical 教學不變。A3 沒有真實網路、capabilities GET、後端、API key 或 provider SDK；B1 日後才定義 server-side profile mapping 與 fake-provider capabilities。
+
+新增偏好測試：`node coach-model-profile-preference-test.mjs`。既有 coach／Review／Puzzle lifecycle tests 同步驗證 v2、profile 切換及 LF／CRLF mutation gates。
+
 本專案需要靜態伺服器以載入 ES module 與 import map；請依上方 Quick Start 啟動。Three.js 由 CDN 載入，**首次開啟需聯網**。
 
 ## 部署與快取

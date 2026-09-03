@@ -38,6 +38,10 @@ let reviewCoachRequestCount = 0;
 let reviewCoachActiveCount = 0;
 let reviewCoachMaxActiveCount = 0;
 let reviewCoachLateDeliveryCount = 0;
+const reviewCoachPayloads = [];
+// Manual delivery is test-server-only and deliberately ignores abort.
+const reviewCoachPending = [];
+globalThis.__reviewCoachQa = { pending: reviewCoachPending, payloads: reviewCoachPayloads };
 const coachDomTestsEnabled = qaParams.get('coachDomTests') === '1';
 const coachDomAudit = { failures: [], expectedFailures: [], keyboard: [], settlements: [],
   targets: [], networkCalls: [], domMutationsRun: false };
@@ -190,6 +194,7 @@ if (reviewCoachQaMode) {
     value(request, { signal }) {
       return new Promise((resolve, reject) => {
         reviewCoachRequestCount++;
+        reviewCoachPayloads.push(structuredClone(request));
         reviewCoachActiveCount++;
         reviewCoachMaxActiveCount = Math.max(reviewCoachMaxActiveCount, reviewCoachActiveCount);
         let active = true;
@@ -199,29 +204,32 @@ if (reviewCoachQaMode) {
           active = false;
           reviewCoachActiveCount--;
           const expectedFocus = document.activeElement;
+          const beforeLate = ['gameReviewCoachLeadIn', 'gameReviewCoachEncouragement', 'gameReviewCoachStatus']
+            .map(id => document.getElementById(id).textContent);
           if (signal.aborted) reviewCoachLateDeliveryCount++;
           callback(value);
           if (coachDomTestsEnabled) queueMicrotask(() => auditCoachDom(() => {
             coachDomAssert(document.activeElement === expectedFocus, 'NO_SETTLE_FOCUS_STEAL');
             if (!signal.aborted) assertCoachCanonical(canonical);
             else {
-              for (const id of ['gameReviewCoachLeadIn', 'gameReviewCoachEncouragement', 'gameReviewCoachStatus']) {
-                coachDomAssert(document.getElementById(id).textContent === '', 'HOSTILE_LATE_COMPLETION_RENDERED');
-              }
+              const afterLate = ['gameReviewCoachLeadIn', 'gameReviewCoachEncouragement', 'gameReviewCoachStatus']
+                .map(id => document.getElementById(id).textContent);
+              coachDomAssert(JSON.stringify(afterLate) === JSON.stringify(beforeLate), 'HOSTILE_LATE_COMPLETION_RENDERED');
             }
             coachDomAudit.settlements.push({ aborted: signal.aborted, focusPreserved: true });
           }));
         };
-        const timer = setTimeout(() => {
+        const deliver = () => {
           if (reviewCoachQaMode === 'reject') {
             finish(reject, new Error('Controlled Review coach failure.'));
             return;
           }
           const response = {
-            version: request.version,
+            version: 2,
             requestId: request.requestId,
             sourceRuleId: request.sourceRuleId,
             style: request.style,
+            modelProfile: request.modelProfile,
             framing: {
               leadIn: '可以一起看看這個地方。',
               encouragement: '下次也可以先停一下想想。',
@@ -229,9 +237,12 @@ if (reviewCoachQaMode) {
           };
           if (reviewCoachQaMode === 'malformed') response.extra = true;
           finish(resolve, response);
-        }, coachDomTestsEnabled ? 5000 : (reviewCoachQaMode === 'stale' || reviewCoachQaMode === 'hostile' ? 2500 : 120));
+        };
+        reviewCoachPending.push({ deliver, reject: () => finish(reject, new Error('Controlled rejection')), signal });
+        const timer = reviewCoachQaMode === 'manual' ? null : setTimeout(deliver,
+          coachDomTestsEnabled ? 5000 : (reviewCoachQaMode === 'stale' || reviewCoachQaMode === 'hostile' ? 2500 : 120));
         signal.addEventListener('abort', () => {
-          if (reviewCoachQaMode === 'hostile') return;
+          if (reviewCoachQaMode === 'hostile' || reviewCoachQaMode === 'manual') return;
           clearTimeout(timer);
           finish(reject, new Error('Controlled Review coach abort.'));
         }, { once: true });
@@ -454,6 +465,8 @@ function readProbe() {
       status: coachStatus?.textContent || '',
       activeElementId: document.activeElement?.id || '',
       requestCount: reviewCoachRequestCount,
+      payloads: reviewCoachPayloads,
+      modelProfile: document.getElementById('gameReviewCoachModelProfile')?.value,
       activeCount: reviewCoachActiveCount,
       maxActiveCount: reviewCoachMaxActiveCount,
       lateDeliveryCount: reviewCoachLateDeliveryCount,
