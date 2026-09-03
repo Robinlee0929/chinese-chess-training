@@ -18,3 +18,9 @@ demo-output/
 Thumbs.db
 __pycache__/
 .pytest_cache/
+.dev.vars
+.dev.vars.*
+.env
+.env.*
+!coach-api/.dev.vars.example
+coach-api/.wrangler/

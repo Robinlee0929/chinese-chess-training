@@ -1,0 +1,2 @@
+# Nonsecret local fake-only flag. Disabled unless explicitly enabled locally.
+COACH_FAKE_ENABLED=false

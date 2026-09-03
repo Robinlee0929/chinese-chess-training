@@ -234,6 +234,46 @@ game-review-ai-test.mjs  複盤 AI 暫存領域測試
 - **上游線上試玩**：<https://chinese-chess.gh.miniasp.com>。該網址是上游網站，不代表本衍生專案的殺局功能已部署。
 - 本專案保留上游原作者、MIT 授權與著作權資訊。
 
+## R3C2-B1：隔離的 fake-provider Worker 基礎
+
+`coach-api/` 是獨立、零第三方依賴的 backend-only 實作，未接線至前端、未部署，
+也不呼叫真實 provider、不需要 API key。transport v2 僅接受
+`version/requestId/locale/sourceRuleId/style/modelProfile` 六個欄位；profiles 為
+`economy/balanced/quality`，預設 `economy`。不接收棋盤、局面、GameRecord、證據或使用者 prompt。
+
+本機離線測試（Node 22，無需安裝套件）：
+
+```powershell
+node --test coach-api/review-coach-api-test.mjs
+node --test coach-api/review-coach-contract-parity-test.mjs
+node --test coach-api/review-coach-mutation-test.mjs
+```
+
+路由為 `POST /api/review-coach` 與 `GET /api/review-coach/capabilities`。
+兩者均需 admission 通過；合法預檢不執行 admission/provider。
+Worker 預設 fail closed；只有本機非機密 `COACH_FAKE_ENABLED=true` 才啟用固定 fake provider。
+`.dev.vars.example` 只含安全預設值，真正的 `.dev.vars`、`.env`、衍生檔及 `.wrangler/` 被忽略。
+Wrangler 僅為骨架，停用 workers.dev／preview URLs，沒有帳號、路由或部署指令。
+設定語意參考 [Cloudflare 官方文件](https://developers.cloudflare.com/workers/wrangler/configuration/)。
+
+CORS 僅允許 `https://robinlee0929.github.io`，拒絕 Cookie／Authorization，
+**CORS 並非身份驗證**，非瀏覽器客戶端仍可偽造 Origin。
+所有回應 no-store；不寫入持久儲存、不記錄請求內容、不做 telemetry 或重試。
+provider 只能看到 rule ID、locale、style、profile、server-owned purpose 與 AbortSignal，
+不能取得 request ID、HTTP metadata、env 或棋局資料。
+provider 回傳仍是不可信輸入：B1 只接受一組已核准的固定中性 framing，並重新建構 v2 回應。
+
+實際串流請求及序列化回應均限 1,024 UTF-8 bytes；拒絕 duplicate JSON member、
+錯誤 UTF-8、未知欄位或 profile。profile 不可用回 409，不改選其他 profile。
+provider deadline 為 3,000 ms；整個非同步流程上限 3,500 ms，admission 最多 500 ms。
+timeout 會 abort，忽略晚到的成功／拒絕。JavaScript 無法強制中斷阻塞主執行緒的函式，
+未來 adapter 必須遵守 signal；B1 只有立即完成的本機 fake，不宣稱可終止任意不合作的遠端工作。
+
+B1 的 enabled/rate-limit/cost-breaker 是可注入的 fail-closed 介面與本機測試模型，
+**不是**真實分散式限流、原子全域預算或計費。下一步必須先完成 B1 independent security review；
+B2 才處理 staging/實際平台防護，C 階段另行授權真實 provider 與秘密管理。
+本次不部署、不接 frontend endpoint、不變動 frontend cache token `79cf894baf`。
+
 ## 授權
 
 [MIT License](LICENSE) © Will 保哥

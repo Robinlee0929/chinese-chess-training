@@ -1,0 +1,8 @@
+{
+  "name": "chinese-chess-coach-fake-backend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test review-coach-api-test.mjs review-coach-contract-parity-test.mjs review-coach-mutation-test.mjs"
+  }
+}

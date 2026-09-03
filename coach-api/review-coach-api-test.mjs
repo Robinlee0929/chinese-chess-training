@@ -1,0 +1,483 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { readFileSync } from 'node:fs';
+import worker, { createCoachHandler } from './src/index.js';
+import { REQUEST_KEYS, SAFE_FRAMING, validateRequest, validateFraming, parseRequestJSON } from './src/contract.js';
+import { RULE_PURPOSES } from './src/rule-policy.js';
+import { DEFAULT_PROFILE_POLICY, validateProfilePolicy } from './src/profile-policy.js';
+import { localFakeAdmission } from './src/admission.js';
+import { reply, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES } from './src/http.js';
+import { R3C2_B_PROVIDER_TIMEOUT_MS, TOTAL_TIMEOUT_MS } from './src/provider.js';
+import { harness, payload, request, assertResponse, assertHeaders, ORIGIN, SENTINEL,
+  FakeClock, deferred, flush, chunked, observeSideEffects, productionSources, importVariant } from './test-support.mjs';
+
+const profiles = ['economy', 'balanced', 'quality'];
+const rules = ['immediate-mate', 'immediate-repetition-terminal', 'immediate-stalemate', 'check-difference',
+  'capture-with-capture-reply', 'capture-difference', 'moved-piece-capturable-difference'];
+const extras = ['extra', 'model', 'modelId', 'providerModel', 'openaiModel', 'provider', 'apiKey', 'prompt',
+  'system', 'messages', 'ruleDescription', 'title', 'body', 'board', 'position', 'record', 'recordId',
+  'gameRecord', 'GameRecord', 'notation', 'move', 'score', 'pv', 'PV', 'evaluation', '__proto__', 'constructor'];
+
+async function rejected(data, status = 400) {
+  const server = harness();
+  await assertResponse(await server.handle(request({ data })), status);
+  assert.equal(server.calls.length, 0);
+}
+
+for (const modelProfile of profiles) test(`success v2 ${modelProfile}`, async () => {
+  const server = harness();
+  const response = await server.handle(request({ data: payload({ modelProfile }) }));
+  await assertResponse(response, 200);
+  assert.equal(response.headers.get('Content-Type'), 'application/json; charset=utf-8');
+  assert.deepEqual(await response.json(), { version: 2, requestId: 'b1-request', sourceRuleId: 'check-difference',
+    style: 'child-neutral-teacher-v1', modelProfile, framing: { leadIn: '可以一起看看這個地方。', encouragement: '下次也可以先停一下想想。' } });
+  assert.equal(server.calls.length, 1);
+});
+for (const sourceRuleId of rules) test(`server-owned purpose for ${sourceRuleId}`, async () => {
+  const server = harness();
+  await assertResponse(await server.handle(request({ data: payload({ sourceRuleId }) })), 200);
+  assert.deepEqual(server.calls[0].input, { sourceRuleId, locale: 'zh-Hant', style: 'child-neutral-teacher-v1',
+    modelProfile: 'economy', purpose: RULE_PURPOSES[sourceRuleId] });
+  assert.ok(Object.isFrozen(server.calls[0].input));
+});
+for (const key of extras) test(`reject extra field ${key} before provider`, async () => {
+  await rejected({ ...payload(), [key]: 'BROWSER_PROMPT_SENTINEL' });
+});
+for (const key of ['version', 'requestId', 'locale', 'sourceRuleId', 'style', 'modelProfile']) {
+  test(`missing ${key}`, async () => { const data = payload(); delete data[key]; await rejected(data); });
+}
+for (const [key, values] of Object.entries({
+  version: [1, '2', null, 3, true],
+  requestId: ['', ' ', 'x y', 'x\ny', 'x\u0000y', 'x\u0085y', 'x\u2028y', 'x'.repeat(65), 2, null],
+  locale: ['en', 'zh-hant', 'zh-Hant ', null],
+  style: ['other', 'child-neutral-teacher-v1 ', null],
+  sourceRuleId: ['unknown', 'Check-difference', 'check-difference ', ' check-difference', null, 1, {}],
+  modelProfile: ['unknown', 'Economy', 'economy ', ' economy', 'gpt-arbitrary', null, 1, true, {}],
+})) for (const [index, value] of values.entries()) test(`invalid ${key} ${index}`, () => rejected(payload({ [key]: value })));
+
+test('requestId boundary is codepoints, no coercion; valid frozen input remains valid', async () => {
+  for (const requestId of ['a', '象'.repeat(64), '😀'.repeat(64)]) {
+    const server = harness();
+    const response = await server.handle(request({ data: payload({ requestId }) }));
+    await assertResponse(response, 200);
+    assert.equal((await response.json()).requestId, requestId);
+  }
+  const object = Object.freeze(payload());
+  assert.ok(validateRequest(object));
+  assert.equal(Object.isFrozen(object), true);
+});
+
+for (const [index, body] of ['', '{', '{}x', '{"version":2,}', 'null', '[]', 'true', '2', '"text"',
+  '\ufeff' + JSON.stringify(payload()), JSON.stringify(payload()) + '\v',
+  '{"version":02}', '{"version":+2}', '{"version":2.}', '{"version":NaN}',
+  '{"version":2,"requestId":"bad\nraw"}', '{"version":2,"requestId":"\\q"}',
+  '{"version":2,/*comment*/"requestId":"x"}', JSON.stringify({ ...payload(), nested: {} }),
+  JSON.stringify(payload()).replace('"version":2', '"version":1,"version":2'),
+  JSON.stringify(payload()).replace('"requestId":"b1-request"', '"requestId":"bad","request\\u0049d":"b1-request"'),
+  JSON.stringify(payload()).replace('"modelProfile":"economy"', '"modelProfile":"quality","model\\u0050rofile":"economy"'),
+].entries()) test(`invalid JSON/duplicate member ${index}`, async () => {
+  const server = harness();
+  await assertResponse(await server.handle(request({ body })), 400);
+  assert.equal(server.calls.length, 0);
+});
+
+test('valid JSON escapes accepted without renaming unknown or duplicate keys', async () => {
+  const server = harness();
+  const body = JSON.stringify(payload()).replace('requestId', 'request\\u0049d');
+  await assertResponse(await server.handle(request({ body })), 200);
+  assert.equal(parseRequestJSON('{"__proto__":"x"}').__proto__, 'x');
+  assert.equal(validateRequest(parseRequestJSON('{"__proto__":"x"}')), null);
+});
+for (const bytes of [[0xc3, 0x28], [0xff], [0xed, 0xa0, 0x80]]) test(`fatal UTF-8 ${bytes}`, async () => {
+  const server = harness();
+  await assertResponse(await server.handle(request({ body: new Uint8Array(bytes) })), 400);
+  assert.equal(server.calls.length, 0);
+});
+
+for (const [header, value, status] of [
+  ['Content-Type', 'text/plain', 415], ['Content-Type', '', 415], ['Content-Type', 'application/json; charset=latin1', 415],
+  ['Content-Type', 'application/json; boundary=x', 415], ['Content-Encoding', 'gzip', 415],
+  ['Content-Encoding', 'br', 415], ['Content-Encoding', 'identity', 415], ['Content-Length', '1025', 413],
+  ['Content-Length', '-1', 400], ['Content-Length', 'bad', 400], ['Content-Length', '1.2', 400],
+]) test(`header rejected ${header}=${value}`, async () => {
+  const server = harness();
+  await assertResponse(await server.handle(request({ headers: { [header]: value } })), status);
+  assert.equal(server.calls.length, 0);
+});
+test('missing media type rejected; UTF-8 charset accepted precisely', async () => {
+  const server = harness();
+  const noType = request(); noType.headers.delete('Content-Type');
+  await assertResponse(await server.handle(noType), 415);
+  await assertResponse(await server.handle(request({ headers: { 'Content-Type': 'Application/JSON; Charset=UTF-8' } })), 200);
+  assert.equal(server.calls.length, 1);
+});
+
+for (const length of [1024, 1025]) for (const declared of [null, '1', String(length)]) {
+  test(`actual streamed body ${length} bytes Content-Length=${declared}`, async () => {
+    const data = JSON.stringify(payload());
+    const bytes = new TextEncoder().encode(data + ' '.repeat(length - new TextEncoder().encode(data).length));
+    let canceled = 0;
+    const server = harness();
+    const headers = declared === null ? {} : { 'Content-Length': declared };
+    const response = await server.handle(request({ body: chunked(bytes, 19, () => { canceled++; }), headers }));
+    await assertResponse(response, length === 1024 ? 200 : 413);
+    assert.equal(server.calls.length, length === 1024 ? 1 : 0);
+    if (length === 1025 && declared !== '1025') assert.equal(canceled, 1);
+  });
+}
+test('byte limit is UTF-8 bytes, not characters', async () => {
+  const server = harness();
+  await assertResponse(await server.handle(request({ body: JSON.stringify(payload({ prompt: '象'.repeat(400) })) })), 413);
+  assert.equal(server.calls.length, 0);
+});
+test('single oversize stream chunk canceled and never parsed', async () => {
+  let canceled = 0;
+  const body = new ReadableStream({ start(controller) { controller.enqueue(new Uint8Array(1025)); }, cancel() { canceled++; } });
+  const server = harness();
+  await assertResponse(await server.handle(request({ body })), 413);
+  assert.equal(canceled, 1); assert.equal(server.calls.length, 0);
+});
+test('stream errors fail closed', async () => {
+  const body = new ReadableStream({ pull(controller) { controller.error(new Error(SENTINEL)); } });
+  const server = harness();
+  await assertResponse(await server.handle(request({ body })), 400);
+  assert.equal(server.calls.length, 0);
+});
+
+for (const [method, path, status, allow] of [
+  ['GET', '/api/review-coach', 405, 'POST, OPTIONS'], ['HEAD', '/api/review-coach', 405, 'POST, OPTIONS'],
+  ['POST', '/api/review-coach/capabilities', 405, 'GET, OPTIONS'], ['PUT', '/api/review-coach', 405, 'POST, OPTIONS'],
+  ['POST', '/other', 404, null], ['POST', '/api/review-coach/', 404, null],
+  ['GET', '/api/review-coach/capabilities/', 404, null], ['OPTIONS', '/unknown', 404, null],
+  ['POST', '/api/review-coach?fault=timeout', 400, null], ['POST', '/api/review-coach?', 400, null],
+  ['GET', '/api/review-coach/capabilities?profile=quality', 400, null],
+]) test(`route ${method} ${path}`, async () => {
+  const server = harness();
+  const response = await server.handle(request({ method, path }));
+  await assertResponse(response, status);
+  assert.equal(response.headers.get('Allow'), allow);
+  assert.equal(server.calls.length, 0);
+});
+for (const origin of [null, 'null', 'https://evil.invalid', ORIGIN + '/', ORIGIN + '/chinese-chess-training',
+  'http://robinlee0929.github.io', ORIGIN + '.evil.invalid']) test(`origin rejected ${origin}`, async () => {
+  const server = harness();
+  await assertResponse(await server.handle(request({ origin })), 403, null);
+  assert.equal(server.calls.length, 0);
+});
+for (const header of ['Cookie', 'Authorization']) test(`credentials rejected ${header}`, async () => {
+  const server = harness();
+  await assertResponse(await server.handle(request({ headers: { [header]: SENTINEL } })), 403);
+  assert.equal(server.calls.length, 0);
+});
+
+for (const [path, method] of [['/api/review-coach', 'POST'], ['/api/review-coach/capabilities', 'GET']]) {
+  for (const requestedHeaders of [null, 'Content-Type', 'content-type', 'CONTENT-TYPE']) {
+    test(`preflight ${method} ${requestedHeaders}`, async () => {
+      let gates = 0;
+      const server = harness({ admission: { enabled: () => { gates++; return false; } } });
+      const headers = { 'Access-Control-Request-Method': method };
+      if (requestedHeaders !== null) headers['Access-Control-Request-Headers'] = requestedHeaders;
+      const response = await server.handle(request({ path, method: 'OPTIONS', body: null, headers }));
+      await assertResponse(response, 204);
+      assert.equal(await response.text(), '');
+      assert.equal(response.headers.get('Access-Control-Allow-Methods'), `${method}, OPTIONS`);
+      assert.equal(response.headers.get('Access-Control-Allow-Headers'), 'Content-Type');
+      assert.equal(response.headers.get('Access-Control-Max-Age'), '0');
+      assert.equal(response.headers.get('Vary'), 'Origin, Access-Control-Request-Method, Access-Control-Request-Headers');
+      assert.equal(gates, 0); assert.equal(server.calls.length, 0);
+    });
+  }
+}
+for (const headers of [{}, { 'Access-Control-Request-Method': 'GET' },
+  { 'Access-Control-Request-Method': 'post' }, { 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'Authorization' },
+  { 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'content-type, x-fault-mode' },
+  { 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': '*' },
+]) test(`bad preflight ${JSON.stringify(headers)}`, async () => {
+  const server = harness();
+  const response = await server.handle(request({ method: 'OPTIONS', headers }));
+  await assertResponse(response, 403);
+  assert.equal(response.headers.get('Vary'), 'Origin, Access-Control-Request-Method, Access-Control-Request-Headers');
+  assert.equal(response.headers.get('Access-Control-Max-Age'), '0');
+  assert.equal(response.headers.get('Access-Control-Allow-Methods'), null);
+  assert.equal(server.calls.length, 0);
+});
+
+for (const availability of [DEFAULT_PROFILE_POLICY, { economy: true, balanced: false, quality: true },
+  { economy: false, balanced: false, quality: false }]) test(`exact capabilities ${JSON.stringify(availability)}`, async () => {
+  const server = harness({ getProfilePolicy: () => availability });
+  const response = await server.handle(request({ method: 'GET', path: '/api/review-coach/capabilities' }));
+  await assertResponse(response, 200);
+  assert.deepEqual(await response.json(), { version: 1, profiles: profiles.map((id) => ({ id, available: availability[id] })), defaultProfile: 'economy' });
+  assert.equal(server.calls.length, 0);
+});
+for (const modelProfile of profiles) test(`fresh availability ${modelProfile}, 409 without fallback`, async () => {
+  let policy = { ...DEFAULT_PROFILE_POLICY };
+  let reads = 0;
+  const server = harness({ getProfilePolicy: () => { reads++; return policy; } });
+  const cap = await server.handle(request({ method: 'GET', path: '/api/review-coach/capabilities' }));
+  assert.equal((await cap.json()).profiles.find((p) => p.id === modelProfile).available, true);
+  policy = { ...policy, [modelProfile]: false };
+  const response = await server.handle(request({ data: payload({ modelProfile }) }));
+  await assertResponse(response, 409);
+  assert.deepEqual(await response.json(), { version: 2, error: { code: 'profile_unavailable' } });
+  assert.equal(reads, 2); assert.equal(server.calls.length, 0);
+});
+for (const policy of [null, {}, { ...DEFAULT_PROFILE_POLICY, quality: 'false' },
+  { ...DEFAULT_PROFILE_POLICY, modelId: 'arbitrary' }]) test(`invalid policy ${JSON.stringify(policy)}`, async () => {
+  const server = harness({ getProfilePolicy: () => policy });
+  await assertResponse(await server.handle(request()), 503);
+  assert.equal(server.calls.length, 0);
+});
+
+const unsafeTexts = ['這步將軍。', '可以將死。', '這步會吃子。', '這是最好的一步。', '你真棒。', '高品質解說。',
+  '<b>看看</b>', '**看看**', '[看看](https://evil.invalid)', 'https://evil.invalid', 'www.evil.invalid',
+  '看看\u0000', '看看\n', 'ＡＩ很厲害', 'ｈｔｔｐｓ：／／evil.invalid', '这步将军。', '將\u200b軍',
+  '可以一起看看這個地方。 ', '可以一起看看這個地方!', '', '象'.repeat(25), '😀'.repeat(25)];
+for (const [index, leadIn] of unsafeTexts.entries()) test(`untrusted provider text ${index}`, async () => {
+  const server = harness({ provider: () => ({ ...SAFE_FRAMING, leadIn }) });
+  await assertResponse(await server.handle(request()), 502);
+  assert.equal(server.calls.length, 1);
+});
+for (const [index, value] of [null, undefined, [], 'text', 1, {}, { ...SAFE_FRAMING, extra: 'x' },
+  { framing: SAFE_FRAMING }, { ...SAFE_FRAMING, requestId: 'wrong' }, { ...SAFE_FRAMING, leadIn: 2 },
+  { ...SAFE_FRAMING, encouragement: new String(SAFE_FRAMING.encouragement) },
+].entries()) test(`malformed provider result ${index}`, async () => {
+  const server = harness({ provider: () => value });
+  await assertResponse(await server.handle(request()), 502);
+  assert.equal(server.calls.length, 1);
+});
+test('provider exception sanitized; no retry or side effects', async () => {
+  const server = harness({ provider: () => { throw new Error(SENTINEL); } });
+  const observed = await observeSideEffects(() => server.handle(request()));
+  await assertResponse(observed.value, 502);
+  assert.deepEqual(observed.observations, { logs: [], network: [], storage: [] });
+  assert.equal(server.calls.length, 1);
+});
+
+for (const [name, validator, valid] of [['request', validateRequest, payload()],
+  ['framing', validateFraming, { ...SAFE_FRAMING }], ['policy', validateProfilePolicy, { ...DEFAULT_PROFILE_POLICY }]]) {
+  test(`${name} descriptor boundary: accessors, symbols, prototypes, reflection, no freezing`, () => {
+    let getters = 0;
+    for (const key of Object.keys(valid)) {
+      const hostile = { ...valid };
+      Object.defineProperty(hostile, key, { enumerable: true, get() { getters++; return valid[key]; } });
+      assert.equal(validator(hostile), null);
+      assert.equal(Object.isFrozen(hostile), false);
+      const hidden = { ...valid }; Object.defineProperty(hidden, key, { enumerable: false });
+      assert.equal(validator(hidden), null);
+    }
+    for (const value of [Object.assign(Object.create(null), valid), Object.assign(Object.create({ inherited: true }), valid),
+      { ...valid, [Symbol('extra')]: true }, new Proxy(valid, { ownKeys() { throw new Error(SENTINEL); } }),
+      new Proxy(valid, { getPrototypeOf() { throw new Error(SENTINEL); } })]) assert.equal(validator(value), null);
+    const revoked = Proxy.revocable({}, {}); revoked.revoke();
+    assert.equal(validator(revoked.proxy), null);
+    assert.equal(getters, 0);
+    assert.equal(Object.isFrozen(valid), false);
+  });
+}
+test('hostile request strings never coerce or freeze', () => {
+  let coercions = 0;
+  const stringLike = { toString() { coercions++; return 'economy'; }, valueOf() { coercions++; return 2; } };
+  for (const key of REQUEST_KEYS) {
+    for (const value of [stringLike, new String(String(payload()[key]))]) assert.equal(validateRequest(payload({ [key]: value })), null);
+  }
+  assert.equal(coercions, 0); assert.equal(Object.isFrozen(stringLike), false);
+});
+test('provider accessor not executed through the live handler', async () => {
+  let getters = 0;
+  const value = { ...SAFE_FRAMING };
+  Object.defineProperty(value, 'leadIn', { enumerable: true, get() { getters++; return SAFE_FRAMING.leadIn; } });
+  const server = harness({ provider: () => value });
+  await assertResponse(await server.handle(request()), 502);
+  assert.equal(getters, 0); assert.equal(Object.isFrozen(value), false);
+});
+test('framing rejects unsafe encouragement and hidden fields independently', async () => {
+  for (const encouragement of ['這是最好的一步。', '<b>繼續</b>', 'https://evil.invalid', '', '象'.repeat(25)]) {
+    const server = harness({ provider: () => ({ ...SAFE_FRAMING, encouragement }) });
+    await assertResponse(await server.handle(request()), 502);
+    assert.equal(server.calls.length, 1);
+  }
+  const value = { ...SAFE_FRAMING };
+  Object.defineProperty(value, 'hidden', { value: SENTINEL });
+  assert.equal(validateFraming(value), null);
+});
+
+for (const [gate, value, status] of [['enabled', false, 503], ['enabled', 'true', 503], ['enabled', undefined, 503],
+  ['rateLimit', 'denied', 429], ['rateLimit', false, 503], ['rateLimit', undefined, 503],
+  ['costBreaker', 'temporarily_disabled', 503], ['costBreaker', undefined, 503], ['costBreaker', true, 503]]) {
+  test(`admission fail closed ${gate}=${value}`, async () => {
+    const server = harness({ admission: { ...localFakeAdmission(true), [gate]: () => value } });
+    await assertResponse(await server.handle(request()), status);
+    assert.equal(server.calls.length, 0);
+  });
+}
+for (const gate of ['enabled', 'rateLimit', 'costBreaker']) {
+  test(`admission ${gate} throws`, async () => {
+    const server = harness({ admission: { ...localFakeAdmission(true), [gate]: () => { throw new Error(SENTINEL); } } });
+    await assertResponse(await server.handle(request()), 503);
+    assert.equal(server.calls.length, 0);
+  });
+  test(`admission ${gate} times out, aborts, ignores late allow`, async () => {
+    const clock = new FakeClock(); const pending = deferred(); let signal;
+    const server = harness({ clock, admission: { ...localFakeAdmission(true),
+      [gate]: (options) => { signal = options.signal; return pending.promise; } } });
+    const result = server.handle(request()); await flush();
+    assert.ok(signal); await clock.advance(499); assert.equal(signal.aborted, false);
+    await clock.advance(1); const response = await result;
+    await assertResponse(response, 503); assert.equal(signal.aborted, true);
+    pending.resolve(gate === 'enabled' ? true : gate === 'rateLimit' ? 'allowed' : 'enabled'); await flush();
+    assert.equal(server.calls.length, 0); assert.equal(clock.timers.size, 0);
+  });
+}
+for (const admission of [undefined, null, {}, { enabled: true }, { ...localFakeAdmission(true), rateLimit: null }]) {
+  test(`missing admission fails closed ${JSON.stringify(admission)}`, async () => {
+    const server = harness({ admission });
+    await assertResponse(await server.handle(request()), 503); assert.equal(server.calls.length, 0);
+  });
+}
+test('default Worker is disabled; only explicit nonsecret local enable flag runs fake', async () => {
+  await assertResponse(await createCoachHandler()(request()), 503);
+  await assertResponse(await worker.fetch(request(), { COACH_FAKE_ENABLED: false }), 503);
+  await assertResponse(await worker.fetch(request(), { COACH_FAKE_ENABLED: 'true' }), 200);
+  await assertResponse(await worker.fetch(request({ method: 'GET', path: '/api/review-coach/capabilities' }), {}), 503);
+});
+test('Worker never inspects unrelated environment secrets or resource bindings', async () => {
+  let inspected = 0;
+  const env = { COACH_FAKE_ENABLED: 'true' };
+  for (const key of ['UNUSED_SECRET', 'DB', 'KV', 'LIMITER']) {
+    Object.defineProperty(env, key, { enumerable: true, get() { inspected++; throw new Error(SENTINEL); } });
+  }
+  const observed = await observeSideEffects(() => worker.fetch(request(), env));
+  await assertResponse(observed.value, 200);
+  assert.equal(inspected, 0);
+  assert.deepEqual(observed.observations, { logs: [], network: [], storage: [] });
+});
+test('repeated request IDs do not cache, deduplicate or bypass fresh admission', async () => {
+  let admitted = 0;
+  const server = harness({ admission: { ...localFakeAdmission(true), enabled: () => { admitted++; return true; } } });
+  await assertResponse(await server.handle(request()), 200);
+  await assertResponse(await server.handle(request()), 200);
+  assert.equal(admitted, 2); assert.equal(server.calls.length, 2);
+});
+
+test('provider accepts result at 2999 ms and clears deadline', async () => {
+  const clock = new FakeClock(); const pending = deferred();
+  const server = harness({ clock, provider: () => pending.promise });
+  const result = server.handle(request()); await flush();
+  assert.equal(server.calls.length, 1); await clock.advance(2999);
+  pending.resolve({ ...SAFE_FRAMING }); await flush();
+  await assertResponse(await result, 200);
+  assert.equal(clock.timers.size, 0); assert.equal(server.calls[0].options.signal.aborted, false);
+});
+for (const settlement of ['never', 'late-resolve', 'late-reject']) test(`provider deadline 3000 ms ${settlement}`, async () => {
+  const clock = new FakeClock(); const pending = deferred(); const unhandled = [];
+  const onUnhandled = (error) => unhandled.push(error);
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    const server = harness({ clock, provider: () => pending.promise });
+    let completed = false;
+    const result = server.handle(request()).then((response) => { completed = true; return response; });
+    await flush(); assert.equal(server.calls.length, 1);
+    await clock.advance(2999); assert.equal(completed, false); assert.equal(server.calls[0].options.signal.aborted, false);
+    await clock.advance(1); const response = await result;
+    await assertResponse(response, 504); assert.equal(server.calls[0].options.signal.aborted, true);
+    if (settlement === 'late-resolve') pending.resolve({ ...SAFE_FRAMING });
+    if (settlement === 'late-reject') pending.reject(new Error(SENTINEL));
+    await flush(); await new Promise((resolve) => setImmediate(resolve));
+    await assertResponse(response, 504); assert.equal(server.calls.length, 1);
+    assert.equal(clock.timers.size, 0); assert.deepEqual(unhandled, []);
+  } finally { process.off('unhandledRejection', onUnhandled); }
+});
+test('provider resolving exactly at deadline is too late', async () => {
+  const clock = new FakeClock();
+  const server = harness({ clock, provider: () => { clock.time = 3000; return { ...SAFE_FRAMING }; } });
+  await assertResponse(await server.handle(request()), 504);
+  assert.equal(server.calls[0].options.signal.aborted, true);
+});
+test('provider rejected promise is observed and sanitized', async () => {
+  const server = harness({ provider: () => Promise.reject(new Error(SENTINEL)) });
+  await assertResponse(await server.handle(request()), 502); assert.equal(server.calls.length, 1);
+  assert.equal(server.calls[0].options.signal.aborted, true);
+});
+test('client cancellation before body invokes no provider', async () => {
+  const controller = new AbortController(); controller.abort();
+  const server = harness(); await assertResponse(await server.handle(request({ signal: controller.signal })), 400);
+  assert.equal(server.calls.length, 0);
+});
+test('client cancellation aborts in-flight provider without retry', async () => {
+  const controller = new AbortController(); const clock = new FakeClock();
+  const server = harness({ clock, provider: () => new Promise(() => {}) });
+  const result = server.handle(request({ signal: controller.signal })); await flush();
+  controller.abort(); await assertResponse(await result, 504);
+  assert.equal(server.calls.length, 1); assert.equal(server.calls[0].options.signal.aborted, true);
+  assert.equal(clock.timers.size, 0);
+});
+test('stalled body bounded by total deadline and canceled', async () => {
+  const clock = new FakeClock(); let canceled = 0;
+  const body = new ReadableStream({ cancel() { canceled++; } });
+  const server = harness({ clock }); const result = server.handle(request({ body }));
+  await flush(); await clock.advance(3500); await assertResponse(await result, 400);
+  assert.equal(canceled, 1); assert.equal(server.calls.length, 0); assert.equal(clock.timers.size, 0);
+});
+test('slow body reduces provider deadline to remaining total budget', async () => {
+  const clock = new FakeClock(); let streamController;
+  const body = new ReadableStream({ start(controller) { streamController = controller; } });
+  const server = harness({ clock, provider: () => new Promise(() => {}) });
+  const result = server.handle(request({ body })); await flush(); await clock.advance(1000);
+  streamController.enqueue(new TextEncoder().encode(JSON.stringify(payload()))); streamController.close(); await flush();
+  assert.equal(server.calls.length, 1); await clock.advance(2499); assert.equal(server.calls[0].options.signal.aborted, false);
+  await clock.advance(1); await assertResponse(await result, 504); assert.equal(clock.time, 3500);
+});
+
+test('HTTP metadata/requestId never forwarded; unknown public fault header has no effect', async () => {
+  const server = harness();
+  await assertResponse(await server.handle(request({ data: payload({ requestId: 'BROWSER_PROMPT_SENTINEL' }),
+    headers: { 'X-Fault-Mode': 'timeout', 'X-Prompt': SENTINEL, 'X-Forwarded-For': '192.0.2.1', 'CF-Connecting-IP': '192.0.2.2' } })), 200);
+  assert.deepEqual(Object.keys(server.calls[0].input).sort(), ['sourceRuleId', 'locale', 'style', 'modelProfile', 'purpose'].sort());
+  assert.deepEqual(Object.keys(server.calls[0].options), ['signal']);
+  assert.ok(server.calls[0].options.signal instanceof AbortSignal);
+  assert.equal(JSON.stringify(server.calls).includes('BROWSER_PROMPT_SENTINEL'), false);
+  assert.equal(JSON.stringify(server.calls).includes(SENTINEL), false);
+  assert.equal(server.calls[0].input.purpose, RULE_PURPOSES['check-difference']);
+});
+test('success/failure/capabilities paths make zero network, storage and application log calls', async () => {
+  const observed = await observeSideEffects(async () => {
+    const responses = [];
+    for (const options of [{}, { provider: () => Promise.reject(new Error(SENTINEL)) },
+      { provider: () => ({ ...SAFE_FRAMING, leadIn: SENTINEL }) }, { getProfilePolicy: () => { throw new Error(SENTINEL); } },
+      { admission: localFakeAdmission(false) }]) responses.push(await harness(options).handle(request()));
+    responses.push(await worker.fetch(request(), { COACH_FAKE_ENABLED: 'true', UNUSED_SECRET: SENTINEL }));
+    responses.push(await harness().handle(request({ method: 'GET', path: '/api/review-coach/capabilities' })));
+    return responses;
+  });
+  assert.deepEqual(observed.observations, { logs: [], network: [], storage: [] });
+  assert.deepEqual(observed.value.map((r) => r.status), [200, 502, 502, 500, 503, 200, 200]);
+  for (const response of observed.value) {
+    assertHeaders(response);
+    assert.equal((await response.text()).includes(SENTINEL), false);
+    assert.equal(JSON.stringify([...response.headers]).includes(SENTINEL), false);
+  }
+});
+test('serialized response UTF-8 cap enforces 1024/1025 boundary', async () => {
+  for (const bytes of [1024, 1025]) {
+    const body = { value: 'x'.repeat(bytes - 12) }; // {"value":""} is 12 bytes.
+    assert.equal(new TextEncoder().encode(JSON.stringify(body)).byteLength, bytes);
+    const response = reply(200, ORIGIN, body);
+    await assertResponse(response, bytes === 1024 ? 200 : 500);
+  }
+  await assertResponse(reply(200, ORIGIN, { value: '象'.repeat(400) }), 500);
+});
+test('literal constants/policies immutable, no frontend/Node/fixtures/dependencies in production graph', async () => {
+  assert.equal(MAX_REQUEST_BYTES, 1024); assert.equal(MAX_RESPONSE_BYTES, 1024);
+  assert.equal(R3C2_B_PROVIDER_TIMEOUT_MS, 3000); assert.equal(TOTAL_TIMEOUT_MS, 3500);
+  assert.deepEqual(Object.keys(RULE_PURPOSES), rules); assert.ok(Object.isFrozen(RULE_PURPOSES));
+  assert.ok(Object.isFrozen(DEFAULT_PROFILE_POLICY));
+  for (const [name, source] of productionSources()) {
+    assert.doesNotMatch(source, /(?:test-support|fault-fixture|node:|\.\.\/|game-review|console\.|localStorage|sessionStorage|indexedDB|caches\.|WebSocket|\b(?:await|return|globalThis\.)\s*fetch\s*\()/u, name);
+  }
+  const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
+  assert.equal(pkg.private, true); assert.equal(pkg.type, 'module');
+  assert.equal(pkg.dependencies, undefined); assert.equal(pkg.devDependencies, undefined);
+  assert.deepEqual(Object.keys(pkg.scripts), ['test']);
+  const imported = await importVariant(); assert.equal(imported.importable, true);
+});
