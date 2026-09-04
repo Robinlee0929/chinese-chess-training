@@ -36,9 +36,7 @@ import {
 import { readCoachModelProfilePreference, writeCoachModelProfilePreference,
   COACH_MODEL_PROFILE_STORAGE_KEY } from './coach-model-profile-preference.js';
 import {
-  createReviewCoachStagingCapability,
   isReviewCoachProfileAvailable,
-  readInstalledReviewCoachStagingCapability,
 } from './review-coach-connectivity.js';
 
 const source = readFileSync(new URL('./main.js', import.meta.url), 'utf8');
@@ -942,27 +940,50 @@ function productionCoachInitialization(candidate) {
   return match[0];
 }
 
-function executeProductionCoachInitialization(candidate, fetchImpl) {
-  const context = vm.createContext({
-    AbortController,
-    createDisabledCoachState,
-    createIdleCoachState,
-    createReviewCoachStagingCapability,
-    fetch: fetchImpl,
-    readCoachModelProfilePreference,
-    readInstalledReviewCoachStagingCapability,
-    setTimeout,
-    clearTimeout,
-    localStorage: { getItem: () => null },
+function productionImport(candidate, relativePath) {
+  const escaped = relativePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = candidate.match(new RegExp(
+    `^import \\{\\r?\\n(?:[^}\\r\\n]*\\r?\\n)+\\} from '${escaped}\\?v=[0-9a-f]+';`, 'm'));
+  assert.ok(match, `actual production import exists: ${relativePath}`);
+  return match[0].replace(/from '([^']+)'/, (_whole, specifier) =>
+    `from '${new URL(specifier, new URL('./main.js', import.meta.url)).href}'`);
+}
+
+async function importProductionCoachInitialization(candidate) {
+  const moduleSource = [
+    productionImport(candidate, './game-review-coach.js'),
+    productionImport(candidate, './coach-model-profile-preference.js'),
+    productionImport(candidate, './review-coach-connectivity.js'),
+    productionCoachInitialization(candidate),
+    `export {
+      gameReviewCoachStagingCapability,
+      gameReviewCoachRequester,
+      gameReviewCoachCapabilitiesLoader,
+      gameReviewCoachState,
+    };`,
+  ].join('\n');
+  const namespace = await import(`data:text/javascript;base64,${Buffer.from(moduleSource).toString('base64')}`);
+  return { moduleSource, namespace };
+}
+
+async function interceptProductionFetch(action) {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'fetch');
+  const calls = [];
+  Object.defineProperty(globalThis, 'fetch', {
+    configurable: true,
+    writable: true,
+    value: async (url, options) => {
+      calls.push({ url, options });
+      return { status: 200, json: async () => validCoachCapabilities() };
+    },
   });
-  vm.runInContext(`${productionCoachInitialization(candidate)}
-globalThis.__coachInitializationResult = Object.freeze({
-  stagingCapability: gameReviewCoachStagingCapability,
-  requester: gameReviewCoachRequester,
-  capabilitiesLoader: gameReviewCoachCapabilitiesLoader,
-  state: gameReviewCoachState,
-});`, context);
-  return context.__coachInitializationResult;
+  try {
+    const value = await action(calls);
+    return { calls, value };
+  } finally {
+    if (original) Object.defineProperty(globalThis, 'fetch', original);
+    else delete globalThis.fetch;
+  }
 }
 
 function assertFactualR3bLanguage(text, label = 'R3B user-visible text') {
@@ -2187,36 +2208,47 @@ test('B2A staging capabilities are advisory, never auto-POST, and fail closed wi
 });
 
 test('B2A actual production initialization has zero network authority and kills authority mutants on LF and CRLF', async () => {
-  let healthyGets = 0;
-  let healthyPosts = 0;
-  const healthy = executeProductionCoachInitialization(source, async (_url, options) => {
-    if (options?.method === 'GET') healthyGets++;
-    if (options?.method === 'POST') healthyPosts++;
-    return { status: 200, json: async () => validCoachCapabilities() };
+  const healthy = await interceptProductionFetch(async () => {
+    const imported = await importProductionCoachInitialization(source);
+    await imported.namespace.gameReviewCoachCapabilitiesLoader?.();
+    return imported;
   });
-  await healthy.capabilitiesLoader?.();
-  assert.equal(healthy.stagingCapability, null);
-  assert.equal(healthy.requester, null);
-  assert.equal(healthy.state.status, 'disabled');
-  assert.equal(healthyGets, 0, 'NORMAL_PRODUCTION_CAPABILITIES_GET_COUNT=0');
-  assert.equal(healthyPosts, 0, 'NORMAL_PRODUCTION_COACH_POST_COUNT=0');
+  assert.equal(healthy.value.namespace.gameReviewCoachStagingCapability, null);
+  assert.equal(healthy.value.namespace.gameReviewCoachRequester, null);
+  assert.equal(healthy.value.namespace.gameReviewCoachState.status, 'disabled');
+  assert.equal(healthy.calls.filter(({ options }) => options?.method === 'GET').length, 0,
+    'NORMAL_PRODUCTION_CAPABILITIES_GET_COUNT=0');
+  assert.equal(healthy.calls.filter(({ options }) => options?.method === 'POST').length, 0,
+    'NORMAL_PRODUCTION_COACH_POST_COUNT=0');
 
+  const importTarget = "import {\n  readInstalledReviewCoachStagingCapability,";
+  const importReplacement = "import {\n  createReviewCoachStagingCapability,\n  readInstalledReviewCoachStagingCapability,";
   const originalLine = 'const gameReviewCoachStagingCapability = readInstalledReviewCoachStagingCapability();';
-  const mutantLine = "const gameReviewCoachStagingCapability = readInstalledReviewCoachStagingCapability() ?? createReviewCoachStagingCapability({ enabled: true, environment: 'staging', apiBaseUrl: 'https://mutant.invalid' }, { fetch: globalThis.fetch, AbortController: globalThis.AbortController, setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout });";
+  const mutantLine = "const gameReviewCoachStagingCapability = readInstalledReviewCoachStagingCapability() ?? createReviewCoachStagingCapability({ enabled: true, environment: 'staging', apiBaseUrl: 'https://mutant.invalid' });";
   for (const [eol, candidate] of mainSourceForms()) {
+    const eolImportTarget = importTarget.replace(/\n/g, eol === 'CRLF' ? '\r\n' : '\n');
+    const eolImportReplacement = importReplacement.replace(/\n/g, eol === 'CRLF' ? '\r\n' : '\n');
+    assert.equal(candidate.split(eolImportTarget).length - 1, 1,
+      `BROKEN_B2A_NORMAL_PRODUCTION_AUTO_NETWORK_WOULD_FAIL ${eol}: exact import replacement count`);
     assert.equal(candidate.split(originalLine).length - 1, 1,
-      `BROKEN_B2A_NORMAL_PRODUCTION_AUTO_NETWORK_WOULD_FAIL ${eol}: exact replacement count`);
-    const mutant = candidate.replace(originalLine, mutantLine);
-    let capabilityGets = 0;
-    let coachPosts = 0;
-    const initialized = executeProductionCoachInitialization(mutant, async (_url, options) => {
-      if (options?.method === 'GET') capabilityGets++;
-      if (options?.method === 'POST') coachPosts++;
-      return { status: 200, json: async () => validCoachCapabilities() };
+      `BROKEN_B2A_NORMAL_PRODUCTION_AUTO_NETWORK_WOULD_FAIL ${eol}: exact init replacement count`);
+    const mutant = candidate.replace(eolImportTarget, eolImportReplacement)
+      .replace(originalLine, mutantLine);
+    assert.equal(Object.prototype.hasOwnProperty.call(globalThis, 'createReviewCoachStagingCapability'), false,
+      `STAGING_FACTORY_TEST_INJECTION_PRESENT=NO ${eol}`);
+    const executed = await interceptProductionFetch(async () => {
+      const imported = await importProductionCoachInitialization(mutant);
+      assert.match(imported.moduleSource,
+        /import \{\s*createReviewCoachStagingCapability,\s*readInstalledReviewCoachStagingCapability,/,
+        `mutant has a real static production import ${eol}`);
+      await imported.namespace.gameReviewCoachCapabilitiesLoader();
+      return imported;
     });
-    await initialized.capabilitiesLoader();
-    assert.equal(capabilityGets, 1, `production initialization authority mutant executed ${eol}`);
-    assert.equal(coachPosts, 0);
+    const capabilityGets = executed.calls.filter(({ options }) => options?.method === 'GET').length;
+    const coachPosts = executed.calls.filter(({ options }) => options?.method === 'POST').length;
+    assert.equal(executed.value.namespace.gameReviewCoachStagingCapability.environment, 'staging');
+    assert.equal(capabilityGets, 1, `production ESM initialization authority mutant executed ${eol}`);
+    assert.equal(coachPosts, 0, `mutant does not fabricate a coach POST ${eol}`);
     assert.throws(() => assert.equal(capabilityGets, 0), error => error?.code === 'ERR_ASSERTION',
       `BROKEN_B2A_NORMAL_PRODUCTION_AUTO_NETWORK_WOULD_FAIL ${eol}`);
   }
