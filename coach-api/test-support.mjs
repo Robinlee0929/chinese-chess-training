@@ -562,10 +562,21 @@ try {
   if (policy.exposeBuffer === true) context.Buffer = Buffer;
   if (policy.exposeNodeGlobal === true) context.global = global;
 
+  // Only bounded primitive data enters this factory. The returned Error and its
+  // entire constructor chain are owned by the vm context.
+  const guestErrorFactory = new vm.Script(
+    '(code) => {'
+      + 'const error = new Error("sandbox dynamic import rejected");'
+      + 'Object.defineProperty(error,"code",{value:code,enumerable:true});'
+      + 'return error;'
+    + '}',
+    { filename: 'sandbox-error-factory.js' },
+  ).runInContext(context);
+
   const modules = new Map();
   const dynamicImport = policy.useDefaultDynamicImportLoader === true
     ? async (specifier) => import(specifier)
-    : async () => fail('sandbox dynamic import rejected', 'SANDBOX_DYNAMIC_IMPORT_FORBIDDEN');
+    : async () => { throw guestErrorFactory('SANDBOX_DYNAMIC_IMPORT_FORBIDDEN'); };
   const compile = (name) => {
     if (modules.has(name)) return modules.get(name);
     if (!sources.has(name)) fail('sandbox source map miss: ' + name, 'SANDBOX_SOURCE_MISSING');
@@ -602,6 +613,27 @@ try {
     value = await new vm.Script('(async()=>({status:__sandboxResponse.status,body:await __sandboxResponse.text(),headers:Object.fromEntries(__sandboxResponse.headers)}))()')
       .runInContext(context);
     delete context.__sandboxResponse;
+  } else if (input.operation?.type === 'inspect-error-realm') {
+    const candidate = entry.namespace[input.operation.exportName];
+    context.__sandboxRealmProbe = candidate;
+    const guest = new vm.Script('({' +
+      'constructorIsError:__sandboxRealmProbe.constructor===Error,' +
+      'prototypeIsErrorPrototype:Object.getPrototypeOf(__sandboxRealmProbe)===Error.prototype,' +
+      'constructorConstructorIsFunction:__sandboxRealmProbe.constructor.constructor===Function' +
+    '})', { filename: 'sandbox-realm-probe.js' }).runInContext(context);
+    delete context.__sandboxRealmProbe;
+    value = {
+      guest,
+      host: {
+        prototypeIsHostErrorPrototype: Object.getPrototypeOf(candidate) === Error.prototype,
+        constructorIsHostError: candidate?.constructor === Error,
+        constructorConstructorIsHostFunction: candidate?.constructor?.constructor === Function,
+      },
+      code: String(candidate?.code ?? ''),
+      facts: input.operation.factsExportName
+        ? entry.namespace[input.operation.factsExportName]
+        : null,
+    };
   } else {
     value = {};
     for (const name of input.operation?.exports ?? []) value[name] = entry.namespace[name];

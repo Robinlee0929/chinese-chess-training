@@ -749,6 +749,46 @@ function sandboxExports(source, { isolationPolicy, sandboxPolicy, exports = ['va
     operation: { type: 'exports', exports } });
 }
 
+test('vm error realm ownership: dynamic import rejection stays inside the vm context', () => {
+  const source = `
+    export let caught;
+    export let facts = { rejected: false, loaded: false };
+    try {
+      await import('data:text/javascript,export default 1');
+      facts = { rejected: false, loaded: true };
+    } catch (error) {
+      caught = error;
+      facts = {
+        rejected: true,
+        loaded: false,
+        processType: typeof process,
+        bufferType: typeof Buffer,
+      };
+    }
+  `;
+  const result = runProductionSandbox({
+    sources: new Map([['index.js', source]]),
+    isolationPolicy: { forbidDynamicImports: false, reservedIdentifiers: [] },
+    operation: { type: 'inspect-error-realm', exportName: 'caught', factsExportName: 'facts' },
+  });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.phase, 'complete');
+  assert.equal(result.value.code, 'SANDBOX_DYNAMIC_IMPORT_FORBIDDEN');
+  assert.deepEqual(result.value.facts, {
+    rejected: true, loaded: false, processType: 'undefined', bufferType: 'undefined',
+  });
+  assert.deepEqual(result.value.guest, {
+    constructorIsError: true,
+    prototypeIsErrorPrototype: true,
+    constructorConstructorIsFunction: true,
+  });
+  assert.deepEqual(result.value.host, {
+    prototypeIsHostErrorPrototype: false,
+    constructorIsHostError: false,
+    constructorConstructorIsHostFunction: false,
+  });
+});
+
 test('sandbox authority: production context exposes only the explicit context-owned Web allowlist', () => {
   assert.deepEqual(SANDBOX_EXPOSED_GLOBALS, [
     'Request', 'Response', 'Headers', 'URL', 'TextEncoder', 'TextDecoder',
