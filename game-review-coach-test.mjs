@@ -392,13 +392,86 @@ test('B2A POST statuses and network failures are bounded and never retried', asy
   assert.equal(calls, 1);
 });
 
+test('B2A capabilities GET failures are bounded, exact and never retried', async () => {
+  const cases = [
+    ...[400, 403, 429, 500, 503].map((status) => ({
+      name: `HTTP ${status}`,
+      expectedCode: 'capabilities_unavailable',
+      fetch: async () => jsonResponse(status, { private: 'hidden' }),
+    })),
+    {
+      name: 'malformed JSON',
+      expectedCode: 'invalid_capabilities',
+      fetch: async () => ({ status: 200, json: async () => { throw new Error('private JSON detail'); } }),
+    },
+    {
+      name: 'invalid schema',
+      expectedCode: 'invalid_capabilities',
+      fetch: async () => jsonResponse(200, capabilities({ modelId: 'not-allowed' })),
+    },
+    {
+      name: 'network rejection',
+      expectedCode: 'network',
+      fetch: async () => { throw new Error('private network detail'); },
+    },
+  ];
+  for (const fixture of cases) {
+    let calls = 0;
+    let observedUrl = null;
+    let observedMethod = null;
+    const capability = createReviewCoachStagingCapability({ enabled: true, environment: 'staging',
+      apiBaseUrl: 'https://worker.example' }, { fetch: async (url, options) => {
+      calls++;
+      observedUrl = url;
+      observedMethod = options.method;
+      return fixture.fetch();
+    } });
+    await assert.rejects(() => capability.loadCapabilities(),
+      error => error instanceof ReviewCoachTransportError && error.code === fixture.expectedCode
+        && error.message === 'AI 教練目前無法使用', fixture.name);
+    assert.equal(calls, 1, `BROKEN_B2A_CAPABILITIES_GET_RETRY_WOULD_FAIL: ${fixture.name}`);
+    assert.equal(observedUrl, 'https://worker.example/api/review-coach/capabilities');
+    assert.equal(observedMethod, 'GET');
+  }
+
+  let deadline = null;
+  let fetchResolve;
+  let capturedSignal;
+  let calls = 0;
+  const timeoutCapability = createReviewCoachStagingCapability({ enabled: true, environment: 'staging',
+    apiBaseUrl: 'https://worker.example' }, {
+    fetch: (_url, { signal }) => new Promise((resolve) => {
+      calls++;
+      capturedSignal = signal;
+      fetchResolve = resolve;
+    }),
+    setTimeout(callback, delay) { deadline = { callback, delay }; return 1; },
+    clearTimeout() {},
+  });
+  const pending = timeoutCapability.loadCapabilities();
+  let establishedAvailability = false;
+  pending.then(() => { establishedAvailability = true; }, () => {});
+  await Promise.resolve();
+  assert.equal(capturedSignal.aborted, false);
+  assert.equal(deadline.delay, 4000);
+  deadline.callback();
+  await assert.rejects(pending, error => error.code === 'timeout');
+  assert.equal(capturedSignal.aborted, true, 'DYNAMIC_CAPABILITIES_FETCH_SIGNAL_ABORTED=YES');
+  fetchResolve(jsonResponse(200, capabilities()));
+  await Promise.resolve();
+  assert.equal(establishedAvailability, false, 'late GET result cannot establish availability');
+  assert.equal(calls, 1, 'BROKEN_B2A_CAPABILITIES_GET_RETRY_WOULD_FAIL: timeout/late completion');
+});
+
 test('B2A 4000ms boundary aborts and ignores hostile late transport completion', async () => {
   let deadline = null;
   let fetchResolve;
+  let capturedSignal;
   const capability = createReviewCoachStagingCapability({ enabled: true, environment: 'staging',
     apiBaseUrl: 'https://worker.example' }, {
     fetch: (_url, { signal }) => new Promise((resolve) => {
       fetchResolve = resolve;
+      capturedSignal = signal;
       assert.equal(signal.aborted, false);
     }),
     setTimeout(callback, delay) { deadline = { callback, delay }; return 1; },
@@ -410,6 +483,7 @@ test('B2A 4000ms boundary aborts and ignores hostile late transport completion',
   assert.equal(B2A_BROWSER_TIMEOUT_MS, 4000, 'BROKEN_B2A_TIMEOUT_REMOVED_WOULD_FAIL');
   deadline.callback();
   await assert.rejects(pending, error => error.code === 'timeout');
+  assert.equal(capturedSignal.aborted, true, 'DYNAMIC_COACH_FETCH_SIGNAL_ABORTED=YES');
   fetchResolve(jsonResponse(200, responseFor(begin().request)));
   await Promise.resolve();
   assert.match(connectivitySource, /Promise\.race\(\[fetchResult, boundary\]\)/,
@@ -427,6 +501,84 @@ async function importConnectivityMutant(target, replacement, label) {
   assert.notEqual(selfContained, changed, `dependency embedded: ${label}`);
   return import(`data:text/javascript;base64,${Buffer.from(selfContained).toString('base64')}`);
 }
+
+function connectivitySourceForms() {
+  const lf = connectivitySource.replace(/\r\n?/g, '\n');
+  return [['LF', lf], ['CRLF', lf.replace(/\n/g, '\r\n')]];
+}
+
+async function importConnectivityUniqueMutation(candidate, target, replacement, label) {
+  const occurrences = candidate.split(target).length - 1;
+  assert.equal(occurrences, 1, `${label}: exact replacement count`);
+  const changed = candidate.replace(target, replacement);
+  const coachUrl = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
+  const dependencyPattern = /from '\.\/game-review-coach\.js\?v=[0-9a-f]+';/;
+  assert.equal((changed.match(new RegExp(dependencyPattern.source, 'g')) || []).length, 1,
+    `${label}: exact dependency replacement count`);
+  const selfContained = changed.replace(dependencyPattern, `from '${coachUrl}';`);
+  return import(`data:text/javascript;base64,${Buffer.from(selfContained).toString('base64')}`);
+}
+
+test('B2A GET-only retry and abort-removal mutants are killed on LF and CRLF', async () => {
+  const config = { enabled: true, environment: 'staging', apiBaseUrl: 'https://worker.example' };
+  const detects = (label, assertion) => assert.throws(assertion,
+    error => error?.code === 'ERR_ASSERTION', label);
+  for (const [eol, candidate] of connectivitySourceForms()) {
+    const getStatusLine = "    if (response.status !== 200) throw transportError('capabilities_unavailable');";
+    const getRetry = await importConnectivityUniqueMutation(candidate, getStatusLine,
+      "    if (response.status !== 200) { await fetchImpl(`${origin}${CAPABILITIES_PATH}`, {}); throw transportError('capabilities_unavailable'); }",
+      `BROKEN_B2A_CAPABILITIES_GET_RETRY_WOULD_FAIL ${eol}`);
+    let getCalls = 0;
+    const retryCapability = getRetry.createReviewCoachStagingCapability(config, {
+      fetch: async () => { getCalls++; return jsonResponse(503, {}); },
+    });
+    await assert.rejects(() => retryCapability.loadCapabilities());
+    detects(`BROKEN_B2A_CAPABILITIES_GET_RETRY_WOULD_FAIL ${eol}`,
+      () => assert.equal(getCalls, 1));
+    assert.equal(getCalls, 2, `GET retry mutant executed ${eol}`);
+
+    const abortBlock = [
+      '  const timer = runtime.setTimeout(() => {',
+      '    expired = true;',
+      '    controller.abort();',
+      "    rejectBoundary(transportError('timeout'));",
+      '  }, B2A_BROWSER_TIMEOUT_MS);',
+    ].join(eol === 'CRLF' ? '\r\n' : '\n');
+    const abortRemovedBlock = [
+      '  const timer = runtime.setTimeout(() => {',
+      '    expired = true;',
+      "    rejectBoundary(transportError('timeout'));",
+      '  }, B2A_BROWSER_TIMEOUT_MS);',
+    ].join(eol === 'CRLF' ? '\r\n' : '\n');
+    const abortRemoved = await importConnectivityUniqueMutation(candidate, abortBlock, abortRemovedBlock,
+      `BROKEN_B2A_TIMEOUT_DOES_NOT_ABORT_FETCH_WOULD_FAIL ${eol}`);
+    let deadline;
+    let capturedSignal;
+    let resolveFetch;
+    const abortCapability = abortRemoved.createReviewCoachStagingCapability(config, {
+      fetch: (_url, { signal }) => new Promise((resolve) => {
+        capturedSignal = signal;
+        resolveFetch = resolve;
+      }),
+      setTimeout(callback, delay) { deadline = { callback, delay }; return 1; },
+      clearTimeout() {},
+    });
+    const pending = abortCapability.loadCapabilities();
+    let establishedAvailability = false;
+    pending.then(() => { establishedAvailability = true; }, () => {});
+    await Promise.resolve();
+    assert.equal(capturedSignal.aborted, false);
+    assert.equal(deadline.delay, 4000);
+    deadline.callback();
+    await assert.rejects(pending, error => error.code === 'timeout');
+    detects(`BROKEN_B2A_TIMEOUT_DOES_NOT_ABORT_FETCH_WOULD_FAIL ${eol}`,
+      () => assert.equal(capturedSignal.aborted, true));
+    assert.equal(capturedSignal.aborted, false, `abort-removal mutant executed ${eol}`);
+    resolveFetch(jsonResponse(200, capabilities()));
+    await Promise.resolve();
+    assert.equal(establishedAvailability, false, `late result remains ignored ${eol}`);
+  }
+});
 
 test('B2A transport mutation gates execute credentials, retry, timeout, schema and endpoint defects', async () => {
   const detects = async (label, action) => {

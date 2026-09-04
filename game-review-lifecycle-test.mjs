@@ -23,6 +23,7 @@ import {
 import { createGameReviewEvidence } from './game-review-evidence.js';
 import { deriveGameReviewTeaching } from './game-review-teaching.js';
 import { createGameAnalysis } from './game-analysis.js';
+import { createGameReviewPuzzleHandoff } from './game-review-puzzle-handoff.js';
 import {
   createDisabledCoachState,
   createIdleCoachState,
@@ -34,7 +35,11 @@ import {
 } from './game-review-coach.js';
 import { readCoachModelProfilePreference, writeCoachModelProfilePreference,
   COACH_MODEL_PROFILE_STORAGE_KEY } from './coach-model-profile-preference.js';
-import { isReviewCoachProfileAvailable } from './review-coach-connectivity.js';
+import {
+  createReviewCoachStagingCapability,
+  isReviewCoachProfileAvailable,
+  readInstalledReviewCoachStagingCapability,
+} from './review-coach-connectivity.js';
 
 const source = readFileSync(new URL('./main.js', import.meta.url), 'utf8');
 const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
@@ -256,6 +261,14 @@ function harness({
       GAME_RECORD_LIBRARY: 'GAME_RECORD_LIBRARY',
       GAME_REVIEW: 'GAME_REVIEW',
       GAME_ANALYSIS: 'GAME_ANALYSIS',
+      PUZZLE_EDITOR: 'PUZZLE_EDITOR',
+      PUZZLE_CONFIRMED: 'PUZZLE_CONFIRMED',
+      PUZZLE_RECORDING: 'PUZZLE_RECORDING',
+      PUZZLE_RECORDED: 'PUZZLE_RECORDED',
+      PUZZLE_PRACTICING: 'PUZZLE_PRACTICING',
+      PUZZLE_PRACTICE_COMPLETE: 'PUZZLE_PRACTICE_COMPLETE',
+      PUZZLE_LIBRARY: 'PUZZLE_LIBRARY',
+      PUZZLE_VIEW: 'PUZZLE_VIEW',
     }),
     appState: 'NORMAL_GAME',
     board: liveBoard,
@@ -289,6 +302,7 @@ function harness({
     gameReviewInvoker: null,
     gameReviewStored: false,
     gameReviewLivePresentation: null,
+    gameReviewPuzzleReturnContext: null,
     gameAnalysisState: null,
     gameAnalysisSelected: null,
     gameAnalysisLegal: [],
@@ -328,9 +342,20 @@ function harness({
     puzzleWrites: 0,
     analyticsWrites: 0,
     messages: [],
+    editorState: null,
+    confirmedPosition: null,
+    recorderState: null,
+    recordedPuzzleResult: null,
+    practiceState: null,
+    practiceAttempt: null,
+    practiceToken: 0,
+    libraryViewPuzzle: null,
+    activeSavedPuzzleId: null,
+    savedCurrentPuzzleId: null,
     gameRecordStore,
     storage,
     createGameReview,
+    createGameReviewPuzzleHandoff,
     createGameAnalysis,
     firstGameReviewPly,
     previousGameReviewPly,
@@ -421,18 +446,32 @@ function harness({
     btnGameReviewDelete: domNode(true),
     overlay: domNode(true),
     banner: domNode(true),
+    editorPanel: domNode(true),
+    recorderPanel: domNode(true),
+    libraryPanel: domNode(true),
     lastFromMark: { visible: true, position: vector() },
     lastToMark: { visible: true, position: vector() },
     document,
     window: { confirm: () => confirm },
     normalGameActive: () => context.appState === 'NORMAL_GAME',
     gameRecordFlowActive: () => ['GAME_RECORD_LIBRARY', 'GAME_REVIEW', 'GAME_ANALYSIS'].includes(context.appState),
+    puzzleFlowActive: () => context.appState.startsWith('PUZZLE_'),
     clearSelection: () => { context.selected = null; context.legal = []; },
     clearGameAnalysisSelection: () => {
       context.gameAnalysisSelected = null;
       context.gameAnalysisLegal = [];
     },
     stopConfetti() {},
+    releasePhotoReference() {},
+    clearPracticeHint() {},
+    clearPendingPuzzleImport() {},
+    finalizePracticeAttempt() {},
+    buildScene() {},
+    activatePuzzleEditor(initialEditorState) {
+      context.editorState = initialEditorState;
+      context.appState = context.APP_STATE.PUZZLE_EDITOR;
+      return true;
+    },
     rebuildPieceMeshes(board) {
       context.clearSelection();
       context.renderedBoard = structuredClone(board);
@@ -527,6 +566,7 @@ function harness({
     'openLastCompletedGameReview', 'openStoredGameReview', 'navigateGameReview',
     'deleteGameRecordFromLibrary', 'exitGameReview', 'exitGameRecordFlow',
     'enterGameAnalysis', 'returnToGameReview',
+    'createPuzzleFromGameReview', 'exitEditor',
   ];
   // In realRenderer mode these are byte-identical production functions from main.js.
   // Only low-level DOM, mesh rebuilding, HUD, audio/confetti, and storage boundaries are doubled.
@@ -583,6 +623,10 @@ function harness({
       const index = names.indexOf(name);
       assert.notEqual(index, -1, `coach mutation function exists: ${name}`);
       const before = mainFunctions[index];
+      if (typeof target === 'string') {
+        assert.equal(before.split(target).length - 1, 1,
+          `coach mutation exact replacement count: ${coachMutation}`);
+      }
       mainFunctions[index] = before.replace(target, replacement);
       assert.notEqual(mainFunctions[index], before, `coach mutation applied: ${coachMutation}`);
     };
@@ -673,6 +717,9 @@ function harness({
       replaceIn('finishGameReviewCoachFailure',
         '    gameReviewCoachUnavailableProfiles.add(gameReviewCoachState.modelProfile);',
         "    gameReviewCoachState = selectCoachModelProfile(gameReviewCoachState, 'economy');");
+    } else if (coachMutation === 'b2a-r4-capabilities-resurrection') {
+      replaceIn('createPuzzleFromGameReview', '  invalidateGameReviewAi();',
+        '  // Broken: retain the pre-R4 capabilities request.');
     } else {
       assert.fail(`unknown coach mutation: ${coachMutation}`);
     }
@@ -882,6 +929,40 @@ function validCoachCapabilities(overrides = {}) {
 async function flushCoachSettlement() {
   await Promise.resolve();
   await Promise.resolve();
+}
+
+function mainSourceForms() {
+  const lf = source.replace(/\r\n?/g, '\n');
+  return [['LF', lf], ['CRLF', lf.replace(/\n/g, '\r\n')]];
+}
+
+function productionCoachInitialization(candidate) {
+  const match = candidate.match(/const gameReviewCoachStagingCapability = [^\r\n]+;[^]*?: createDisabledCoachState\(\);/);
+  assert.ok(match, 'actual production coach initialization block exists');
+  return match[0];
+}
+
+function executeProductionCoachInitialization(candidate, fetchImpl) {
+  const context = vm.createContext({
+    AbortController,
+    createDisabledCoachState,
+    createIdleCoachState,
+    createReviewCoachStagingCapability,
+    fetch: fetchImpl,
+    readCoachModelProfilePreference,
+    readInstalledReviewCoachStagingCapability,
+    setTimeout,
+    clearTimeout,
+    localStorage: { getItem: () => null },
+  });
+  vm.runInContext(`${productionCoachInitialization(candidate)}
+globalThis.__coachInitializationResult = Object.freeze({
+  stagingCapability: gameReviewCoachStagingCapability,
+  requester: gameReviewCoachRequester,
+  capabilitiesLoader: gameReviewCoachCapabilitiesLoader,
+  state: gameReviewCoachState,
+});`, context);
+  return context.__coachInitializationResult;
 }
 
 function assertFactualR3bLanguage(text, label = 'R3B user-visible text') {
@@ -2105,6 +2186,42 @@ test('B2A staging capabilities are advisory, never auto-POST, and fail closed wi
   assert.equal(ctx.requestGameReviewCoach(), false, '409 remains authoritative and has no automatic retry');
 });
 
+test('B2A actual production initialization has zero network authority and kills authority mutants on LF and CRLF', async () => {
+  let healthyGets = 0;
+  let healthyPosts = 0;
+  const healthy = executeProductionCoachInitialization(source, async (_url, options) => {
+    if (options?.method === 'GET') healthyGets++;
+    if (options?.method === 'POST') healthyPosts++;
+    return { status: 200, json: async () => validCoachCapabilities() };
+  });
+  await healthy.capabilitiesLoader?.();
+  assert.equal(healthy.stagingCapability, null);
+  assert.equal(healthy.requester, null);
+  assert.equal(healthy.state.status, 'disabled');
+  assert.equal(healthyGets, 0, 'NORMAL_PRODUCTION_CAPABILITIES_GET_COUNT=0');
+  assert.equal(healthyPosts, 0, 'NORMAL_PRODUCTION_COACH_POST_COUNT=0');
+
+  const originalLine = 'const gameReviewCoachStagingCapability = readInstalledReviewCoachStagingCapability();';
+  const mutantLine = "const gameReviewCoachStagingCapability = readInstalledReviewCoachStagingCapability() ?? createReviewCoachStagingCapability({ enabled: true, environment: 'staging', apiBaseUrl: 'https://mutant.invalid' }, { fetch: globalThis.fetch, AbortController: globalThis.AbortController, setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout });";
+  for (const [eol, candidate] of mainSourceForms()) {
+    assert.equal(candidate.split(originalLine).length - 1, 1,
+      `BROKEN_B2A_NORMAL_PRODUCTION_AUTO_NETWORK_WOULD_FAIL ${eol}: exact replacement count`);
+    const mutant = candidate.replace(originalLine, mutantLine);
+    let capabilityGets = 0;
+    let coachPosts = 0;
+    const initialized = executeProductionCoachInitialization(mutant, async (_url, options) => {
+      if (options?.method === 'GET') capabilityGets++;
+      if (options?.method === 'POST') coachPosts++;
+      return { status: 200, json: async () => validCoachCapabilities() };
+    });
+    await initialized.capabilitiesLoader();
+    assert.equal(capabilityGets, 1, `production initialization authority mutant executed ${eol}`);
+    assert.equal(coachPosts, 0);
+    assert.throws(() => assert.equal(capabilityGets, 0), error => error?.code === 'ERR_ASSERTION',
+      `BROKEN_B2A_NORMAL_PRODUCTION_AUTO_NETWORK_WOULD_FAIL ${eol}`);
+  }
+});
+
 test('B2A capabilities failure blocks POST and preserves preference and canonical teaching', async () => {
   const ctx = harness({ records: [record('b2a-cap-fail')], realRenderer: true,
     stagingCoach: true, profileValue: 'balanced' });
@@ -2153,8 +2270,49 @@ test('B2A late capabilities after profile, ply, R2, R4 and exit invalidation can
       boundary === 'r2' ? 'BROKEN_B2A_R2_RESURRECTION_WOULD_FAIL' : 'BROKEN_B2A_STALE_NETWORK_RESPONSE_WOULD_FAIL');
     assert.notEqual(ctx.gameReviewCoachCapabilitiesState.status, 'ready');
   }
-  assert.match(functionSource('createPuzzleFromGameReview'), /invalidateGameReviewAi\(\)/,
+});
+
+async function runActualR4CapabilitiesLifecycle(coachMutation = null, coachEol = null) {
+  const ctx = harness({ records: [record(`b2a-r4-${coachMutation || 'healthy'}`)], realRenderer: true,
+    stagingCoach: true, coachMutation, coachEol });
+  const canonical = prepareEligibleCoach(ctx, `b2a-r4-${coachMutation || 'healthy'}`);
+  const stale = ctx.coachCapabilitiesRequests[0];
+  assert.equal(ctx.createPuzzleFromGameReview(ctx.btnGameReviewCreatePuzzle), true);
+  assert.equal(ctx.appState, ctx.APP_STATE.PUZZLE_EDITOR);
+  assert.equal(ctx.coachRequests.length, 0);
+  ctx.exitEditor();
+  assert.equal(ctx.appState, ctx.APP_STATE.GAME_REVIEW);
+  const returnedCanonical = { title: ctx.gameReviewTeachingTitle.textContent,
+    body: ctx.gameReviewTeachingBody.textContent };
+  stale.resolve(validCoachCapabilities());
+  await flushCoachSettlement();
+  return { ctx, stale, canonical, returnedCanonical };
+}
+
+test('B2A actual R4 entry/return rejects hostile non-aborting late capabilities completion', async () => {
+  const { ctx, stale, returnedCanonical } = await runActualR4CapabilitiesLifecycle();
+  assert.equal(stale.signal.aborted, true, 'R4_PENDING_CAPABILITIES_SIGNAL_ABORTED=YES');
+  assert.equal(ctx.coachCapabilitiesRequests.length, 1, 'R4 return does not reuse or duplicate the old GET');
+  assert.equal(ctx.gameReviewCoachCapabilitiesState.status, 'idle',
     'BROKEN_B2A_R4_RESURRECTION_WOULD_FAIL');
+  assert.equal(ctx.coachRequests.length, 0, 'late capabilities never auto-POST');
+  assert.deepEqual({ title: ctx.gameReviewTeachingTitle.textContent,
+    body: ctx.gameReviewTeachingBody.textContent }, returnedCanonical,
+  'hostile late completion cannot alter the canonical teaching returned by production R4');
+});
+
+test('B2A R4-specific production mutant resurrects stale capabilities on LF and CRLF', async () => {
+  for (const eol of ['\n', '\r\n']) {
+    const { ctx, stale } = await runActualR4CapabilitiesLifecycle(
+      'b2a-r4-capabilities-resurrection', eol);
+    assert.equal(stale.signal.aborted, false, `R4 invalidation mutant executed ${JSON.stringify(eol)}`);
+    assert.equal(ctx.coachCapabilitiesRequests.length, 1);
+    assert.equal(ctx.gameReviewCoachCapabilitiesState.status, 'ready',
+      'mutant observably installs the stale pre-R4 snapshot after return');
+    assert.throws(() => assert.notEqual(ctx.gameReviewCoachCapabilitiesState.status, 'ready'),
+      error => error?.code === 'ERR_ASSERTION', 'BROKEN_B2A_R4_RESURRECTION_WOULD_FAIL');
+    assert.equal(ctx.coachRequests.length, 0);
+  }
 });
 
 test('B2A lifecycle mutation gates execute auto-POST, stale completion and fallback defects', async () => {
