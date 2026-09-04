@@ -3,6 +3,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test review-coach-api-test.mjs review-coach-contract-parity-test.mjs review-coach-mutation-test.mjs"
+    "test": "node --test review-coach-api-test.mjs review-coach-contract-parity-test.mjs review-coach-mutation-test.mjs",
+    "wrangler:version": "wrangler --version",
+    "cloudflare:whoami": "wrangler whoami --json"
+  },
+  "devDependencies": {
+    "wrangler": "4.129.0"
   }
 }

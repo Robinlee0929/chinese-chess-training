@@ -1039,6 +1039,33 @@ for (const eol of ['\n', '\r\n']) for (const [name, hostile, expectedIssue] of t
   });
 }
 
+const APPROVED_PACKAGE_SCRIPTS = Object.freeze({
+  test: 'node --test review-coach-api-test.mjs review-coach-contract-parity-test.mjs review-coach-mutation-test.mjs',
+  'wrangler:version': 'wrangler --version',
+  'cloudflare:whoami': 'wrangler whoami --json',
+});
+
+function assertPackagePolicy(pkg) {
+  assert.equal(pkg.dependencies === undefined || Object.keys(pkg.dependencies).length === 0, true,
+    'B2B0_RUNTIME_DEPENDENCIES_ZERO');
+  assert.deepEqual(pkg.devDependencies, { wrangler: '4.129.0' },
+    'B2B0_DEV_DEPENDENCIES_EXACT');
+  assert.deepEqual(pkg.scripts, APPROVED_PACKAGE_SCRIPTS,
+    'B2B0_PACKAGE_SCRIPTS_EXACT');
+}
+
+function assertPackagePolicyMutation(pkg, label, expectedMarker, mutate) {
+  const mutant = structuredClone(pkg);
+  mutate(mutant);
+  const serialized = JSON.stringify(mutant);
+  let parsed;
+  assert.doesNotThrow(() => { parsed = JSON.parse(serialized); }, `${label}: mutant JSON remains valid`);
+  let caught = null;
+  try { assertPackagePolicy(parsed); } catch (error) { caught = error; }
+  assert.equal(caught?.code, 'ERR_ASSERTION', `${label}: intended assertion failed`);
+  assert.match(caught.message, new RegExp(expectedMarker), `${label}: correct policy assertion failed`);
+}
+
 test('literal constants/policies immutable, no frontend/Node/fixtures/dependencies in production graph', () => {
   assert.equal(MAX_REQUEST_BYTES, 1024); assert.equal(MAX_RESPONSE_BYTES, 1024);
   assert.equal(R3C2_B_PROVIDER_TIMEOUT_MS, 3000); assert.equal(TOTAL_TIMEOUT_MS, 3500);
@@ -1050,8 +1077,8 @@ test('literal constants/policies immutable, no frontend/Node/fixtures/dependenci
   }
   const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
   assert.equal(pkg.private, true); assert.equal(pkg.type, 'module');
-  assert.equal(pkg.dependencies, undefined); assert.equal(pkg.devDependencies, undefined);
-  assert.deepEqual(Object.keys(pkg.scripts), ['test']);
+  assertPackagePolicy(pkg);
+  for (const [name, source] of productionSources()) assert.doesNotMatch(source, /\bwrangler\b/u, name);
   const capabilities = runProductionSandbox({ operation: { type: 'worker',
     url: `${ORIGIN}/api/review-coach/capabilities`, init: { method: 'GET', headers: { Origin: ORIGIN } },
     env: { COACH_FAKE_ENABLED: 'true' } } });
@@ -1064,4 +1091,39 @@ test('literal constants/policies immutable, no frontend/Node/fixtures/dependenci
   const review = runProductionSandbox({ operation: sandboxWorkerOperation });
   assertSandboxWorker200(review);
   assert.equal(review.moduleCount, 8);
+});
+
+test('package policy keeps Wrangler exact, dev-only and limited to non-deploying scripts', () => {
+  const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
+  assertPackagePolicy(pkg);
+  const cases = [
+    ['BROKEN_RUNTIME_DEPENDENCY_WOULD_FAIL', 'B2B0_RUNTIME_DEPENDENCIES_ZERO', (mutant) => {
+      mutant.dependencies = { wrangler: mutant.devDependencies.wrangler };
+      delete mutant.devDependencies;
+    }],
+    ['BROKEN_UNPINNED_WRANGLER_WOULD_FAIL', 'B2B0_DEV_DEPENDENCIES_EXACT', (mutant) => {
+      mutant.devDependencies.wrangler = '^4.129.0';
+    }],
+    ['BROKEN_WRONG_WRANGLER_VERSION_WOULD_FAIL', 'B2B0_DEV_DEPENDENCIES_EXACT', (mutant) => {
+      mutant.devDependencies.wrangler = '4.128.0';
+    }],
+    ['BROKEN_EXTRA_DEVDEPENDENCY_WOULD_FAIL', 'B2B0_DEV_DEPENDENCIES_EXACT', (mutant) => {
+      mutant.devDependencies.typescript = '5.9.3';
+    }],
+    ['BROKEN_EXTRA_SCRIPT_WOULD_FAIL', 'B2B0_PACKAGE_SCRIPTS_EXACT', (mutant) => {
+      mutant.scripts.lint = 'node --check src/index.js';
+    }],
+    ['BROKEN_DEPLOY_SCRIPT_WOULD_FAIL', 'B2B0_PACKAGE_SCRIPTS_EXACT', (mutant) => {
+      mutant.scripts['deploy:staging'] = 'wrangler deploy --env staging';
+    }],
+    ['BROKEN_WHOAMI_DEPLOY_COMMAND_WOULD_FAIL', 'B2B0_PACKAGE_SCRIPTS_EXACT', (mutant) => {
+      mutant.scripts['cloudflare:whoami'] = 'wrangler deploy --env staging';
+    }],
+    ['BROKEN_WRANGLER_VERSION_NPX_LATEST_WOULD_FAIL', 'B2B0_PACKAGE_SCRIPTS_EXACT', (mutant) => {
+      mutant.scripts['wrangler:version'] = 'npx wrangler@latest --version';
+    }],
+  ];
+  for (const [label, expectedMarker, mutate] of cases) {
+    assertPackagePolicyMutation(pkg, label, expectedMarker, mutate);
+  }
 });
