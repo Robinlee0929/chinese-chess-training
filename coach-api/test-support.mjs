@@ -1,5 +1,6 @@
 // Test-only utilities. Never imported by src/ or the Worker entry point.
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 import { isBuiltin } from 'node:module';
 import { posix as pathPosix } from 'node:path';
@@ -376,8 +377,254 @@ export function assertProductionIsolation(sources, policy) {
   assert.deepEqual(issues, [], `prohibited production authority: ${issues.join(', ')}`);
 }
 
-// Compile an isolated ESM graph in memory. No temporary mutation of repository files.
-export async function importVariant({ file, before, after, eol = '\n', isolationPolicy, sources: providedSources } = {}) {
+// These are context-owned Web-compatible facades, never raw host constructors. Passing
+// Node's Request/Headers/etc. into a vm would expose their host Function constructor.
+export const SANDBOX_EXPOSED_GLOBALS = Object.freeze([
+  'Request', 'Response', 'Headers', 'URL', 'TextEncoder', 'TextDecoder',
+  'AbortController', 'performance', 'setTimeout', 'clearTimeout',
+]);
+
+const SANDBOX_BOOTSTRAP_SOURCE = String.raw`
+(() => {
+  class Headers {
+    constructor(init = {}) {
+      this.values = new Map();
+      if (init instanceof Headers) {
+        for (const [name, value] of init) this.set(name, value);
+      } else if (init && typeof init[Symbol.iterator] === 'function' && typeof init !== 'string') {
+        for (const [name, value] of init) this.set(name, value);
+      } else {
+        for (const [name, value] of Object.entries(init ?? {})) this.set(name, value);
+      }
+    }
+    key(name) { return String(name).toLowerCase(); }
+    set(name, value) { this.values.set(this.key(name), [String(name), String(value)]); }
+    get(name) { return this.values.get(this.key(name))?.[1] ?? null; }
+    has(name) { return this.values.has(this.key(name)); }
+    entries() { return this.values.values(); }
+    [Symbol.iterator]() { return this.entries(); }
+  }
+
+  class Response {
+    constructor(body = null, { status = 200, headers = {} } = {}) {
+      this.status = status;
+      this.headers = headers instanceof Headers ? headers : new Headers(headers);
+      this.bodyValue = body === null ? '' : String(body);
+    }
+    async text() { return this.bodyValue; }
+    async json() { return JSON.parse(this.bodyValue); }
+  }
+
+  class URL {
+    constructor(input) {
+      this.href = String(input);
+      const scheme = this.href.indexOf('://');
+      const pathStart = scheme === -1 ? 0 : this.href.indexOf('/', scheme + 3);
+      const start = pathStart === -1 ? this.href.length : pathStart;
+      const query = this.href.indexOf('?', start);
+      const hash = this.href.indexOf('#', start);
+      const candidates = [query, hash].filter((value) => value !== -1);
+      const end = candidates.length === 0 ? this.href.length : Math.min(...candidates);
+      this.pathname = this.href.slice(start, end) || '/';
+    }
+  }
+
+  class TextEncoder {
+    encode(input = '') {
+      const bytes = [];
+      for (const character of String(input)) {
+        const point = character.codePointAt(0);
+        if (point <= 0x7f) bytes.push(point);
+        else if (point <= 0x7ff) bytes.push(0xc0 | (point >> 6), 0x80 | (point & 0x3f));
+        else if (point <= 0xffff) bytes.push(0xe0 | (point >> 12), 0x80 | ((point >> 6) & 0x3f), 0x80 | (point & 0x3f));
+        else bytes.push(0xf0 | (point >> 18), 0x80 | ((point >> 12) & 0x3f),
+          0x80 | ((point >> 6) & 0x3f), 0x80 | (point & 0x3f));
+      }
+      return new Uint8Array(bytes);
+    }
+  }
+
+  class TextDecoder {
+    constructor(_label, options = {}) { this.fatal = options.fatal === true; this.ignoreBOM = options.ignoreBOM === true; }
+    decode(input = new Uint8Array()) {
+      const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
+      let result = '';
+      for (let index = 0; index < bytes.length;) {
+        const first = bytes[index++];
+        let point;
+        let needed;
+        let secondMinimum = 0x80;
+        let secondMaximum = 0xbf;
+        if (first <= 0x7f) { point = first; needed = 0; }
+        else if (first >= 0xc2 && first <= 0xdf) { point = first & 0x1f; needed = 1; }
+        else if (first >= 0xe0 && first <= 0xef) {
+          point = first & 0x0f; needed = 2;
+          if (first === 0xe0) secondMinimum = 0xa0;
+          if (first === 0xed) secondMaximum = 0x9f;
+        } else if (first >= 0xf0 && first <= 0xf4) {
+          point = first & 0x07; needed = 3;
+          if (first === 0xf0) secondMinimum = 0x90;
+          if (first === 0xf4) secondMaximum = 0x8f;
+        } else {
+          if (this.fatal) throw new TypeError('invalid UTF-8');
+          result += '\ufffd'; continue;
+        }
+        let valid = index + needed <= bytes.length;
+        for (let offset = 0; offset < needed && valid; offset++) {
+          const next = bytes[index + offset];
+          const minimum = offset === 0 ? secondMinimum : 0x80;
+          const maximum = offset === 0 ? secondMaximum : 0xbf;
+          if (next < minimum || next > maximum) valid = false;
+          else point = (point << 6) | (next & 0x3f);
+        }
+        if (!valid) { if (this.fatal) throw new TypeError('invalid UTF-8'); result += '\ufffd'; continue; }
+        index += needed;
+        result += String.fromCodePoint(point);
+      }
+      return !this.ignoreBOM && result.codePointAt(0) === 0xfeff ? result.slice(1) : result;
+    }
+  }
+
+  class AbortSignal {
+    constructor() { this.aborted = false; this.listeners = new Set(); }
+    addEventListener(type, listener) { if (type === 'abort') this.listeners.add(listener); }
+    removeEventListener(type, listener) { if (type === 'abort') this.listeners.delete(listener); }
+  }
+  class AbortController {
+    constructor() { this.signal = new AbortSignal(); }
+    abort() {
+      if (this.signal.aborted) return;
+      this.signal.aborted = true;
+      for (const listener of [...this.signal.listeners]) listener.call(this.signal);
+      this.signal.listeners.clear();
+    }
+  }
+
+  class Request {
+    constructor(url, { method = 'GET', headers = {}, body = null, signal } = {}) {
+      this.url = String(url);
+      this.method = String(method);
+      this.headers = headers instanceof Headers ? headers : new Headers(headers);
+      this.signal = signal ?? new AbortController().signal;
+      if (body === null || body === undefined) this.body = null;
+      else {
+        const bytes = new TextEncoder().encode(String(body));
+        this.body = { getReader() {
+          let sent = false;
+          return {
+            async read() { if (sent) return { done: true }; sent = true; return { done: false, value: bytes }; },
+            async cancel() { sent = true; },
+            releaseLock() {},
+          };
+        } };
+      }
+    }
+  }
+
+  let nextTimer = 1;
+  const timers = new Set();
+  function setTimeout(_callback, _delay) { const id = nextTimer++; timers.add(id); return id; }
+  function clearTimeout(id) { timers.delete(id); }
+
+  Object.assign(globalThis, {
+    Request, Response, Headers, URL, TextEncoder, TextDecoder, AbortController,
+    performance: Object.freeze({ now: () => 0 }), setTimeout, clearTimeout,
+  });
+})();
+`;
+
+const SANDBOX_RUNNER_SOURCE = String.raw`
+import vm from 'node:vm';
+import { readFileSync } from 'node:fs';
+import { posix as pathPosix } from 'node:path';
+
+const input = JSON.parse(readFileSync(0, 'utf8'));
+const sources = new Map(input.sources);
+const policy = input.sandboxPolicy ?? {};
+globalThis.__sandboxHostOpaqueSentinel = false;
+let phase = 'context';
+let context;
+
+const fail = (message, code) => {
+  const error = new Error(message);
+  error.code = code;
+  throw error;
+};
+
+try {
+  context = vm.createContext({}, {
+    name: 'r3c2-b1-production-authority',
+    codeGeneration: { strings: policy.codeGenerationStrings === true, wasm: policy.codeGenerationWasm === true },
+  });
+  new vm.Script(input.bootstrap, { filename: 'sandbox-web-globals.js' }).runInContext(context);
+  if (policy.trackSentinel === true) context.__sandboxOpaqueSentinel = false;
+  if (policy.exposeProcess === true) context.process = process;
+  if (policy.exposeBuffer === true) context.Buffer = Buffer;
+  if (policy.exposeNodeGlobal === true) context.global = global;
+
+  const modules = new Map();
+  const dynamicImport = policy.useDefaultDynamicImportLoader === true
+    ? async (specifier) => import(specifier)
+    : async () => fail('sandbox dynamic import rejected', 'SANDBOX_DYNAMIC_IMPORT_FORBIDDEN');
+  const compile = (name) => {
+    if (modules.has(name)) return modules.get(name);
+    if (!sources.has(name)) fail('sandbox source map miss: ' + name, 'SANDBOX_SOURCE_MISSING');
+    const module = new vm.SourceTextModule(sources.get(name), {
+      context, identifier: name, importModuleDynamically: dynamicImport,
+    });
+    modules.set(name, module);
+    return module;
+  };
+  const entry = compile('index.js');
+  phase = 'link';
+  await entry.link(async (specifier, referencingModule) => {
+    if (!specifier.startsWith('./') && !specifier.startsWith('../')) {
+      fail('sandbox non-relative module rejected: ' + specifier, 'SANDBOX_NON_RELATIVE_MODULE');
+    }
+    const resolved = pathPosix.normalize(pathPosix.join(pathPosix.dirname(referencingModule.identifier), specifier));
+    if (resolved === '..' || resolved.startsWith('../') || pathPosix.isAbsolute(resolved)) {
+      fail('sandbox production-root escape rejected: ' + specifier, 'SANDBOX_ROOT_ESCAPE');
+    }
+    if (!sources.has(resolved)) fail('sandbox source map miss: ' + resolved, 'SANDBOX_SOURCE_MISSING');
+    return compile(resolved);
+  });
+  phase = 'evaluate';
+  await entry.evaluate({ timeout: 5000 });
+  phase = 'operation';
+  let value;
+  if (input.operation?.type === 'worker') {
+    const requestSource = 'new Request(' + JSON.stringify(input.operation.url) + ','
+      + JSON.stringify(input.operation.init ?? {}) + ')';
+    const request = new vm.Script(requestSource, { filename: 'sandbox-request.js' }).runInContext(context);
+    const env = new vm.Script('(' + JSON.stringify(input.operation.env ?? {}) + ')').runInContext(context);
+    const response = await entry.namespace.default.fetch(request, env);
+    context.__sandboxResponse = response;
+    value = await new vm.Script('(async()=>({status:__sandboxResponse.status,body:await __sandboxResponse.text(),headers:Object.fromEntries(__sandboxResponse.headers)}))()')
+      .runInContext(context);
+    delete context.__sandboxResponse;
+  } else {
+    value = {};
+    for (const name of input.operation?.exports ?? []) value[name] = entry.namespace[name];
+  }
+  const result = {
+    ok: true, phase: 'complete', value,
+    sandboxSentinel: context.__sandboxOpaqueSentinel ?? false,
+    hostSentinel: globalThis.__sandboxHostOpaqueSentinel === true,
+    moduleCount: modules.size,
+  };
+  process.stdout.write(JSON.stringify(result));
+} catch (error) {
+  const result = {
+    ok: false, phase,
+    error: { name: String(error?.name ?? 'Error'), message: String(error?.message ?? error), code: error?.code ?? null },
+    sandboxSentinel: context?.__sandboxOpaqueSentinel ?? false,
+    hostSentinel: globalThis.__sandboxHostOpaqueSentinel === true,
+  };
+  process.stdout.write(JSON.stringify(result));
+}
+`;
+
+function variantSources({ file, before, after, eol = '\n', sources: providedSources } = {}) {
   const sources = new Map(providedSources ?? productionSources());
   for (const [name, source] of sources) sources.set(name, source.replace(/\r\n?/gu, '\n').replace(/\n/gu, eol));
   let applied = 0;
@@ -389,6 +636,32 @@ export async function importVariant({ file, before, after, eol = '\n', isolation
     sources.set(file, source.replace(needle, replacement));
     applied = 1;
   }
+  return { sources, applied };
+}
+
+export function runProductionSandbox({ isolationPolicy, sandboxPolicy = {}, operation = { type: 'exports', exports: [] },
+  ...variant } = {}) {
+  const { sources, applied } = variantSources(variant);
+  assertProductionIsolation(sources, isolationPolicy);
+  const child = spawnSync(process.execPath,
+    ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', SANDBOX_RUNNER_SOURCE], {
+      input: JSON.stringify({ sources: [...sources], sandboxPolicy, operation, bootstrap: SANDBOX_BOOTSTRAP_SOURCE }),
+      encoding: 'utf8', timeout: 15000, maxBuffer: 1024 * 1024, windowsHide: true,
+    });
+  assert.equal(child.error, undefined, `sandbox process error: ${child.error?.message ?? ''}`);
+  assert.equal(child.signal, null, `sandbox process signal: ${child.signal}`);
+  assert.equal(child.status, 0, `sandbox process exit ${child.status}: ${child.stderr}`);
+  assert.notEqual(child.stdout.trim(), '', `sandbox produced no result: ${child.stderr}`);
+  let result;
+  try { result = JSON.parse(child.stdout); }
+  catch { assert.fail(`sandbox result is not JSON: ${child.stdout}\n${child.stderr}`); }
+  return { ...result, applied, exposedGlobals: SANDBOX_EXPOSED_GLOBALS };
+}
+
+// Host-executed semantic mutation helper. Production-authority tests must use
+// runProductionSandbox; this legacy helper makes no runtime-authority claim.
+export async function importVariant({ file, before, after, eol = '\n', isolationPolicy, sources: providedSources } = {}) {
+  const { sources, applied } = variantSources({ file, before, after, eol, sources: providedSources });
   assertProductionIsolation(sources, isolationPolicy);
   const urls = new Map();
   const visiting = new Set();

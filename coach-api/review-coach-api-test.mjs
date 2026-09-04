@@ -11,7 +11,7 @@ import { R3C2_B_PROVIDER_TIMEOUT_MS, TOTAL_TIMEOUT_MS } from './src/provider.js'
 import { harness, payload, request, assertResponse, assertHeaders, ORIGIN, SENTINEL,
   FakeClock, deferred, flush, chunked, observeSideEffects, productionSources, importVariant,
   isNodeBuiltinSpecifier, productionIsolationIssues, productionGraphIssues,
-  assertProductionIsolation } from './test-support.mjs';
+  assertProductionIsolation, runProductionSandbox, SANDBOX_EXPOSED_GLOBALS } from './test-support.mjs';
 
 const profiles = ['economy', 'balanced', 'quality'];
 const rules = ['immediate-mate', 'immediate-repetition-terminal', 'immediate-stalemate', 'check-difference',
@@ -471,30 +471,61 @@ test('serialized response UTF-8 cap enforces 1024/1025 boundary', async () => {
 });
 
 const fakeProviderStart = 'export function fakeProvider(_input, { signal }) {';
+const sandboxWorkerOperation = Object.freeze({
+  type: 'worker', url: `${ORIGIN}/api/review-coach`,
+  init: { method: 'POST', headers: { Origin: ORIGIN, 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload()) },
+  env: { COACH_FAKE_ENABLED: 'true' },
+});
+
+function assertSandboxBlocked(result, expectedCode) {
+  assert.equal(result.ok, false, `sandbox unexpectedly completed: ${JSON.stringify(result)}`);
+  if (expectedCode) assert.equal(result.error.code, expectedCode);
+  assert.equal(result.sandboxSentinel, false);
+  assert.equal(result.hostSentinel, false);
+}
+
+function assertSandboxWorker200(result) {
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.value.status, 200);
+  assert.equal(JSON.parse(result.value.body).version, 2);
+}
+
+function assertSandboxWorkerDenied(result) {
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.value.status, 502);
+  assert.equal(result.sandboxSentinel, false);
+  assert.equal(result.hostSentinel, false);
+}
+
 const isolationDefinitions = [
   {
     gate: 'BROKEN_R3C2_B_NODE_AMBIENT_PROCESS_WOULD_FAIL',
     after: `${fakeProviderStart}\n  void process.env;`,
     expectedIssues: ['reserved-identifier:process'],
     isolationPolicy: { reservedIdentifiers: ['Buffer', 'globalThis'] },
+    sandboxPolicy: { exposeProcess: true },
   },
   {
     gate: 'BROKEN_R3C2_B_NODE_AMBIENT_BUFFER_WOULD_FAIL',
     after: `${fakeProviderStart}\n  Buffer.from('hostile-node-global');`,
     expectedIssues: ['reserved-identifier:Buffer'],
     isolationPolicy: { reservedIdentifiers: ['process', 'globalThis'] },
+    sandboxPolicy: { exposeBuffer: true },
   },
   {
     gate: 'BROKEN_R3C2_B_BARE_NODE_BUILTIN_FS_WOULD_FAIL',
     after: `import { readFileSync as nodeRead } from 'fs';\n${fakeProviderStart}\n  void nodeRead;`,
     expectedIssues: ['module-specifier:non-relative:fs', 'node-builtin:fs'],
     isolationPolicy: { forbidBareBuiltins: false, forbidNonRelativeSpecifiers: false },
+    sandboxCode: 'SANDBOX_NON_RELATIVE_MODULE',
   },
   {
     gate: 'BROKEN_R3C2_B_NODE_PREFIX_BUILTIN_FS_WOULD_FAIL',
     after: `import { readFileSync as nodeRead } from 'node:fs';\n${fakeProviderStart}\n  void nodeRead;`,
     expectedIssues: ['module-specifier:non-relative:node:fs', 'node-builtin:node:fs'],
     isolationPolicy: { forbidNodePrefixedBuiltins: false, forbidNonRelativeSpecifiers: false },
+    sandboxCode: 'SANDBOX_NON_RELATIVE_MODULE',
   },
   {
     gate: 'BROKEN_R3C2_B_NODE_BUILTIN_SUBPATH_WOULD_FAIL',
@@ -503,24 +534,28 @@ const isolationDefinitions = [
       'node-builtin:fs/promises', 'node-builtin:node:fs/promises'],
     isolationPolicy: { forbidBareBuiltins: false, forbidNodePrefixedBuiltins: false,
       forbidNonRelativeSpecifiers: false },
+    sandboxCode: 'SANDBOX_NON_RELATIVE_MODULE',
   },
   {
     gate: 'BROKEN_R3C2_B_GLOBALTHIS_PROCESS_WOULD_FAIL',
-    after: `${fakeProviderStart}\n  void globalThis.process;`,
+    after: `${fakeProviderStart}\n  void globalThis.process.env;`,
     expectedIssues: ['reserved-identifier:globalThis', 'reserved-identifier:process'],
     isolationPolicy: { reservedIdentifiers: ['Buffer'] },
+    sandboxPolicy: { exposeProcess: true },
   },
   {
     gate: 'BROKEN_R3C2_B_GLOBALTHIS_BUFFER_WOULD_FAIL',
-    after: `${fakeProviderStart}\n  void globalThis.Buffer;`,
+    after: `${fakeProviderStart}\n  globalThis.Buffer.from('hostile-node-global');`,
     expectedIssues: ['reserved-identifier:Buffer', 'reserved-identifier:globalThis'],
     isolationPolicy: { reservedIdentifiers: ['process'] },
+    sandboxPolicy: { exposeBuffer: true },
   },
   {
     gate: 'BROKEN_R3C2_B_PARENTHESIZED_GLOBALTHIS_WOULD_FAIL',
     after: `${fakeProviderStart}\n  void (globalThis).process.env; void (globalThis)['Buffer'];`,
     expectedIssues: ['reserved-identifier:globalThis', 'reserved-identifier:process'],
     isolationPolicy: { reservedIdentifiers: [] },
+    sandboxPolicy: { exposeProcess: true, exposeBuffer: true },
   },
 ];
 
@@ -533,12 +568,22 @@ for (const eol of ['\n', '\r\n']) for (const definition of isolationDefinitions)
     const hostile = original.replace(normalizedBefore, normalizedAfter);
     assert.deepEqual(productionIsolationIssues(hostile), definition.expectedIssues, 'expected Node authority identified');
 
-    // The weakened policy is the executable mutant: the hostile graph must otherwise import and run normally.
-    const mutant = await importVariant({ file: 'fake-provider.js', before: fakeProviderStart,
-      after: definition.after, eol, isolationPolicy: definition.isolationPolicy });
-    assert.equal(mutant.applied, 1); assert.equal(mutant.importable, true);
-    const response = await mutant.entry.default.fetch(request(), { COACH_FAKE_ENABLED: 'true' });
-    await assertResponse(response, 200);
+    // Even when the scanner mutation misses the authority, the sandbox still denies it.
+    const blocked = runProductionSandbox({ file: 'fake-provider.js', before: fakeProviderStart,
+      after: definition.after, eol, isolationPolicy: definition.isolationPolicy,
+      operation: sandboxWorkerOperation });
+    assert.equal(blocked.applied, 1);
+    if (definition.sandboxCode) assertSandboxBlocked(blocked, definition.sandboxCode);
+    else assertSandboxWorkerDenied(blocked);
+
+    // Ambient authorities are valid executable fixtures only under a deliberate sandbox mutation.
+    if (definition.sandboxPolicy) {
+      const mutant = runProductionSandbox({ file: 'fake-provider.js', before: fakeProviderStart,
+        after: definition.after, eol, isolationPolicy: definition.isolationPolicy,
+        sandboxPolicy: definition.sandboxPolicy, operation: sandboxWorkerOperation });
+      assert.equal(mutant.applied, 1);
+      assertSandboxWorker200(mutant);
+    }
 
     let failure;
     try {
@@ -546,7 +591,7 @@ for (const eol of ['\n', '\r\n']) for (const definition of isolationDefinitions)
     } catch (error) { failure = error; }
     assert.ok(failure instanceof assert.AssertionError, 'isolation assertion failed, not syntax/import/fixture');
     for (const issue of definition.expectedIssues) assert.ok(failure.message.includes(issue), issue);
-    context.diagnostic(`fixture=YES syntax=VALID importable=YES isolation=EXECUTED assertion=FAILED authority=${definition.expectedIssues.join(',')}`);
+    context.diagnostic(`fixture=YES syntax=VALID sandbox=BLOCKED scanner=FAILED authority=${definition.expectedIssues.join(',')}`);
   });
 }
 
@@ -616,49 +661,53 @@ const newIsolationMutations = [
   { category: 'globalThis isolation', gate: 'BROKEN_R3C2_B_COMPUTED_GLOBALTHIS_PROCESS_WOULD_FAIL',
     after: `${fakeProviderStart}\n  void globalThis[\`process\`].env;`,
     expectedIssues: ['reserved-identifier:globalThis'],
-    isolationPolicy: { reservedIdentifiers: ['process', 'Buffer'] } },
+    isolationPolicy: { reservedIdentifiers: ['process', 'Buffer'] }, sandboxPolicy: { exposeProcess: true } },
   { category: 'globalThis isolation', gate: 'BROKEN_R3C2_B_COMPUTED_GLOBALTHIS_BUFFER_WOULD_FAIL',
     after: `${fakeProviderStart}\n  globalThis[\`Buffer\`].from('x');`,
     expectedIssues: ['reserved-identifier:globalThis'],
-    isolationPolicy: { reservedIdentifiers: ['process', 'Buffer'] } },
+    isolationPolicy: { reservedIdentifiers: ['process', 'Buffer'] }, sandboxPolicy: { exposeBuffer: true } },
   { category: 'globalThis isolation', gate: 'BROKEN_R3C2_B_GLOBALTHIS_ALIAS_WOULD_FAIL',
     after: `${fakeProviderStart}\n  const root = globalThis; root['process'].env; root['Buffer'].from('x');`,
     expectedIssues: ['reserved-identifier:globalThis'],
-    isolationPolicy: { reservedIdentifiers: ['process', 'Buffer'] } },
+    isolationPolicy: { reservedIdentifiers: ['process', 'Buffer'] },
+    sandboxPolicy: { exposeProcess: true, exposeBuffer: true } },
   { category: 'ASI isolation', gate: 'BROKEN_R3C2_B_ASI_IMPORT_PROCESS_WOULD_FAIL',
     after: `import './rule-policy.js'\nprocess.env;\n${fakeProviderStart}`,
     expectedIssues: ['reserved-identifier:process'],
-    isolationPolicy: { reservedIdentifiers: ['Buffer', 'globalThis'] } },
+    isolationPolicy: { reservedIdentifiers: ['Buffer', 'globalThis'] }, sandboxPolicy: { exposeProcess: true } },
   { category: 'ASI isolation', gate: 'BROKEN_R3C2_B_ASI_IMPORT_BUFFER_WOULD_FAIL',
     after: `import './rule-policy.js'\nBuffer.from('x');\n${fakeProviderStart}`,
     expectedIssues: ['reserved-identifier:Buffer'],
-    isolationPolicy: { reservedIdentifiers: ['process', 'globalThis'] } },
+    isolationPolicy: { reservedIdentifiers: ['process', 'globalThis'] }, sandboxPolicy: { exposeBuffer: true } },
   { category: 'ASI isolation', gate: 'BROKEN_R3C2_B_ASI_EXPORT_PROCESS_WOULD_FAIL',
     after: `export * from './rule-policy.js'\nprocess.env;\n${fakeProviderStart}`,
     expectedIssues: ['reserved-identifier:process'],
-    isolationPolicy: { reservedIdentifiers: ['Buffer', 'globalThis'] } },
+    isolationPolicy: { reservedIdentifiers: ['Buffer', 'globalThis'] }, sandboxPolicy: { exposeProcess: true } },
   { category: 'ASI isolation', gate: 'BROKEN_R3C2_B_ASI_EXPORT_BUFFER_WOULD_FAIL',
     after: `export * from './rule-policy.js'\nBuffer.from('x');\n${fakeProviderStart}`,
     expectedIssues: ['reserved-identifier:Buffer'],
-    isolationPolicy: { reservedIdentifiers: ['process', 'globalThis'] } },
+    isolationPolicy: { reservedIdentifiers: ['process', 'globalThis'] }, sandboxPolicy: { exposeBuffer: true } },
   { category: 'opaque module isolation', gate: 'BROKEN_R3C2_B_STATIC_DATA_MODULE_WOULD_FAIL',
     after: `import 'data:text/javascript,export default process.env';\n${fakeProviderStart}`,
     expectedIssues: ['module-specifier:non-relative:data:text/javascript,export default process.env'],
-    isolationPolicy: { forbidNonRelativeSpecifiers: false } },
+    isolationPolicy: { forbidNonRelativeSpecifiers: false }, sandboxCode: 'SANDBOX_NON_RELATIVE_MODULE' },
   { category: 'opaque module isolation', gate: 'BROKEN_R3C2_B_REEXPORT_DATA_MODULE_WOULD_FAIL',
     after: `export { default as hostileData } from 'data:text/javascript,export default process.env';\n${fakeProviderStart}`,
     expectedIssues: ['module-specifier:non-relative:data:text/javascript,export default process.env'],
-    isolationPolicy: { forbidNonRelativeSpecifiers: false } },
+    isolationPolicy: { forbidNonRelativeSpecifiers: false }, sandboxCode: 'SANDBOX_NON_RELATIVE_MODULE' },
   { category: 'opaque module isolation', gate: 'BROKEN_R3C2_B_DYNAMIC_DATA_MODULE_WOULD_FAIL',
     after: `await import('data:text/javascript,globalThis.Buffer');\n${fakeProviderStart}`,
-    expectedIssues: ['dynamic-import:forbidden'], isolationPolicy: { forbidDynamicImports: false } },
+    expectedIssues: ['dynamic-import:forbidden'], isolationPolicy: { forbidDynamicImports: false },
+    sandboxCode: 'SANDBOX_DYNAMIC_IMPORT_FORBIDDEN', sandboxPolicy: { useDefaultDynamicImportLoader: true } },
   { category: 'opaque module isolation', gate: 'BROKEN_R3C2_B_DYNAMIC_IMPORT_ALLOWED_WOULD_FAIL',
     after: `await import('node:path');\n${fakeProviderStart}`,
-    expectedIssues: ['dynamic-import:forbidden'], isolationPolicy: { forbidDynamicImports: false } },
+    expectedIssues: ['dynamic-import:forbidden'], isolationPolicy: { forbidDynamicImports: false },
+    sandboxCode: 'SANDBOX_DYNAMIC_IMPORT_FORBIDDEN', sandboxPolicy: { useDefaultDynamicImportLoader: true } },
   { category: 'opaque module isolation', gate: 'BROKEN_R3C2_B_NON_RELATIVE_MODULE_ALLOWED_WOULD_FAIL',
     after: `import { sep as nodeSeparator } from 'path';\n${fakeProviderStart}\n  void nodeSeparator;`,
     expectedIssues: ['module-specifier:non-relative:path', 'node-builtin:path'],
-    isolationPolicy: { forbidBareBuiltins: false, forbidNonRelativeSpecifiers: false } },
+    isolationPolicy: { forbidBareBuiltins: false, forbidNonRelativeSpecifiers: false },
+    sandboxCode: 'SANDBOX_NON_RELATIVE_MODULE' },
 ];
 
 for (const eol of ['\n', '\r\n']) for (const definition of newIsolationMutations) {
@@ -671,19 +720,211 @@ for (const eol of ['\n', '\r\n']) for (const definition of newIsolationMutations
     assert.deepEqual(productionIsolationIssues(hostile), definition.expectedIssues, 'specific authority identified');
     assert.deepEqual(productionIsolationIssues(hostile, definition.isolationPolicy), [], 'weakened mutant is sensitive');
 
-    const mutant = await importVariant({ file: 'fake-provider.js', before: fakeProviderStart,
-      after: definition.after, eol, isolationPolicy: definition.isolationPolicy });
-    assert.equal(mutant.applied, 1); assert.equal(mutant.importable, true);
-    await assertResponse(await mutant.entry.default.fetch(request(), { COACH_FAKE_ENABLED: 'true' }), 200);
+    const blocked = runProductionSandbox({ file: 'fake-provider.js', before: fakeProviderStart,
+      after: definition.after, eol, isolationPolicy: definition.isolationPolicy,
+      operation: sandboxWorkerOperation });
+    assert.equal(blocked.applied, 1);
+    if (definition.category === 'globalThis isolation') assertSandboxWorkerDenied(blocked);
+    else assertSandboxBlocked(blocked, definition.sandboxCode);
+
+    if (definition.sandboxPolicy) {
+      const mutant = runProductionSandbox({ file: 'fake-provider.js', before: fakeProviderStart,
+        after: definition.after, eol, isolationPolicy: definition.isolationPolicy,
+        sandboxPolicy: definition.sandboxPolicy, operation: sandboxWorkerOperation });
+      assert.equal(mutant.applied, 1);
+      assertSandboxWorker200(mutant);
+    }
 
     let failure;
     try { await importVariant({ file: 'fake-provider.js', before: fakeProviderStart, after: definition.after, eol }); }
     catch (error) { failure = error; }
     assert.ok(failure instanceof assert.AssertionError, 'authority assertion failed before unrelated import/runtime failure');
     for (const issue of definition.expectedIssues) assert.ok(failure.message.includes(issue), issue);
-    context.diagnostic(`fixture=YES syntax=VALID importable=YES isolation=EXECUTED assertion=FAILED authority=${definition.expectedIssues.join(',')}`);
+    context.diagnostic(`fixture=YES syntax=VALID sandbox=BLOCKED scanner=FAILED authority=${definition.expectedIssues.join(',')}`);
   });
 }
+
+function sandboxExports(source, { isolationPolicy, sandboxPolicy, exports = ['value'] } = {}) {
+  return runProductionSandbox({ sources: new Map([['index.js', source]]), isolationPolicy, sandboxPolicy,
+    operation: { type: 'exports', exports } });
+}
+
+test('sandbox authority: production context exposes only the explicit context-owned Web allowlist', () => {
+  assert.deepEqual(SANDBOX_EXPOSED_GLOBALS, [
+    'Request', 'Response', 'Headers', 'URL', 'TextEncoder', 'TextDecoder',
+    'AbortController', 'performance', 'setTimeout', 'clearTimeout',
+  ]);
+  const result = sandboxExports(`
+    export const types = {
+      process: typeof process, Buffer: typeof Buffer, global: typeof global, require: typeof require,
+      module: typeof module, exports: typeof exports, dirname: typeof __dirname, filename: typeof __filename,
+      globalProcess: typeof globalThis.process, globalBuffer: typeof globalThis.Buffer,
+      globalGlobal: typeof globalThis.global,
+      Request: typeof Request, Response: typeof Response, Headers: typeof Headers, URL: typeof URL,
+      TextEncoder: typeof TextEncoder, TextDecoder: typeof TextDecoder,
+      AbortController: typeof AbortController,
+      performance: typeof performance, setTimeout: typeof setTimeout, clearTimeout: typeof clearTimeout,
+    };
+  `, { isolationPolicy: { reservedIdentifiers: [] }, exports: ['types'] });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(result.value.types, {
+    process: 'undefined', Buffer: 'undefined', global: 'undefined', require: 'undefined',
+    module: 'undefined', exports: 'undefined', dirname: 'undefined', filename: 'undefined',
+    globalProcess: 'undefined', globalBuffer: 'undefined', globalGlobal: 'undefined',
+    Request: 'function', Response: 'function',
+    Headers: 'function', URL: 'function', TextEncoder: 'function', TextDecoder: 'function',
+    AbortController: 'function', performance: 'object',
+    setTimeout: 'function', clearTimeout: 'function',
+  });
+});
+
+test('sandbox authority: fatal UTF-8 and BOM behavior match the Worker decoding contract', () => {
+  const result = sandboxExports(`
+    const decode = (bytes, options) => {
+      try { return new TextDecoder('utf-8', options).decode(new Uint8Array(bytes)); }
+      catch (error) { return error.name; }
+    };
+    export const values = {
+      badContinuation: decode([0xc3, 0x28], { fatal: true }),
+      overlong: decode([0xc0, 0x80], { fatal: true }),
+      surrogate: decode([0xed, 0xa0, 0x80], { fatal: true }),
+      outOfRange: decode([0xf4, 0x90, 0x80, 0x80], { fatal: true }),
+      preserveBOM: decode([0xef, 0xbb, 0xbf, 0x7b], { fatal: true, ignoreBOM: true }).codePointAt(0),
+      stripBOM: decode([0xef, 0xbb, 0xbf, 0x7b], { fatal: true }).codePointAt(0),
+    };
+  `, { exports: ['values'] });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(result.value.values, {
+    badContinuation: 'TypeError', overlong: 'TypeError', surrogate: 'TypeError', outOfRange: 'TypeError',
+    preserveBOM: 0xfeff, stripBOM: 0x7b,
+  });
+});
+
+for (const definition of [
+  { gate: 'BROKEN_R3C2_B_SANDBOX_EXPOSES_PROCESS_WOULD_FAIL',
+    source: 'export const value = process.version;', expected: ['reserved-identifier:process'],
+    isolationPolicy: { reservedIdentifiers: ['Buffer', 'globalThis'] }, sandboxPolicy: { exposeProcess: true } },
+  { gate: 'BROKEN_R3C2_B_SANDBOX_EXPOSES_BUFFER_WOULD_FAIL',
+    source: "export const value = Buffer.from('x').toString();", expected: ['reserved-identifier:Buffer'],
+    isolationPolicy: { reservedIdentifiers: ['process', 'globalThis'] }, sandboxPolicy: { exposeBuffer: true } },
+]) test(`sandbox authority: ${definition.gate}`, () => {
+  assert.deepEqual(productionIsolationIssues(definition.source), definition.expected);
+  assert.deepEqual(productionIsolationIssues(definition.source, definition.isolationPolicy), []);
+  const blocked = sandboxExports(definition.source, { isolationPolicy: definition.isolationPolicy });
+  assertSandboxBlocked(blocked);
+  assert.equal(blocked.error.name, 'ReferenceError');
+  const mutant = sandboxExports(definition.source, {
+    isolationPolicy: definition.isolationPolicy, sandboxPolicy: definition.sandboxPolicy,
+  });
+  assert.equal(mutant.ok, true, JSON.stringify(mutant));
+  assert.notEqual(mutant.value.value, undefined);
+});
+
+test('global Node alias: BROKEN_R3C2_B_SANDBOX_EXPOSES_NODE_GLOBAL_WOULD_FAIL', () => {
+  for (const [source, expected] of [
+    ["export const value = global['process'].version;", /^v\d+/u],
+    ["export const value = global[`Buffer`].from('x').toString();", 'x'],
+  ]) {
+    assert.deepEqual(productionIsolationIssues(source), [], 'computed global alias is a scanner-hostile fixture');
+    const blocked = sandboxExports(source);
+    assertSandboxBlocked(blocked);
+    assert.equal(blocked.error.name, 'ReferenceError');
+    const mutant = sandboxExports(source, { sandboxPolicy: { exposeNodeGlobal: true } });
+    assert.equal(mutant.ok, true, JSON.stringify(mutant));
+    if (expected instanceof RegExp) assert.match(mutant.value.value, expected);
+    else assert.equal(mutant.value.value, expected);
+  }
+});
+
+for (const [name, expression, isolationPolicy] of [
+  ['direct eval', "eval('1')"],
+  ['indirect eval', "(0, eval)('1')"],
+  ['globalThis eval', "globalThis.eval('1')", { reservedIdentifiers: [] }],
+  ['Function', "Function('return 1')()"],
+  ['Function Node authority', "Function('return process')()"],
+  ['new Function', "new Function('return 1')()"],
+  ['function constructor', "(function () {}).constructor('return 1')()"],
+  ['async-function constructor', "await (async function () {}).constructor('return 1')()"],
+]) test(`code generation isolation: ${name} is disabled`, () => {
+  const blocked = sandboxExports(`export const value = ${expression};`, { isolationPolicy });
+  assertSandboxBlocked(blocked);
+  assert.equal(blocked.error.name, 'EvalError');
+});
+
+test('code generation isolation: context-owned Web facades do not bridge to a host Function constructor', () => {
+  const source = `export const value = new Headers().constructor.constructor('return process')();`;
+  const blocked = sandboxExports(source, { isolationPolicy: { reservedIdentifiers: ['Buffer', 'globalThis'] } });
+  assertSandboxBlocked(blocked);
+  assert.equal(blocked.error.name, 'EvalError');
+});
+
+test('code generation isolation: BROKEN_R3C2_B_SANDBOX_STRING_CODEGEN_ENABLED_WOULD_FAIL', () => {
+  const source = `export const value = Function('return 7')();`;
+  const blocked = sandboxExports(source);
+  assertSandboxBlocked(blocked);
+  assert.equal(blocked.error.name, 'EvalError');
+  const mutant = sandboxExports(source, { sandboxPolicy: { codeGenerationStrings: true } });
+  assert.equal(mutant.ok, true, JSON.stringify(mutant));
+  assert.equal(mutant.value.value, 7);
+});
+
+test('code generation isolation: WebAssembly compilation is disabled and mutation-sensitive', () => {
+  const source = `export const value = (await WebAssembly.compile(
+    new Uint8Array([0,97,115,109,1,0,0,0]))) instanceof WebAssembly.Module;`;
+  const blocked = sandboxExports(source);
+  assertSandboxBlocked(blocked);
+  assert.equal(blocked.error.name, 'CompileError');
+  const mutant = sandboxExports(source, { sandboxPolicy: { codeGenerationWasm: true } });
+  assert.equal(mutant.ok, true, JSON.stringify(mutant));
+  assert.equal(mutant.value.value, true);
+});
+
+test('generated dynamic import: BROKEN_R3C2_B_SANDBOX_DEFAULT_DYNAMIC_IMPORT_LOADER_WOULD_FAIL', () => {
+  const source = `export const value = (await import(
+    'data:text/javascript,globalThis.__sandboxHostOpaqueSentinel=true;export default 7')).default;`;
+  assert.deepEqual(productionIsolationIssues(source), ['dynamic-import:forbidden']);
+  const isolationPolicy = { forbidDynamicImports: false };
+  const blocked = sandboxExports(source, { isolationPolicy, sandboxPolicy: { trackSentinel: true } });
+  assertSandboxBlocked(blocked, 'SANDBOX_DYNAMIC_IMPORT_FORBIDDEN');
+  const mutant = sandboxExports(source, { isolationPolicy,
+    sandboxPolicy: { trackSentinel: true, useDefaultDynamicImportLoader: true } });
+  assert.equal(mutant.ok, true, JSON.stringify(mutant));
+  assert.equal(mutant.value.value, 7);
+  assert.equal(mutant.hostSentinel, true, 'default-loader mutant executed the data module');
+});
+
+test('generated dynamic import: BROKEN_R3C2_B_FUNCTION_GENERATED_DATA_IMPORT_WOULD_FAIL', () => {
+  const source = `export const value = await Function(
+    "return import('data:text/javascript,globalThis.__sandboxHostOpaqueSentinel=true;export default 7')"
+  )().then((loaded) => loaded.default);`;
+  assert.deepEqual(productionIsolationIssues(source), [], 'import syntax inside a string evades the scanner');
+  const blocked = sandboxExports(source, { sandboxPolicy: { trackSentinel: true } });
+  assertSandboxBlocked(blocked);
+  assert.equal(blocked.error.name, 'EvalError');
+  const codegenOnly = sandboxExports(source, { sandboxPolicy: {
+    trackSentinel: true, codeGenerationStrings: true,
+  } });
+  assertSandboxBlocked(codegenOnly, 'SANDBOX_DYNAMIC_IMPORT_FORBIDDEN');
+  const mutant = sandboxExports(source, { sandboxPolicy: {
+    trackSentinel: true, codeGenerationStrings: true, useDefaultDynamicImportLoader: true,
+  } });
+  assert.equal(mutant.ok, true, JSON.stringify(mutant));
+  assert.equal(mutant.value.value, 7);
+  assert.equal(mutant.hostSentinel, true, 'deliberate default-loader mutant executes in the Node host realm');
+});
+
+test('code generation isolation: BROKEN_R3C2_B_INDIRECT_EVAL_AUTHORITY_WOULD_FAIL', () => {
+  const source = `export const value = (0, eval)('process.version');`;
+  assert.deepEqual(productionIsolationIssues(source), [], 'authority inside eval string evades the scanner');
+  const blocked = sandboxExports(source);
+  assertSandboxBlocked(blocked);
+  assert.equal(blocked.error.name, 'EvalError');
+  const mutant = sandboxExports(source, {
+    sandboxPolicy: { codeGenerationStrings: true, exposeProcess: true },
+  });
+  assert.equal(mutant.ok, true, JSON.stringify(mutant));
+  assert.match(mutant.value.value, /^v\d+/u);
+});
 
 test('globalThis isolation: direct, computed and alias forms are conservatively rejected', () => {
   const fixtures = ['globalThis.process', 'globalThis.Buffer', "globalThis['process']", 'globalThis["Buffer"]',
@@ -721,8 +962,9 @@ for (const eol of ['\n', '\r\n']) {
       assert.deepEqual(productionGraphIssues(sources), [issue]);
       assert.throws(() => assertProductionIsolation(sources), (error) => error instanceof assert.AssertionError
         && error.message.includes(issue));
-      const mutant = await importVariant({ sources, eol, isolationPolicy: { forbidRootEscape: false } });
-      assert.equal(mutant.importable, true);
+      const blocked = runProductionSandbox({ sources, eol, isolationPolicy: { forbidRootEscape: false },
+        operation: { type: 'exports', exports: ['ok'] } });
+      assertSandboxBlocked(blocked, 'SANDBOX_ROOT_ESCAPE');
     }
   });
 }
@@ -746,12 +988,18 @@ for (const eol of ['\n', '\r\n']) for (const [name, hostile, expectedIssue] of t
     assert.throws(() => assertProductionIsolation(sources), (error) => error instanceof assert.AssertionError
       && error.message.includes(expectedIssue));
     assert.doesNotThrow(() => assertProductionIsolation(sources, { recursive: false }));
-    const mutant = await importVariant({ sources, eol, isolationPolicy: { recursive: false } });
-    assert.equal(mutant.importable, true);
+    const blocked = runProductionSandbox({ sources, eol, isolationPolicy: { recursive: false },
+      operation: { type: 'exports', exports: ['ok'] } });
+    assertSandboxBlocked(blocked, name === 'process' || name === 'Buffer'
+      ? undefined : 'SANDBOX_NON_RELATIVE_MODULE');
+    if (name === 'process' || name === 'Buffer') {
+      assert.equal(blocked.phase, 'evaluate');
+      assert.equal(blocked.error.name, 'ReferenceError');
+    }
   });
 }
 
-test('literal constants/policies immutable, no frontend/Node/fixtures/dependencies in production graph', async () => {
+test('literal constants/policies immutable, no frontend/Node/fixtures/dependencies in production graph', () => {
   assert.equal(MAX_REQUEST_BYTES, 1024); assert.equal(MAX_RESPONSE_BYTES, 1024);
   assert.equal(R3C2_B_PROVIDER_TIMEOUT_MS, 3000); assert.equal(TOTAL_TIMEOUT_MS, 3500);
   assert.deepEqual(Object.keys(RULE_PURPOSES), rules); assert.ok(Object.isFrozen(RULE_PURPOSES));
@@ -764,6 +1012,16 @@ test('literal constants/policies immutable, no frontend/Node/fixtures/dependenci
   assert.equal(pkg.private, true); assert.equal(pkg.type, 'module');
   assert.equal(pkg.dependencies, undefined); assert.equal(pkg.devDependencies, undefined);
   assert.deepEqual(Object.keys(pkg.scripts), ['test']);
-  const imported = await importVariant(); assert.equal(imported.importable, true);
-  assert.equal(imported.compiledModules, 8);
+  const capabilities = runProductionSandbox({ operation: { type: 'worker',
+    url: `${ORIGIN}/api/review-coach/capabilities`, init: { method: 'GET', headers: { Origin: ORIGIN } },
+    env: { COACH_FAKE_ENABLED: 'true' } } });
+  assert.equal(capabilities.ok, true, JSON.stringify(capabilities));
+  assert.equal(capabilities.value.status, 200);
+  assert.deepEqual(JSON.parse(capabilities.value.body), {
+    version: 1, profiles: profiles.map((id) => ({ id, available: true })), defaultProfile: 'economy',
+  });
+  assert.equal(capabilities.moduleCount, 8);
+  const review = runProductionSandbox({ operation: sandboxWorkerOperation });
+  assertSandboxWorker200(review);
+  assert.equal(review.moduleCount, 8);
 });
