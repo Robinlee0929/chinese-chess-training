@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { bootstrapReviewCoachStaging } from '../review-coach-staging-bootstrap.js?v=88be8103f4';
 
 // Test-only browser QA hook. The local QA server loads this before main.js so
 // canvas clicks can be aimed from the real Three.js camera instead of guessed pixels.
@@ -34,17 +35,111 @@ let normalAiResumeTriggered = false;
 const qaParams = new URLSearchParams(location.search);
 const reviewAiQaMode = qaParams.get('reviewAi');
 const reviewCoachQaMode = qaParams.get('reviewCoach');
+const reviewCoachStagingMode = qaParams.get('reviewCoachStaging');
 let reviewCoachRequestCount = 0;
 let reviewCoachActiveCount = 0;
 let reviewCoachMaxActiveCount = 0;
 let reviewCoachLateDeliveryCount = 0;
 const reviewCoachPayloads = [];
+const reviewCoachApiCalls = [];
 // Manual delivery is test-server-only and deliberately ignores abort.
 const reviewCoachPending = [];
-globalThis.__reviewCoachQa = { pending: reviewCoachPending, payloads: reviewCoachPayloads };
+globalThis.__reviewCoachQa = {
+  pending: reviewCoachPending, payloads: reviewCoachPayloads, apiCalls: reviewCoachApiCalls,
+};
 const coachDomTestsEnabled = qaParams.get('coachDomTests') === '1';
 const coachDomAudit = { failures: [], expectedFailures: [], keyboard: [], settlements: [],
   targets: [], networkCalls: [], domMutationsRun: false };
+
+if (reviewCoachStagingMode) {
+  const qaFetch = async (url, options) => {
+    reviewCoachApiCalls.push({ url, options: {
+      method: options.method,
+      mode: options.mode,
+      credentials: options.credentials,
+      cache: options.cache,
+      redirect: options.redirect,
+      headers: options.headers ? { ...options.headers } : null,
+      body: options.body ?? null,
+    } });
+    if (url.endsWith('/capabilities')) {
+      if (reviewCoachStagingMode === 'cap-timeout') return new Promise(() => {});
+      if (reviewCoachStagingMode === 'cap-failure') throw new Error('Controlled capability failure.');
+      const unavailable = reviewCoachStagingMode === 'unavailable';
+      return {
+        status: 200,
+        async json() {
+          if (reviewCoachStagingMode === 'cap-malformed') return { version: 1, profiles: [] };
+          return {
+            version: 1,
+            profiles: [
+              { id: 'economy', available: !unavailable },
+              { id: 'balanced', available: true },
+              { id: 'quality', available: true },
+            ],
+            defaultProfile: 'economy',
+          };
+        },
+      };
+    }
+    reviewCoachRequestCount++;
+    const request = JSON.parse(options.body);
+    reviewCoachPayloads.push(structuredClone(request));
+    reviewCoachActiveCount++;
+    reviewCoachMaxActiveCount = Math.max(reviewCoachMaxActiveCount, reviewCoachActiveCount);
+    const successResponse = () => ({
+      status: 200,
+      async json() {
+        const response = {
+          version: 2,
+          requestId: request.requestId,
+          sourceRuleId: request.sourceRuleId,
+          style: request.style,
+          modelProfile: request.modelProfile,
+          framing: {
+            leadIn: '可以一起看看這個地方。',
+            encouragement: '下次也可以先停一下想想。',
+          },
+        };
+        if (reviewCoachStagingMode === 'malformed') response.extra = true;
+        return response;
+      },
+    });
+    if (reviewCoachStagingMode === 'manual') return new Promise((resolve, reject) => {
+      let active = true;
+      const finish = (callback, value) => {
+        if (!active) return;
+        active = false;
+        reviewCoachActiveCount--;
+        if (options.signal.aborted) reviewCoachLateDeliveryCount++;
+        callback(value);
+      };
+      reviewCoachPending.push({
+        signal: options.signal,
+        deliver: () => finish(resolve, successResponse()),
+        reject: () => finish(reject, new Error('Controlled manual rejection.')),
+      });
+    });
+    if (reviewCoachStagingMode === 'timeout') return new Promise((_resolve, reject) => {
+      options.signal.addEventListener('abort', () => {
+        reviewCoachActiveCount--;
+        reject(new DOMException('Controlled timeout abort.', 'AbortError'));
+      }, { once: true });
+    });
+    if (reviewCoachStagingMode === 'reject') {
+      reviewCoachActiveCount--;
+      throw new Error('Controlled POST failure.');
+    }
+    reviewCoachActiveCount--;
+    if (reviewCoachStagingMode === '409') return { status: 409, async json() { return {}; } };
+    return successResponse();
+  };
+  bootstrapReviewCoachStaging({
+    enabled: true,
+    environment: 'staging',
+    apiBaseUrl: 'https://b2a-staging.invalid',
+  }, { fetch: qaFetch });
+}
 
 // Browser regression recipe (test server injection only):
 // ?qa=r3a&reviewAi=different&reviewCoach=hostile&coachDomTests=1
@@ -470,6 +565,7 @@ function readProbe() {
       activeCount: reviewCoachActiveCount,
       maxActiveCount: reviewCoachMaxActiveCount,
       lateDeliveryCount: reviewCoachLateDeliveryCount,
+      apiCalls: reviewCoachApiCalls,
       domAudit: coachDomTestsEnabled ? coachDomAudit : null,
     },
     analysis: analysis ? {

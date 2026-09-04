@@ -19,8 +19,18 @@ import {
   invalidateCoachState,
   settleCoachResponse,
 } from './game-review-coach.js';
+import {
+  B2A_BROWSER_TIMEOUT_MS,
+  ReviewCoachTransportError,
+  createReviewCoachStagingCapability,
+  installReviewCoachStagingCapability,
+  isReviewCoachProfileAvailable,
+  readInstalledReviewCoachStagingCapability,
+  validateReviewCoachCapabilities,
+} from './review-coach-connectivity.js';
 
 const source = readFileSync(new URL('./game-review-coach.js', import.meta.url), 'utf8');
+const connectivitySource = readFileSync(new URL('./review-coach-connectivity.js', import.meta.url), 'utf8');
 const OUTBOUND_KEYS = Object.freeze([
   'version', 'requestId', 'locale', 'sourceRuleId', 'style', 'modelProfile',
 ]);
@@ -251,6 +261,247 @@ function settle(beginResult, message = teaching(), response = responseFor(beginR
     response,
   });
 }
+
+function capabilities(overrides = {}) {
+  return {
+    version: 1,
+    profiles: [
+      { id: 'economy', available: true },
+      { id: 'balanced', available: true },
+      { id: 'quality', available: false },
+    ],
+    defaultProfile: 'economy',
+    ...overrides,
+  };
+}
+
+function jsonResponse(status, value) {
+  return { status, json: async () => structuredClone(value) };
+}
+
+test('B2A normal production has no capability and arbitrary endpoint globals have no authority', () => {
+  const target = {
+    apiBaseUrl: 'https://attacker.invalid',
+    __CHINESE_CHESS_REVIEW_COACH_STAGING_CAPABILITY__: {
+      environment: 'staging', loadCapabilities() {}, requestCoach() {},
+    },
+  };
+  assert.equal(readInstalledReviewCoachStagingCapability(target), null,
+    'BROKEN_B2A_ARBITRARY_ENDPOINT_INPUT_WOULD_FAIL');
+  assert.equal(createReviewCoachStagingCapability({ enabled: false, environment: 'staging',
+    apiBaseUrl: 'https://worker.example' }, { fetch() { throw new Error('must not run'); } }), null,
+  'BROKEN_B2A_NORMAL_PRODUCTION_AUTO_NETWORK_WOULD_FAIL');
+  for (const apiBaseUrl of ['http://worker.example', 'https://user@worker.example',
+    'https://worker.example/path', 'https://worker.example/?api=x', 'https://worker.example/#x']) {
+    assert.equal(createReviewCoachStagingCapability({ enabled: true, environment: 'staging', apiBaseUrl }), null,
+      apiBaseUrl);
+  }
+});
+
+test('B2A capabilities validation is exact, deeply reconstructed, and availability is advisory', () => {
+  const valid = validateReviewCoachCapabilities(capabilities());
+  assert.ok(valid);
+  assertDeepFrozen(valid);
+  assert.equal(isReviewCoachProfileAvailable(valid, 'economy'), true);
+  assert.equal(isReviewCoachProfileAvailable(valid, 'quality'), false);
+  const invalid = [
+    capabilities({ version: 2 }),
+    capabilities({ defaultProfile: 'balanced' }),
+    capabilities({ provider: 'hidden' }),
+    capabilities({ modelId: 'gpt-anything' }),
+    capabilities({ profiles: [{ id: 'economy', available: true },
+      { id: 'balanced', available: true }] }),
+    capabilities({ profiles: [{ id: 'economy', available: true },
+      { id: 'economy', available: false }, { id: 'quality', available: true }] }),
+    capabilities({ profiles: [{ id: 'balanced', available: true },
+      { id: 'economy', available: true }, { id: 'quality', available: true }] }),
+    capabilities({ profiles: [{ id: 'economy', available: true },
+      { id: 'balanced', available: true }, { id: 'unknown', available: true }] }),
+    capabilities({ profiles: [{ id: 'economy', available: 1 },
+      { id: 'balanced', available: true }, { id: 'quality', available: true }] }),
+    capabilities({ profiles: [{ id: 'economy', available: true, modelId: 'x' },
+      { id: 'balanced', available: true }, { id: 'quality', available: true }] }),
+  ];
+  for (const candidate of invalid) assert.equal(validateReviewCoachCapabilities(candidate), null,
+    'BROKEN_B2A_CAPABILITIES_ACCEPT_MODEL_ID_WOULD_FAIL');
+});
+
+test('B2A branded staging transport uses exact GET and exact six-key POST with A1 as final gate', async () => {
+  const calls = [];
+  const replies = [jsonResponse(200, capabilities()), null];
+  const capability = createReviewCoachStagingCapability({
+    enabled: true, environment: 'staging', apiBaseUrl: 'https://worker.example',
+  }, { fetch: async (url, options) => {
+    calls.push({ url, options });
+    if (replies[0]) return replies.shift();
+    const sent = JSON.parse(options.body);
+    return jsonResponse(200, responseFor(sent));
+  } });
+  const target = {};
+  assert.ok(capability);
+  assert.equal(installReviewCoachStagingCapability(capability, target), true);
+  assert.equal(readInstalledReviewCoachStagingCapability(target), capability);
+  const snapshot = await capability.loadCapabilities();
+  assert.ok(snapshot);
+  const started = begin();
+  const response = await capability.requestCoach(started.request);
+  assert.equal(settle(started, teaching(), response).accepted, true,
+    'BROKEN_B2A_BYPASSES_A1_VALIDATOR_WOULD_FAIL');
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].url, 'https://worker.example/api/review-coach/capabilities');
+  assert.deepEqual({ ...calls[0].options, signal: undefined }, {
+    method: 'GET', mode: 'cors', credentials: 'omit', cache: 'no-store', redirect: 'error',
+    signal: undefined,
+  }, 'BROKEN_B2A_CREDENTIALS_INCLUDED_WOULD_FAIL');
+  assert.equal('body' in calls[0].options, false);
+  assert.equal('headers' in calls[0].options, false);
+  assert.equal(calls[1].url, 'https://worker.example/api/review-coach');
+  assert.equal(calls[1].options.method, 'POST');
+  assert.equal(calls[1].options.mode, 'cors');
+  assert.equal(calls[1].options.credentials, 'omit');
+  assert.equal(calls[1].options.cache, 'no-store');
+  assert.equal(calls[1].options.redirect, 'error');
+  assert.deepEqual(calls[1].options.headers, { 'Content-Type': 'application/json' });
+  assert.equal(calls[1].options.body, JSON.stringify(started.request));
+  assertExactKeys(JSON.parse(calls[1].options.body), OUTBOUND_KEYS);
+  assert.equal(calls[1].options.body.includes('board'), false);
+  assert.equal(calls[1].options.body.includes('GameRecord'), false);
+  assert.equal(calls[1].options.body.includes('prompt'), false);
+  assert.equal(calls[1].options.body.includes('modelId'), false);
+  assert.equal(calls[1].options.body.includes('provider'), false);
+  assert.equal(calls[1].options.body.includes('apiKey'), false,
+    'BROKEN_B2A_POST_EXTRA_FIELD_WOULD_FAIL');
+});
+
+test('B2A POST statuses and network failures are bounded and never retried', async () => {
+  for (const [status, code] of [[409, 'profile_unavailable'], [429, 'rate_limited'],
+    [502, 'backend_unavailable'], [503, 'backend_unavailable'], [504, 'backend_unavailable'], [500, 'http_failure']]) {
+    let calls = 0;
+    const capability = createReviewCoachStagingCapability({ enabled: true, environment: 'staging',
+      apiBaseUrl: 'https://worker.example' }, { fetch: async () => { calls++; return jsonResponse(status, { private: 'hidden' }); } });
+    await assert.rejects(() => capability.requestCoach(begin().request),
+      error => error instanceof ReviewCoachTransportError && error.code === code
+        && error.message === 'AI 教練目前無法使用');
+    assert.equal(calls, 1, 'BROKEN_B2A_RETRY_ENABLED_WOULD_FAIL');
+  }
+  let calls = 0;
+  const networkFailure = createReviewCoachStagingCapability({ enabled: true, environment: 'staging',
+    apiBaseUrl: 'https://worker.example' }, { fetch: async () => { calls++; throw new Error('private diagnostic'); } });
+  await assert.rejects(() => networkFailure.requestCoach(begin().request),
+    error => error.code === 'network' && !error.message.includes('private'));
+  assert.equal(calls, 1);
+});
+
+test('B2A 4000ms boundary aborts and ignores hostile late transport completion', async () => {
+  let deadline = null;
+  let fetchResolve;
+  const capability = createReviewCoachStagingCapability({ enabled: true, environment: 'staging',
+    apiBaseUrl: 'https://worker.example' }, {
+    fetch: (_url, { signal }) => new Promise((resolve) => {
+      fetchResolve = resolve;
+      assert.equal(signal.aborted, false);
+    }),
+    setTimeout(callback, delay) { deadline = { callback, delay }; return 1; },
+    clearTimeout() {},
+  });
+  const pending = capability.requestCoach(begin().request);
+  await Promise.resolve();
+  assert.equal(deadline.delay, B2A_BROWSER_TIMEOUT_MS);
+  assert.equal(B2A_BROWSER_TIMEOUT_MS, 4000, 'BROKEN_B2A_TIMEOUT_REMOVED_WOULD_FAIL');
+  deadline.callback();
+  await assert.rejects(pending, error => error.code === 'timeout');
+  fetchResolve(jsonResponse(200, responseFor(begin().request)));
+  await Promise.resolve();
+  assert.match(connectivitySource, /Promise\.race\(\[fetchResult, boundary\]\)/,
+    'late transport cannot settle the expired boundary');
+});
+
+async function importConnectivityMutant(target, replacement, label) {
+  const changed = connectivitySource.replace(target, replacement);
+  assert.notEqual(changed, connectivitySource, `mutation applied: ${label}`);
+  const coachUrl = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
+  const selfContained = changed.replace(
+    /from '\.\/game-review-coach\.js\?v=[0-9a-f]+';/,
+    `from '${coachUrl}';`,
+  );
+  assert.notEqual(selfContained, changed, `dependency embedded: ${label}`);
+  return import(`data:text/javascript;base64,${Buffer.from(selfContained).toString('base64')}`);
+}
+
+test('B2A transport mutation gates execute credentials, retry, timeout, schema and endpoint defects', async () => {
+  const detects = async (label, action) => {
+    let caught = null;
+    try { await action(); } catch (error) { caught = error; }
+    assert.equal(caught?.code, 'ERR_ASSERTION', label);
+  };
+  const config = { enabled: true, environment: 'staging', apiBaseUrl: 'https://worker.example' };
+  const credentials = await importConnectivityMutant("credentials: 'omit'", "credentials: 'include'",
+    'BROKEN_B2A_CREDENTIALS_INCLUDED_WOULD_FAIL');
+  await detects('BROKEN_B2A_CREDENTIALS_INCLUDED_WOULD_FAIL', async () => {
+    let options;
+    const capability = credentials.createReviewCoachStagingCapability(config, {
+      fetch: async (_url, input) => { options = input; return jsonResponse(200, capabilities()); },
+    });
+    await capability.loadCapabilities();
+    assert.equal(options.credentials, 'omit');
+  });
+
+  const retry = await importConnectivityMutant(
+    "    if (response.status !== 200) throw transportError(mapPostStatus(response.status));",
+    "    if (response.status !== 200) { await fetchImpl(`${origin}${COACH_PATH}`, {}); throw transportError(mapPostStatus(response.status)); }",
+    'BROKEN_B2A_RETRY_ENABLED_WOULD_FAIL');
+  await detects('BROKEN_B2A_RETRY_ENABLED_WOULD_FAIL', async () => {
+    let calls = 0;
+    const capability = retry.createReviewCoachStagingCapability(config, {
+      fetch: async () => { calls++; return jsonResponse(503, {}); },
+    });
+    await assert.rejects(() => capability.requestCoach(begin().request));
+    assert.equal(calls, 1);
+  });
+
+  const timeout = await importConnectivityMutant('export const B2A_BROWSER_TIMEOUT_MS = 4000;',
+    'export const B2A_BROWSER_TIMEOUT_MS = 5000;', 'BROKEN_B2A_TIMEOUT_REMOVED_WOULD_FAIL');
+  await detects('BROKEN_B2A_TIMEOUT_REMOVED_WOULD_FAIL', async () => {
+    let delay;
+    const capability = timeout.createReviewCoachStagingCapability(config, {
+      fetch: async () => jsonResponse(200, capabilities()),
+      setTimeout(_callback, value) { delay = value; return 1; }, clearTimeout() {},
+    });
+    await capability.loadCapabilities();
+    assert.equal(delay, 4000);
+  });
+
+  const permissiveCapabilities = await importConnectivityMutant(
+    "const EXACT_CAPABILITIES_KEYS = Object.freeze(['defaultProfile', 'profiles', 'version']);",
+    "const EXACT_CAPABILITIES_KEYS = Object.freeze(['defaultProfile', 'modelId', 'profiles', 'version']);",
+    'BROKEN_B2A_CAPABILITIES_ACCEPT_MODEL_ID_WOULD_FAIL');
+  await detects('BROKEN_B2A_CAPABILITIES_ACCEPT_MODEL_ID_WOULD_FAIL', () => {
+    assert.equal(permissiveCapabilities.validateReviewCoachCapabilities(
+      capabilities({ modelId: 'gpt-anything' })), null);
+  });
+
+  const extraField = await importConnectivityMutant(
+    '    for (const key of EXACT_REQUEST_KEYS) body[key] = requestDescriptors[key].value;',
+    "    for (const key of EXACT_REQUEST_KEYS) body[key] = requestDescriptors[key].value; body.provider = 'arbitrary';",
+    'BROKEN_B2A_POST_EXTRA_FIELD_WOULD_FAIL');
+  await detects('BROKEN_B2A_POST_EXTRA_FIELD_WOULD_FAIL', async () => {
+    let sent;
+    const capability = extraField.createReviewCoachStagingCapability(config, {
+      fetch: async (_url, options) => { sent = JSON.parse(options.body); return jsonResponse(409, {}); },
+    });
+    await assert.rejects(() => capability.requestCoach(begin().request));
+    assertExactKeys(sent, OUTBOUND_KEYS);
+  });
+
+  const arbitraryEndpoint = await importConnectivityMutant(
+    "    || parsed.search || parsed.hash || parsed.pathname !== '/') return null;",
+    "    || false) return null;",
+    'BROKEN_B2A_ARBITRARY_ENDPOINT_INPUT_WOULD_FAIL');
+  await detects('BROKEN_B2A_ARBITRARY_ENDPOINT_INPUT_WOULD_FAIL', () => {
+    assert.equal(arbitraryEndpoint.createReviewCoachStagingCapability({ ...config,
+      apiBaseUrl: 'https://worker.example/?api=attacker' }, { fetch() {} }), null);
+  });
+});
 
 function assertDeepFrozen(value, seen = new Set()) {
   if (!value || typeof value !== 'object' || seen.has(value)) return;

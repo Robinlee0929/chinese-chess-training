@@ -32,6 +32,7 @@ import {
   selectCoachModelProfile,
   invalidateCoachState,
 } from './game-review-coach.js';
+import { isReviewCoachProfileAvailable } from './review-coach-connectivity.js';
 
 // Execute the real UI lifecycle functions with a deterministic clock and minimal
 // rendering/DOM doubles. No browser globals are injected and no UI logic is copied.
@@ -160,6 +161,10 @@ function harness(options = {}) {
     gameReviewCoachState: options.coachEnabled ? createIdleCoachState() : createDisabledCoachState(),
     gameReviewCoachRequest: null, gameReviewCoachRequestSequence: 0,
     gameReviewCoachStatusMessage: '', coachRequests, staleCoachState: null,
+    gameReviewCoachCapabilitiesLoader: null,
+    gameReviewCoachCapabilitiesState: Object.freeze({ status: 'not-required', revision: 0, snapshot: null }),
+    gameReviewCoachCapabilitiesRequest: null,
+    gameReviewCoachUnavailableProfiles: new Set(),
     practiceState: null, activeSavedPuzzleId: null, practiceCompletionRecorded: false,
     practiceHintLevel: 0, practiceHint: null, practiceAttempt: null, hintMarkerRoles: [],
     practiceAnalyticsStore, analyticsStorage,
@@ -194,6 +199,7 @@ function harness(options = {}) {
       context.invalidateGameReviewCoach?.();
     },
     deriveGameReviewTeaching, createTeachingFingerprint, invalidateCoachState,
+    isReviewCoachProfileAvailable,
     beginCoachRequest: (input) => beginCoachRequest({
       state: input.state,
       teachingMessage: input.teachingMessage,
@@ -235,7 +241,13 @@ function harness(options = {}) {
     'btnPracticeExit']) context[name] = node();
   for (const name of ['gameReviewTeaching', 'gameReviewCoachLeadIn', 'gameReviewTeachingTitle',
     'gameReviewTeachingBody', 'gameReviewCoachEncouragement', 'btnGameReviewCoach',
-    'gameReviewCoachStatus', 'gameReviewCoachProfileControl', 'gameReviewCoachModelProfile']) context[name] = node();
+    'gameReviewCoachStatus', 'gameReviewCoachProfileControl', 'gameReviewCoachModelProfile',
+    'gameReviewCoachProfileHint']) context[name] = node();
+  context.gameReviewCoachModelProfile.options = [
+    { value: 'economy', disabled: false },
+    { value: 'balanced', disabled: false },
+    { value: 'quality', disabled: false },
+  ];
   for (const name of photoCanvasNames) context[name] = name === 'recognitionTargetCanvas'
     ? photoCanvas(112, 112) : photoCanvas();
   context.lastFromMark = { visible: false };
@@ -248,6 +260,9 @@ function harness(options = {}) {
   });
   context.ease = (k) => k;
   const names = ['currentGameReviewTeachingMessage', 'gameReviewCoachMatchesTeaching',
+    'gameReviewCoachCapabilitiesMatch', 'resetGameReviewCoachCapabilities',
+    'finishGameReviewCoachCapabilities', 'requestGameReviewCoachCapabilities',
+    'gameReviewCoachSelectedProfileAvailable',
     'invalidateGameReviewCoach', 'renderGameReviewCoach', 'renderGameReviewTeaching',
     'finishGameReviewCoachFailure', 'handleGameReviewCoachResponse', 'requestGameReviewCoach',
     'tween', 'stepTweens', 'pieceAt', 'releasePieceMesh', 'rebuildPieceMeshes', 'buildScene',

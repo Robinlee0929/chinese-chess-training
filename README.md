@@ -29,7 +29,7 @@ python -m http.server 8000
 - **手動擺盤**：「建立殺局」→ 選擇紅／黑棋子並擺盤 → 設定先行方 →「確認局面」。可移動、刪除棋子或清空棋盤；確認時要求雙方各有一將／帥。
 - **解答錄製**：依序走出雙方已知解法，可退回一著或重新錄製。所有著法交由既有 `game.js` 規則引擎檢查；只有合法且最後形成將死的答案可儲存。
 - **殺局練習**：玩家操作先行方，對手依已錄製的單一路線回應。合法但不符答案的著法會記為錯誤且不改變棋盤；可重新開始練習。玩家可自行按「提示」，依序只揭示目前錄製著法的棋種 → 起點 → 目標 → 完整棋譜記法；提示不會自動出現，也不是 AI／求解器產生。已儲存題目保留練習／完成次數與最近練習時間；每次開始或重新開始計一次練習，走完答案計一次完成。
-- **已完成棋局複盤與臨時分析**：終局後可直接從最後一手開啟唯讀複盤，也可從「對局紀錄」載入本機保存的棋局；支援第一手／上一手／下一手／最後一手、完整著法清單與直接跳轉。非終局位置可選「從這裡分析」，以該著的確定性重播快照與歷史重複局面前綴開始臨時試走，並可悔棋、重置或返回原複盤著數；也可明確按「AI 分析」，由獨立背景搜尋顯示一個不含分數的候選著法與完成深度。候選完成後，畫面會以同一個複盤前置局面，比較棋譜中實際下一著與 AI 候選的立即吃子、將軍、終局與合法回應等規則事實；比較不會另做 AI 搜尋，也不評斷好壞。若這些事實符合明確的本機規則，畫面會另顯示最多一則簡短「教學提示」；這則 R3C-1 本機文字始終是 canonical 教學。R3C2-A2 另提供預設關閉、只供注入 mock requester 驗證的「AI 教練再說明」介面；目前沒有真實 LLM／API、後端、供應商或網路請求，失敗時原教學提示保持不變。兩種分析、事實比較與教學提示都不建立新棋譜，也不寫入棋局／題目／練習分析；離開後會回復原本的即時棋局畫面。
+- **已完成棋局複盤與臨時分析**：終局後可直接從最後一手開啟唯讀複盤，也可從「對局紀錄」載入本機保存的棋局；支援第一手／上一手／下一手／最後一手、完整著法清單與直接跳轉。非終局位置可選「從這裡分析」，以該著的確定性重播快照與歷史重複局面前綴開始臨時試走，並可悔棋、重置或返回原複盤著數；也可明確按「AI 分析」，由獨立背景搜尋顯示一個不含分數的候選著法與完成深度。候選完成後，畫面會以同一個複盤前置局面，比較棋譜中實際下一著與 AI 候選的立即吃子、將軍、終局與合法回應等規則事實；比較不會另做 AI 搜尋，也不評斷好壞。若這些事實符合明確的本機規則，畫面會另顯示最多一則簡短「教學提示」；這則 R3C-1 本機文字始終是 canonical 教學。R3C2-B2A 保留預設關閉的「AI 教練再說明」介面，正常正式頁面仍沒有後端網路；只有受控 staging bootstrap 才能注入 fake-provider Worker 的連線能力，失敗時原教學提示保持不變。兩種分析、事實比較與教學提示都不建立新棋譜，也不寫入棋局／題目／練習分析；離開後會回復原本的即時棋局畫面。
 - **瀏覽器本機練習紀錄（非遙測）**：已儲存題目的完成或明確中止會留下精簡嘗試摘要與累計數字，每題只保留最近 10 次摘要，較舊摘要淘汰後累計數字仍保留。摘要只有完成／中止、開始／結束時間、錯誤數與提示請求次數／最高提示級別；不保存逐著歷史、棋盤、解答或提示內容，不匯出也不上傳。分頁在未完成時直接關閉或重新載入，該次可能不會留下紀錄；刪除題目後也會嘗試清除其本機練習紀錄。
 
 ## 附加功能
@@ -45,7 +45,7 @@ python -m http.server 8000
 - 這不是涵蓋所有防守分支的完整強制殺求解器。
 - 複盤中的「AI 候選著法」只是有限時間與深度的本機電腦搜尋結果，不代表權威最佳著，也不提供分數、優劣判定、走錯分類或教練建議。
 - 複盤的實戰／候選比較只呈現本機規則可直接驗證的當下事實。教學提示只能把這些已驗證事實對應到固定文字，不聲稱 AI 候選是客觀最佳著；無法由直接事實解釋時就不顯示提示。兩者都不含分數、棋力判斷、額外分支搜尋、LLM 或網路服務，且只保留於目前工作階段，不上傳也不持久化。
-- 「AI 教練再說明」目前只是 feature-flagged 的本機 mock 整合驗證，靜態正式版預設不顯示；它只接受經嚴格驗證的通用引導語，不可改寫 canonical 教學標題／內文，也不包含真實 LLM、API、網路、祕密或持久化。
+- 「AI 教練再說明」在靜態正式版預設不顯示且不連線；受控 staging bootstrap 可連接 public Worker API，但目前仍只有 fake provider，沒有真實 LLM、provider API、瀏覽器祕密或持久化。它只接受經嚴格驗證的通用引導語，不可改寫 canonical 教學標題／內文。
 - 照片辨識僅為啟發式輔助，不是可靠的通用 OCR；人工確認始終為準。
 - 題庫只存在目前網站來源、瀏覽器與使用者設定檔的 `localStorage`。
 - 清除瀏覽器網站資料、儲存空間或使用者設定檔可能刪除已保存題目。
@@ -95,7 +95,7 @@ Coach request／response 現在使用 v2，request 精確六鍵：`version`、`r
 
 只有使用者明確切換不同合法設定時，會將原始 profile 字串寫入 `chinese-chess-training:coach-model-profile:v1`。異常值讀取後使用 economy，不自動覆寫；儲存受阻不影響本頁操作。預設關閉路徑不讀寫此偏好。請求、回應、framing、棋局資料、API key、實際模型 ID 和供應商 ID 都不寫入這項偏好，A1 純契約仍沒有儲存依賴。
 
-切換設定會清除 framing、作廢並 abort 舊請求，不自動發出新請求。Profile 綁定本機 stale identity；包括 economy→quality→economy 的舊回應也不得覆蓋新畫面。R3C-1 canonical 教學不變。A3 沒有真實網路、capabilities GET、後端、API key 或 provider SDK；B1 日後才定義 server-side profile mapping 與 fake-provider capabilities。
+切換設定會清除 framing、作廢並 abort 舊請求，不自動發出新請求。Profile 綁定本機 stale identity；包括 economy→quality→economy 的舊回應也不得覆蓋新畫面。R3C-1 canonical 教學不變。正常正式頁面不載入 B2A staging bootstrap，因此 capabilities GET 與 coach POST 都維持 0；B1 已提供 server-side profile mapping 與 fake-provider capabilities。
 
 新增偏好測試：`node coach-model-profile-preference-test.mjs`。既有 coach／Review／Puzzle lifecycle tests 同步驗證 v2、profile 切換及 LF／CRLF mutation gates。
 
@@ -270,9 +270,25 @@ timeout 會 abort，忽略晚到的成功／拒絕。JavaScript 無法強制中�
 未來 adapter 必須遵守 signal；B1 只有立即完成的本機 fake，不宣稱可終止任意不合作的遠端工作。
 
 B1 的 enabled/rate-limit/cost-breaker 是可注入的 fail-closed 介面與本機測試模型，
-**不是**真實分散式限流、原子全域預算或計費。下一步必須先完成 B1 independent security review；
-B2 才處理 staging/實際平台防護，C 階段另行授權真實 provider 與秘密管理。
-本次不部署、不接 frontend endpoint、不變動 frontend cache token `79cf894baf`。
+**不是**真實分散式限流、原子全域預算或計費。B1 已完成獨立安全審查並發布；
+B2 處理 staging／實際平台防護，C 階段另行授權真實 provider 與秘密管理。
+
+## R3C2-B2A：休眠的 staging 連線能力
+
+正常 GitHub Pages／production 頁面仍不載入 staging bootstrap，也不會自行發出 capabilities
+或 coach 請求。`review-coach-connectivity.js` 只讓 `main.js` 讀取同一模組建立並標記的
+staging capability；query、hash、localStorage、DOM 與一般全域物件都不能提供端點。
+未來 staging 頁面須由受控 bootstrap 程式明確呼叫
+`bootstrapReviewCoachStaging({ enabled: true, environment: 'staging', apiBaseUrl })`，且只接受
+無路徑、query、hash 或帳密的 HTTPS Worker origin。
+
+capabilities GET 與 coach POST 都使用 `credentials: 'omit'`、`cache: 'no-store'`、
+`redirect: 'error'`，不重試，瀏覽器 deadline 為 4,000 ms。POST 仍只有 transport v2
+六欄資料，回應必須再通過既有 A1 settle validator。capabilities 僅供 UI 提示；失敗時
+fail closed，409 仍具最終權威，不會改寫使用者偏好或靜默切換 profile。
+
+`tools/game-analysis-browser-qa-hook.js` 可在本機測試伺服器注入固定 `.invalid` origin 與
+記憶體內 transport，以覆蓋 available／unavailable／timeout／409 等情境；不會呼叫外部網路。
 
 ## 授權
 
