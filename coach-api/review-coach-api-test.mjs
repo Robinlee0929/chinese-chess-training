@@ -9,7 +9,8 @@ import { localFakeAdmission } from './src/admission.js';
 import { reply, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES } from './src/http.js';
 import { R3C2_B_PROVIDER_TIMEOUT_MS, TOTAL_TIMEOUT_MS } from './src/provider.js';
 import { harness, payload, request, assertResponse, assertHeaders, ORIGIN, SENTINEL,
-  FakeClock, deferred, flush, chunked, observeSideEffects, productionSources, importVariant } from './test-support.mjs';
+  FakeClock, deferred, flush, chunked, observeSideEffects, productionSources, importVariant,
+  isNodeBuiltinSpecifier, productionIsolationIssues, assertProductionIsolation } from './test-support.mjs';
 
 const profiles = ['economy', 'balanced', 'quality'];
 const rules = ['immediate-mate', 'immediate-repetition-terminal', 'immediate-stalemate', 'check-difference',
@@ -467,13 +468,144 @@ test('serialized response UTF-8 cap enforces 1024/1025 boundary', async () => {
   }
   await assertResponse(reply(200, ORIGIN, { value: '象'.repeat(400) }), 500);
 });
+
+const fakeProviderStart = 'export function fakeProvider(_input, { signal }) {';
+const isolationDefinitions = [
+  {
+    gate: 'BROKEN_R3C2_B_NODE_AMBIENT_PROCESS_WOULD_FAIL',
+    after: `${fakeProviderStart}\n  void process.env;`,
+    expectedIssues: ['node-ambient:process'], isolationPolicy: { ambientGlobals: ['Buffer'] },
+  },
+  {
+    gate: 'BROKEN_R3C2_B_NODE_AMBIENT_BUFFER_WOULD_FAIL',
+    after: `${fakeProviderStart}\n  Buffer.from('hostile-node-global');`,
+    expectedIssues: ['node-ambient:Buffer'], isolationPolicy: { ambientGlobals: ['process'] },
+  },
+  {
+    gate: 'BROKEN_R3C2_B_BARE_NODE_BUILTIN_FS_WOULD_FAIL',
+    after: `import { readFileSync as nodeRead } from 'fs';\n${fakeProviderStart}\n  void nodeRead;`,
+    expectedIssues: ['node-builtin:fs'], isolationPolicy: { forbidBareBuiltins: false },
+  },
+  {
+    gate: 'BROKEN_R3C2_B_NODE_PREFIX_BUILTIN_FS_WOULD_FAIL',
+    after: `import { readFileSync as nodeRead } from 'node:fs';\n${fakeProviderStart}\n  void nodeRead;`,
+    expectedIssues: ['node-builtin:node:fs'], isolationPolicy: { forbidNodePrefixedBuiltins: false },
+  },
+  {
+    gate: 'BROKEN_R3C2_B_NODE_BUILTIN_SUBPATH_WOULD_FAIL',
+    after: `import { readFile as bareRead } from 'fs/promises';\nimport { writeFile as prefixedWrite } from 'node:fs/promises';\n${fakeProviderStart}\n  void bareRead; void prefixedWrite;`,
+    expectedIssues: ['node-builtin:fs/promises', 'node-builtin:node:fs/promises'],
+    isolationPolicy: { forbidBareBuiltins: false, forbidNodePrefixedBuiltins: false },
+  },
+  {
+    gate: 'BROKEN_R3C2_B_GLOBALTHIS_PROCESS_WOULD_FAIL',
+    after: `${fakeProviderStart}\n  void globalThis.process;`,
+    expectedIssues: ['node-ambient:globalThis.process'], isolationPolicy: { ambientGlobals: ['Buffer'] },
+  },
+  {
+    gate: 'BROKEN_R3C2_B_GLOBALTHIS_BUFFER_WOULD_FAIL',
+    after: `${fakeProviderStart}\n  void globalThis.Buffer;`,
+    expectedIssues: ['node-ambient:globalThis.Buffer'], isolationPolicy: { ambientGlobals: ['process'] },
+  },
+  {
+    gate: 'BROKEN_R3C2_B_PARENTHESIZED_GLOBALTHIS_WOULD_FAIL',
+    after: `${fakeProviderStart}\n  void (globalThis).process.env; void (globalThis)['Buffer'];`,
+    expectedIssues: ['node-ambient:globalThis.Buffer', 'node-ambient:globalThis.process'], isolationPolicy: { ambientGlobals: [] },
+  },
+];
+
+for (const eol of ['\n', '\r\n']) for (const definition of isolationDefinitions) {
+  test(`node production isolation: ${definition.gate} ${eol === '\n' ? 'LF' : 'CRLF'}`, async (context) => {
+    const normalizedAfter = definition.after.replace(/\n/gu, eol);
+    const normalizedBefore = fakeProviderStart.replace(/\n/gu, eol);
+    const original = productionSources().get('fake-provider.js').replace(/\r\n?/gu, '\n').replace(/\n/gu, eol);
+    assert.equal(original.split(normalizedBefore).length - 1, 1, 'fixture replacement count');
+    const hostile = original.replace(normalizedBefore, normalizedAfter);
+    assert.deepEqual(productionIsolationIssues(hostile), definition.expectedIssues, 'expected Node authority identified');
+
+    // The weakened policy is the executable mutant: the hostile graph must otherwise import and run normally.
+    const mutant = await importVariant({ file: 'fake-provider.js', before: fakeProviderStart,
+      after: definition.after, eol, isolationPolicy: definition.isolationPolicy });
+    assert.equal(mutant.applied, 1); assert.equal(mutant.importable, true);
+    const response = await mutant.entry.default.fetch(request(), { COACH_FAKE_ENABLED: 'true' });
+    await assertResponse(response, 200);
+
+    let failure;
+    try {
+      await importVariant({ file: 'fake-provider.js', before: fakeProviderStart, after: definition.after, eol });
+    } catch (error) { failure = error; }
+    assert.ok(failure instanceof assert.AssertionError, 'isolation assertion failed, not syntax/import/fixture');
+    for (const issue of definition.expectedIssues) assert.ok(failure.message.includes(issue), issue);
+    context.diagnostic(`fixture=YES syntax=VALID importable=YES isolation=EXECUTED assertion=FAILED authority=${definition.expectedIssues.join(',')}`);
+  });
+}
+
+test('node production isolation: generic built-ins, re-exports and dynamic imports', () => {
+  for (const bare of ['fs', 'fs/promises', 'process', 'buffer', 'path', 'crypto', 'stream', 'util', 'events']) {
+    assert.equal(isNodeBuiltinSpecifier(bare), true, bare);
+    assert.equal(isNodeBuiltinSpecifier(`node:${bare}`), true, `node:${bare}`);
+  }
+  for (const prefixedOnly of ['node:test', 'node:test/reporters', 'node:sea', 'node:sqlite']) {
+    assert.equal(isNodeBuiltinSpecifier(prefixedOnly), true, prefixedOnly);
+  }
+  assert.deepEqual(productionIsolationIssues("import 'path'; export { inspect } from 'node:util';"),
+    ['node-builtin:node:util', 'node-builtin:path']);
+  assert.deepEqual(productionIsolationIssues('import "node:fs"; export * from "fs/promises";'),
+    ['node-builtin:fs/promises', 'node-builtin:node:fs']);
+  assert.deepEqual(productionIsolationIssues("import value from '\\x66s';"), ['node-builtin:fs']);
+  assert.deepEqual(productionIsolationIssues("const load = () => import('fs');"), ['node-builtin:fs']);
+  assert.deepEqual(productionIsolationIssues("const load = () => import('node:fs/promises');"),
+    ['node-builtin:node:fs/promises']);
+  assert.deepEqual(productionIsolationIssues("const load = (name) => import(name);"), ['dynamic-import:nonliteral']);
+  assert.deepEqual(productionIsolationIssues("void proce\\u0073s.env; void Buff\\u0065r.from('x');"),
+    ['node-ambient:Buffer', 'node-ambient:process']);
+  assert.deepEqual(productionIsolationIssues("void globalThis?.['process']; void globalThis[\"Buffer\"];"),
+    ['node-ambient:globalThis.Buffer', 'node-ambient:globalThis.process']);
+});
+
+test('node production isolation: lexical and package-name false-positive controls', async () => {
+  const nonBuiltins = ['filesystem-helper', 'path-browserify', 'buffer-utils', 'process-helper', '@scope/fs', 'node:filesystem-helper'];
+  assert.equal(nonBuiltins.filter(isNodeBuiltinSpecifier).length, 0);
+  assert.deepEqual(productionIsolationIssues(`import process from 'process-helper';
+    export { Buffer } from 'buffer-utils';
+    const object = { process() {}, Buffer() {} };
+    const loadPackage = () => import('filesystem-helper');
+    const loadRelative = () => import('./rule-policy.js');`), []);
+  const harmless = `
+    const text = 'process.env Buffer fs';
+    const template = \`process.env Buffer\`;
+    const pattern = /process|Buffer|fs/u;
+    // process.env Buffer fs node:fs
+    /* node:fs and globalThis.process */
+    const object = { process: 'field', Buffer: 'field' };
+    void object.process; void object?.Buffer;
+    import helper from 'filesystem-helper';
+    export { helper as path } from 'path-browserify';
+  `;
+  assert.deepEqual(productionIsolationIssues(harmless), []);
+
+  const after = `${fakeProviderStart}\n  const harmless = { process: 'process.env', Buffer: 'Buffer', specifier: 'node:fs' };\n  // node:fs process Buffer\n  void harmless.process; void harmless.Buffer;`;
+  const imported = await importVariant({ file: 'fake-provider.js', before: fakeProviderStart, after });
+  await assertResponse(await imported.entry.default.fetch(request(), { COACH_FAKE_ENABLED: 'true' }), 200);
+});
+
+test('node production isolation: transitive production modules are enforced', () => {
+  const sources = productionSources();
+  const fake = sources.get('fake-provider.js');
+  sources.set('fake-provider.js', `import { readFileSync } from 'fs';\n${fake.replace(fakeProviderStart,
+    `${fakeProviderStart}\n  void process.env; void readFileSync;`)}`);
+  assert.throws(() => assertProductionIsolation(sources), (error) => error instanceof assert.AssertionError
+    && error.message.includes('node-builtin:fs') && error.message.includes('node-ambient:process'));
+});
+
 test('literal constants/policies immutable, no frontend/Node/fixtures/dependencies in production graph', async () => {
   assert.equal(MAX_REQUEST_BYTES, 1024); assert.equal(MAX_RESPONSE_BYTES, 1024);
   assert.equal(R3C2_B_PROVIDER_TIMEOUT_MS, 3000); assert.equal(TOTAL_TIMEOUT_MS, 3500);
   assert.deepEqual(Object.keys(RULE_PURPOSES), rules); assert.ok(Object.isFrozen(RULE_PURPOSES));
   assert.ok(Object.isFrozen(DEFAULT_PROFILE_POLICY));
+  assertProductionIsolation(productionSources());
   for (const [name, source] of productionSources()) {
-    assert.doesNotMatch(source, /(?:test-support|fault-fixture|node:|\.\.\/|game-review|console\.|localStorage|sessionStorage|indexedDB|caches\.|WebSocket|\b(?:await|return|globalThis\.)\s*fetch\s*\()/u, name);
+    assert.doesNotMatch(source, /(?:test-support|fault-fixture|\.\.\/|game-review|console\.|localStorage|sessionStorage|indexedDB|caches\.|WebSocket|\b(?:await|return|globalThis\.)\s*fetch\s*\()/u, name);
   }
   const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
   assert.equal(pkg.private, true); assert.equal(pkg.type, 'module');
