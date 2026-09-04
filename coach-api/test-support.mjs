@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { isBuiltin } from 'node:module';
+import { posix as pathPosix } from 'node:path';
 import { createCoachHandler } from './src/index.js';
 import { localFakeAdmission } from './src/admission.js';
 import { fakeProvider } from './src/fake-provider.js';
@@ -125,7 +126,10 @@ export function productionSources() {
     .map((file) => [file, readFileSync(new URL(file, directory), 'utf8')]));
 }
 
-export const NODE_AMBIENT_GLOBALS = Object.freeze(['process', 'Buffer']);
+// Deliberately conservative B1 test policy: these identifier spellings are reserved in
+// production source, regardless of binding context. globalThis is a valid Worker API,
+// but this small backend does not need it; future use requires a separately reviewed policy change.
+export const RESERVED_PRODUCTION_IDENTIFIERS = Object.freeze(['process', 'Buffer', 'globalThis']);
 
 export function isNodeBuiltinSpecifier(specifier) {
   return typeof specifier === 'string' && isBuiltin(specifier);
@@ -160,6 +164,7 @@ function javascriptTokens(source) {
   const canStartRegex = () => tokens.length === 0 || regexPrefixes.has(tokens.at(-1).value);
 
   const scanQuoted = (quote) => {
+    const start = index;
     let value = '';
     index++;
     while (index < source.length) {
@@ -170,7 +175,7 @@ function javascriptTokens(source) {
         index = decoded.next;
       } else value += source[index++];
     }
-    tokens.push({ kind: 'string', value });
+    tokens.push({ kind: 'string', value, start, end: index });
   };
 
   const scanRegex = () => {
@@ -246,104 +251,134 @@ function javascriptTokens(source) {
 }
 
 export function productionIsolationIssues(source, policy = {}) {
-  const ambientGlobals = new Set(policy.ambientGlobals ?? NODE_AMBIENT_GLOBALS);
+  const reservedIdentifiers = new Set(policy.reservedIdentifiers ?? RESERVED_PRODUCTION_IDENTIFIERS);
   const forbidBareBuiltins = policy.forbidBareBuiltins ?? true;
   const forbidNodePrefixedBuiltins = policy.forbidNodePrefixedBuiltins ?? true;
-  const forbidNonliteralDynamicImport = policy.forbidNonliteralDynamicImport ?? true;
+  const forbidDynamicImports = policy.forbidDynamicImports ?? true;
+  const forbidNonRelativeSpecifiers = policy.forbidNonRelativeSpecifiers ?? true;
   const tokens = javascriptTokens(source);
   const issues = new Set();
-  const nonReferenceAmbients = new Set();
-  const prefixKeywords = new Set(['await', 'case', 'delete', 'in', 'instanceof', 'new', 'of', 'return', 'throw',
-    'typeof', 'void', 'yield']);
-  const isCallLike = (token) => token && ((token.kind === 'identifier' && !prefixKeywords.has(token.value))
-    || token.kind === 'number' || token.kind === 'string' || token.value === ')' || token.value === ']');
-  const globalThisRootBefore = (memberOperatorPosition) => {
-    let cursor = memberOperatorPosition - 1;
-    if (tokens[cursor]?.value === 'globalThis') return true;
-    if (tokens[cursor]?.value !== ')') return false;
-    let depth = 1;
-    cursor--;
-    const end = cursor;
-    while (cursor >= 0 && depth > 0) {
-      if (tokens[cursor].value === ')') depth++;
-      else if (tokens[cursor].value === '(') depth--;
-      cursor--;
-    }
-    const open = cursor + 1;
-    return depth === 0 && !isCallLike(tokens[open - 1])
-      && tokens.slice(open + 1, end + 1).filter((item) => item.value !== '(' && item.value !== ')').length === 1
-      && tokens.slice(open + 1, end + 1).find((item) => item.value !== '(' && item.value !== ')')?.value === 'globalThis';
-  };
-  const globalThisEnd = (position) => {
-    let left = position;
-    let right = position;
-    while (tokens[left - 1]?.value === '(' && tokens[right + 1]?.value === ')' && !isCallLike(tokens[left - 2])) {
-      left--; right++;
-    }
-    return right;
-  };
   const checkSpecifier = (specifier) => {
-    if (!isNodeBuiltinSpecifier(specifier)) return;
-    if (specifier.startsWith('node:') ? forbidNodePrefixedBuiltins : forbidBareBuiltins) {
+    if (isNodeBuiltinSpecifier(specifier)
+      && (specifier.startsWith('node:') ? forbidNodePrefixedBuiltins : forbidBareBuiltins)) {
       issues.add(`node-builtin:${specifier}`);
+    }
+    if (forbidNonRelativeSpecifiers && !specifier.startsWith('./') && !specifier.startsWith('../')) {
+      issues.add(`module-specifier:non-relative:${specifier}`);
     }
   };
   for (let position = 0; position < tokens.length; position++) {
     const token = tokens[position];
     const previous = tokens[position - 1];
     const next = tokens[position + 1];
+    if (token.kind === 'identifier' && reservedIdentifiers.has(token.value)) {
+      issues.add(`reserved-identifier:${token.value}`);
+    }
     if (token.kind === 'identifier' && token.value === 'import' && previous?.value !== '.' && previous?.value !== '?.') {
       if (next?.value === '(') {
-        if (tokens[position + 2]?.kind === 'string') checkSpecifier(tokens[position + 2].value);
-        else if (forbidNonliteralDynamicImport) issues.add('dynamic-import:nonliteral');
+        if (forbidDynamicImports) issues.add('dynamic-import:forbidden');
         continue;
       }
       if (next?.kind === 'string') checkSpecifier(next.value);
-      for (let cursor = position + 1; cursor < tokens.length && tokens[cursor].value !== ';'; cursor++) {
-        if (tokens[cursor].kind === 'identifier') nonReferenceAmbients.add(cursor);
+      else for (let cursor = position + 1; cursor < tokens.length; cursor++) {
         if (tokens[cursor].value === 'from' && tokens[cursor + 1]?.kind === 'string') {
-          checkSpecifier(tokens[cursor + 1].value); break;
+          checkSpecifier(tokens[cursor + 1].value);
+          break;
         }
+        if (tokens[cursor].value === ';' || tokens[cursor].value === 'import' || tokens[cursor].value === 'export') break;
       }
     }
     if (token.kind === 'identifier' && token.value === 'export' && previous?.value !== '.' && previous?.value !== '?.') {
-      for (let cursor = position + 1; cursor < tokens.length && tokens[cursor].value !== ';'; cursor++) {
-        if ((next?.value === '{' || next?.value === '*') && tokens[cursor].kind === 'identifier') nonReferenceAmbients.add(cursor);
-        if (tokens[cursor].value === 'from' && tokens[cursor + 1]?.kind === 'string') {
-          checkSpecifier(tokens[cursor + 1].value); break;
+      if (next?.value === '*' || next?.value === '{') {
+        let braces = 0;
+        for (let cursor = position + 1; cursor < tokens.length; cursor++) {
+          if (tokens[cursor].value === '{') braces++;
+          else if (tokens[cursor].value === '}') braces--;
+          else if (braces === 0 && tokens[cursor].value === 'from' && tokens[cursor + 1]?.kind === 'string') {
+            checkSpecifier(tokens[cursor + 1].value);
+            break;
+          }
+          if (braces === 0 && (tokens[cursor].value === ';' || tokens[cursor].value === 'import'
+            || (cursor > position + 1 && tokens[cursor].value === 'export'))) break;
         }
-      }
-    }
-    if (token.kind === 'identifier' && ambientGlobals.has(token.value) && !nonReferenceAmbients.has(position)) {
-      const memberAccess = previous?.value === '.' || previous?.value === '?.';
-      const objectKey = next?.value === ':';
-      const methodKey = next?.value === '(' && ['{', ',', ';'].includes(previous?.value);
-      if (!memberAccess && !objectKey && !methodKey) issues.add(`node-ambient:${token.value}`);
-      if (memberAccess && globalThisRootBefore(position - 1)) issues.add(`node-ambient:globalThis.${token.value}`);
-    }
-    if (token.kind === 'identifier' && token.value === 'globalThis') {
-      const end = globalThisEnd(position);
-      const bracket = tokens[end + 1]?.value === '[' ? end + 1
-        : tokens[end + 1]?.value === '?.' && tokens[end + 2]?.value === '[' ? end + 2 : -1;
-      if (bracket !== -1 && tokens[bracket + 1]?.kind === 'string' && tokens[bracket + 2]?.value === ']'
-        && ambientGlobals.has(tokens[bracket + 1].value)) {
-        issues.add(`node-ambient:globalThis.${tokens[bracket + 1].value}`);
       }
     }
   }
   return [...issues].sort();
 }
 
-export function assertProductionIsolation(sources, policy) {
-  for (const [name, source] of sources) {
-    const issues = productionIsolationIssues(source, policy);
-    assert.deepEqual(issues, [], `${name}: prohibited production authority: ${issues.join(', ')}`);
+function staticModuleSpecifiers(source) {
+  const tokens = javascriptTokens(source);
+  const specifiers = [];
+  const add = (token) => { if (token?.kind === 'string') specifiers.push(token); };
+  for (let position = 0; position < tokens.length; position++) {
+    const token = tokens[position];
+    const previous = tokens[position - 1];
+    const next = tokens[position + 1];
+    if (token.kind === 'identifier' && token.value === 'import' && previous?.value !== '.' && previous?.value !== '?.') {
+      if (next?.value === '(') continue;
+      if (next?.kind === 'string') { add(next); continue; }
+      for (let cursor = position + 1; cursor < tokens.length; cursor++) {
+        if (tokens[cursor].value === 'from' && tokens[cursor + 1]?.kind === 'string') { add(tokens[cursor + 1]); break; }
+        if (tokens[cursor].value === ';' || tokens[cursor].value === 'import' || tokens[cursor].value === 'export') break;
+      }
+    }
+    if (token.kind === 'identifier' && token.value === 'export' && (next?.value === '*' || next?.value === '{')) {
+      let braces = 0;
+      for (let cursor = position + 1; cursor < tokens.length; cursor++) {
+        if (tokens[cursor].value === '{') braces++;
+        else if (tokens[cursor].value === '}') braces--;
+        else if (braces === 0 && tokens[cursor].value === 'from' && tokens[cursor + 1]?.kind === 'string') {
+          add(tokens[cursor + 1]); break;
+        }
+        if (braces === 0 && (tokens[cursor].value === ';' || tokens[cursor].value === 'import'
+          || (cursor > position + 1 && tokens[cursor].value === 'export'))) break;
+      }
+    }
   }
+  return specifiers;
+}
+
+function resolveProductionSpecifier(name, specifier) {
+  const resolved = pathPosix.normalize(pathPosix.join(pathPosix.dirname(name), specifier));
+  return { resolved, escapes: resolved === '..' || resolved.startsWith('../') || pathPosix.isAbsolute(resolved) };
+}
+
+export function productionGraphIssues(sources, policy = {}) {
+  const entry = policy.entry ?? 'index.js';
+  const recursive = policy.recursive ?? true;
+  const forbidRootEscape = policy.forbidRootEscape ?? true;
+  const issues = new Set();
+  const visited = new Set();
+  const visit = (name) => {
+    if (visited.has(name)) return;
+    visited.add(name);
+    if (!sources.has(name)) { issues.add(`${name}:module-specifier:outside-production`); return; }
+    const source = sources.get(name);
+    for (const issue of productionIsolationIssues(source, policy)) issues.add(`${name}:${issue}`);
+    for (const token of staticModuleSpecifiers(source)) {
+      if (!token.value.startsWith('./') && !token.value.startsWith('../')) continue;
+      const { resolved, escapes } = resolveProductionSpecifier(name, token.value);
+      if (escapes) {
+        if (forbidRootEscape) issues.add(`${name}:module-specifier:root-escape:${token.value}`);
+        continue;
+      }
+      if (!sources.has(resolved)) issues.add(`${name}:module-specifier:outside-production:${token.value}`);
+      else if (recursive) visit(resolved);
+    }
+  };
+  visit(entry);
+  return [...issues].sort();
+}
+
+export function assertProductionIsolation(sources, policy) {
+  const issues = productionGraphIssues(sources, policy);
+  assert.deepEqual(issues, [], `prohibited production authority: ${issues.join(', ')}`);
 }
 
 // Compile an isolated ESM graph in memory. No temporary mutation of repository files.
-export async function importVariant({ file, before, after, eol = '\n', isolationPolicy } = {}) {
-  const sources = productionSources();
+export async function importVariant({ file, before, after, eol = '\n', isolationPolicy, sources: providedSources } = {}) {
+  const sources = new Map(providedSources ?? productionSources());
   for (const [name, source] of sources) sources.set(name, source.replace(/\r\n?/gu, '\n').replace(/\n/gu, eol));
   let applied = 0;
   if (file) {
@@ -362,14 +397,23 @@ export async function importVariant({ file, before, after, eol = '\n', isolation
     assert.ok(sources.has(name), `production-only import: ${name}`);
     assert.ok(!visiting.has(name), 'acyclic production graph');
     visiting.add(name);
-    const source = sources.get(name).replace(/from '(\.\/[^']+)'/gu, (_, specifier) => `from '${compile(specifier.slice(2))}'`);
-    assert.doesNotMatch(source, /from ['"]\.\.\//u);
+    let source = sources.get(name);
+    const relativeSpecifiers = staticModuleSpecifiers(source)
+      .filter((token) => token.value.startsWith('./') || token.value.startsWith('../'))
+      .sort((left, right) => right.start - left.start);
+    for (const token of relativeSpecifiers) {
+      const { resolved, escapes } = resolveProductionSpecifier(name, token.value);
+      assert.equal(escapes && (isolationPolicy?.forbidRootEscape ?? true), false,
+        `production-root import: ${name} -> ${token.value}`);
+      assert.ok(sources.has(resolved), `production-only import: ${name} -> ${token.value}`);
+      source = source.slice(0, token.start) + JSON.stringify(compile(resolved)) + source.slice(token.end);
+    }
     const url = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
     urls.set(name, url);
     visiting.delete(name);
     return url;
   };
   const entry = await import(compile('index.js'));
-  const contract = await import(compile('contract.js'));
-  return { entry, contract, applied, importable: true };
+  const contract = sources.has('contract.js') ? await import(compile('contract.js')) : null;
+  return { entry, contract, applied, importable: true, compiledModules: urls.size };
 }

@@ -10,7 +10,8 @@ import { reply, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES } from './src/http.js';
 import { R3C2_B_PROVIDER_TIMEOUT_MS, TOTAL_TIMEOUT_MS } from './src/provider.js';
 import { harness, payload, request, assertResponse, assertHeaders, ORIGIN, SENTINEL,
   FakeClock, deferred, flush, chunked, observeSideEffects, productionSources, importVariant,
-  isNodeBuiltinSpecifier, productionIsolationIssues, assertProductionIsolation } from './test-support.mjs';
+  isNodeBuiltinSpecifier, productionIsolationIssues, productionGraphIssues,
+  assertProductionIsolation } from './test-support.mjs';
 
 const profiles = ['economy', 'balanced', 'quality'];
 const rules = ['immediate-mate', 'immediate-repetition-terminal', 'immediate-stalemate', 'check-difference',
@@ -474,43 +475,52 @@ const isolationDefinitions = [
   {
     gate: 'BROKEN_R3C2_B_NODE_AMBIENT_PROCESS_WOULD_FAIL',
     after: `${fakeProviderStart}\n  void process.env;`,
-    expectedIssues: ['node-ambient:process'], isolationPolicy: { ambientGlobals: ['Buffer'] },
+    expectedIssues: ['reserved-identifier:process'],
+    isolationPolicy: { reservedIdentifiers: ['Buffer', 'globalThis'] },
   },
   {
     gate: 'BROKEN_R3C2_B_NODE_AMBIENT_BUFFER_WOULD_FAIL',
     after: `${fakeProviderStart}\n  Buffer.from('hostile-node-global');`,
-    expectedIssues: ['node-ambient:Buffer'], isolationPolicy: { ambientGlobals: ['process'] },
+    expectedIssues: ['reserved-identifier:Buffer'],
+    isolationPolicy: { reservedIdentifiers: ['process', 'globalThis'] },
   },
   {
     gate: 'BROKEN_R3C2_B_BARE_NODE_BUILTIN_FS_WOULD_FAIL',
     after: `import { readFileSync as nodeRead } from 'fs';\n${fakeProviderStart}\n  void nodeRead;`,
-    expectedIssues: ['node-builtin:fs'], isolationPolicy: { forbidBareBuiltins: false },
+    expectedIssues: ['module-specifier:non-relative:fs', 'node-builtin:fs'],
+    isolationPolicy: { forbidBareBuiltins: false, forbidNonRelativeSpecifiers: false },
   },
   {
     gate: 'BROKEN_R3C2_B_NODE_PREFIX_BUILTIN_FS_WOULD_FAIL',
     after: `import { readFileSync as nodeRead } from 'node:fs';\n${fakeProviderStart}\n  void nodeRead;`,
-    expectedIssues: ['node-builtin:node:fs'], isolationPolicy: { forbidNodePrefixedBuiltins: false },
+    expectedIssues: ['module-specifier:non-relative:node:fs', 'node-builtin:node:fs'],
+    isolationPolicy: { forbidNodePrefixedBuiltins: false, forbidNonRelativeSpecifiers: false },
   },
   {
     gate: 'BROKEN_R3C2_B_NODE_BUILTIN_SUBPATH_WOULD_FAIL',
     after: `import { readFile as bareRead } from 'fs/promises';\nimport { writeFile as prefixedWrite } from 'node:fs/promises';\n${fakeProviderStart}\n  void bareRead; void prefixedWrite;`,
-    expectedIssues: ['node-builtin:fs/promises', 'node-builtin:node:fs/promises'],
-    isolationPolicy: { forbidBareBuiltins: false, forbidNodePrefixedBuiltins: false },
+    expectedIssues: ['module-specifier:non-relative:fs/promises', 'module-specifier:non-relative:node:fs/promises',
+      'node-builtin:fs/promises', 'node-builtin:node:fs/promises'],
+    isolationPolicy: { forbidBareBuiltins: false, forbidNodePrefixedBuiltins: false,
+      forbidNonRelativeSpecifiers: false },
   },
   {
     gate: 'BROKEN_R3C2_B_GLOBALTHIS_PROCESS_WOULD_FAIL',
     after: `${fakeProviderStart}\n  void globalThis.process;`,
-    expectedIssues: ['node-ambient:globalThis.process'], isolationPolicy: { ambientGlobals: ['Buffer'] },
+    expectedIssues: ['reserved-identifier:globalThis', 'reserved-identifier:process'],
+    isolationPolicy: { reservedIdentifiers: ['Buffer'] },
   },
   {
     gate: 'BROKEN_R3C2_B_GLOBALTHIS_BUFFER_WOULD_FAIL',
     after: `${fakeProviderStart}\n  void globalThis.Buffer;`,
-    expectedIssues: ['node-ambient:globalThis.Buffer'], isolationPolicy: { ambientGlobals: ['process'] },
+    expectedIssues: ['reserved-identifier:Buffer', 'reserved-identifier:globalThis'],
+    isolationPolicy: { reservedIdentifiers: ['process'] },
   },
   {
     gate: 'BROKEN_R3C2_B_PARENTHESIZED_GLOBALTHIS_WOULD_FAIL',
     after: `${fakeProviderStart}\n  void (globalThis).process.env; void (globalThis)['Buffer'];`,
-    expectedIssues: ['node-ambient:globalThis.Buffer', 'node-ambient:globalThis.process'], isolationPolicy: { ambientGlobals: [] },
+    expectedIssues: ['reserved-identifier:globalThis', 'reserved-identifier:process'],
+    isolationPolicy: { reservedIdentifiers: [] },
   },
 ];
 
@@ -549,54 +559,197 @@ test('node production isolation: generic built-ins, re-exports and dynamic impor
     assert.equal(isNodeBuiltinSpecifier(prefixedOnly), true, prefixedOnly);
   }
   assert.deepEqual(productionIsolationIssues("import 'path'; export { inspect } from 'node:util';"),
-    ['node-builtin:node:util', 'node-builtin:path']);
+    ['module-specifier:non-relative:node:util', 'module-specifier:non-relative:path',
+      'node-builtin:node:util', 'node-builtin:path']);
   assert.deepEqual(productionIsolationIssues('import "node:fs"; export * from "fs/promises";'),
-    ['node-builtin:fs/promises', 'node-builtin:node:fs']);
-  assert.deepEqual(productionIsolationIssues("import value from '\\x66s';"), ['node-builtin:fs']);
-  assert.deepEqual(productionIsolationIssues("const load = () => import('fs');"), ['node-builtin:fs']);
-  assert.deepEqual(productionIsolationIssues("const load = () => import('node:fs/promises');"),
-    ['node-builtin:node:fs/promises']);
-  assert.deepEqual(productionIsolationIssues("const load = (name) => import(name);"), ['dynamic-import:nonliteral']);
+    ['module-specifier:non-relative:fs/promises', 'module-specifier:non-relative:node:fs',
+      'node-builtin:fs/promises', 'node-builtin:node:fs']);
+  assert.deepEqual(productionIsolationIssues("import value from '\\x66s';"),
+    ['module-specifier:non-relative:fs', 'node-builtin:fs']);
+  for (const expression of ["import('./rule-policy.js')", "import('fs')", "import('node:fs')",
+    "import('data:text/javascript,export default 1')", 'import(name)']) {
+    assert.deepEqual(productionIsolationIssues(`const load = () => ${expression};`),
+      ['dynamic-import:forbidden'], expression);
+  }
   assert.deepEqual(productionIsolationIssues("void proce\\u0073s.env; void Buff\\u0065r.from('x');"),
-    ['node-ambient:Buffer', 'node-ambient:process']);
+    ['reserved-identifier:Buffer', 'reserved-identifier:process']);
   assert.deepEqual(productionIsolationIssues("void globalThis?.['process']; void globalThis[\"Buffer\"];"),
-    ['node-ambient:globalThis.Buffer', 'node-ambient:globalThis.process']);
+    ['reserved-identifier:globalThis']);
 });
 
-test('node production isolation: lexical and package-name false-positive controls', async () => {
+test('node production isolation: conservative identifiers and lexical false-positive controls', async () => {
   const nonBuiltins = ['filesystem-helper', 'path-browserify', 'buffer-utils', 'process-helper', '@scope/fs', 'node:filesystem-helper'];
   assert.equal(nonBuiltins.filter(isNodeBuiltinSpecifier).length, 0);
-  assert.deepEqual(productionIsolationIssues(`import process from 'process-helper';
-    export { Buffer } from 'buffer-utils';
-    const object = { process() {}, Buffer() {} };
-    const loadPackage = () => import('filesystem-helper');
-    const loadRelative = () => import('./rule-policy.js');`), []);
   const harmless = `
-    const text = 'process.env Buffer fs';
-    const template = \`process.env Buffer\`;
-    const pattern = /process|Buffer|fs/u;
+    const text = 'process.env Buffer globalThis fs';
+    const other = "globalThis.process";
+    const template = \`process.env Buffer globalThis\`;
+    const pattern = /process|Buffer|globalThis|fs/u;
     // process.env Buffer fs node:fs
     /* node:fs and globalThis.process */
-    const object = { process: 'field', Buffer: 'field' };
-    void object.process; void object?.Buffer;
-    import helper from 'filesystem-helper';
-    export { helper as path } from 'path-browserify';
   `;
   assert.deepEqual(productionIsolationIssues(harmless), []);
 
-  const after = `${fakeProviderStart}\n  const harmless = { process: 'process.env', Buffer: 'Buffer', specifier: 'node:fs' };\n  // node:fs process Buffer\n  void harmless.process; void harmless.Buffer;`;
+  assert.deepEqual(productionIsolationIssues(`
+    const object = { process() {}, Buffer() {}, globalThis() {} };
+    void object.process; void object?.Buffer; void object.globalThis;
+    function local(process, Buffer, globalThis) { return [process, Buffer, globalThis]; }
+  `), ['reserved-identifier:Buffer', 'reserved-identifier:globalThis', 'reserved-identifier:process']);
+  assert.deepEqual(productionIsolationIssues("import process from 'process-helper'; export { Buffer } from 'buffer-utils';"),
+    ['module-specifier:non-relative:buffer-utils', 'module-specifier:non-relative:process-helper',
+      'reserved-identifier:Buffer', 'reserved-identifier:process']);
+
+  const after = `${fakeProviderStart}\n  const harmless = { authority: 'process.env', bytes: 'Buffer', root: 'globalThis', specifier: 'node:fs' };\n  // node:fs process Buffer globalThis\n  void harmless.authority; void harmless.bytes;`;
   const imported = await importVariant({ file: 'fake-provider.js', before: fakeProviderStart, after });
   await assertResponse(await imported.entry.default.fetch(request(), { COACH_FAKE_ENABLED: 'true' }), 200);
 });
 
-test('node production isolation: transitive production modules are enforced', () => {
-  const sources = productionSources();
-  const fake = sources.get('fake-provider.js');
-  sources.set('fake-provider.js', `import { readFileSync } from 'fs';\n${fake.replace(fakeProviderStart,
-    `${fakeProviderStart}\n  void process.env; void readFileSync;`)}`);
-  assert.throws(() => assertProductionIsolation(sources), (error) => error instanceof assert.AssertionError
-    && error.message.includes('node-builtin:fs') && error.message.includes('node-ambient:process'));
+test('node production isolation: template raw text is ignored and expressions are scanned', () => {
+  assert.deepEqual(productionIsolationIssues('const words = `process Buffer globalThis`;'), []);
+  assert.deepEqual(productionIsolationIssues('const value = `${process.env}`;'), ['reserved-identifier:process']);
+  assert.deepEqual(productionIsolationIssues("const value = `${Buffer.from('x')}`;"), ['reserved-identifier:Buffer']);
+  assert.deepEqual(productionIsolationIssues("const value = `${globalThis['process']}`;"),
+    ['reserved-identifier:globalThis']);
 });
+
+const newIsolationMutations = [
+  { category: 'globalThis isolation', gate: 'BROKEN_R3C2_B_COMPUTED_GLOBALTHIS_PROCESS_WOULD_FAIL',
+    after: `${fakeProviderStart}\n  void globalThis[\`process\`].env;`,
+    expectedIssues: ['reserved-identifier:globalThis'],
+    isolationPolicy: { reservedIdentifiers: ['process', 'Buffer'] } },
+  { category: 'globalThis isolation', gate: 'BROKEN_R3C2_B_COMPUTED_GLOBALTHIS_BUFFER_WOULD_FAIL',
+    after: `${fakeProviderStart}\n  globalThis[\`Buffer\`].from('x');`,
+    expectedIssues: ['reserved-identifier:globalThis'],
+    isolationPolicy: { reservedIdentifiers: ['process', 'Buffer'] } },
+  { category: 'globalThis isolation', gate: 'BROKEN_R3C2_B_GLOBALTHIS_ALIAS_WOULD_FAIL',
+    after: `${fakeProviderStart}\n  const root = globalThis; root['process'].env; root['Buffer'].from('x');`,
+    expectedIssues: ['reserved-identifier:globalThis'],
+    isolationPolicy: { reservedIdentifiers: ['process', 'Buffer'] } },
+  { category: 'ASI isolation', gate: 'BROKEN_R3C2_B_ASI_IMPORT_PROCESS_WOULD_FAIL',
+    after: `import './rule-policy.js'\nprocess.env;\n${fakeProviderStart}`,
+    expectedIssues: ['reserved-identifier:process'],
+    isolationPolicy: { reservedIdentifiers: ['Buffer', 'globalThis'] } },
+  { category: 'ASI isolation', gate: 'BROKEN_R3C2_B_ASI_IMPORT_BUFFER_WOULD_FAIL',
+    after: `import './rule-policy.js'\nBuffer.from('x');\n${fakeProviderStart}`,
+    expectedIssues: ['reserved-identifier:Buffer'],
+    isolationPolicy: { reservedIdentifiers: ['process', 'globalThis'] } },
+  { category: 'ASI isolation', gate: 'BROKEN_R3C2_B_ASI_EXPORT_PROCESS_WOULD_FAIL',
+    after: `export * from './rule-policy.js'\nprocess.env;\n${fakeProviderStart}`,
+    expectedIssues: ['reserved-identifier:process'],
+    isolationPolicy: { reservedIdentifiers: ['Buffer', 'globalThis'] } },
+  { category: 'ASI isolation', gate: 'BROKEN_R3C2_B_ASI_EXPORT_BUFFER_WOULD_FAIL',
+    after: `export * from './rule-policy.js'\nBuffer.from('x');\n${fakeProviderStart}`,
+    expectedIssues: ['reserved-identifier:Buffer'],
+    isolationPolicy: { reservedIdentifiers: ['process', 'globalThis'] } },
+  { category: 'opaque module isolation', gate: 'BROKEN_R3C2_B_STATIC_DATA_MODULE_WOULD_FAIL',
+    after: `import 'data:text/javascript,export default process.env';\n${fakeProviderStart}`,
+    expectedIssues: ['module-specifier:non-relative:data:text/javascript,export default process.env'],
+    isolationPolicy: { forbidNonRelativeSpecifiers: false } },
+  { category: 'opaque module isolation', gate: 'BROKEN_R3C2_B_REEXPORT_DATA_MODULE_WOULD_FAIL',
+    after: `export { default as hostileData } from 'data:text/javascript,export default process.env';\n${fakeProviderStart}`,
+    expectedIssues: ['module-specifier:non-relative:data:text/javascript,export default process.env'],
+    isolationPolicy: { forbidNonRelativeSpecifiers: false } },
+  { category: 'opaque module isolation', gate: 'BROKEN_R3C2_B_DYNAMIC_DATA_MODULE_WOULD_FAIL',
+    after: `await import('data:text/javascript,globalThis.Buffer');\n${fakeProviderStart}`,
+    expectedIssues: ['dynamic-import:forbidden'], isolationPolicy: { forbidDynamicImports: false } },
+  { category: 'opaque module isolation', gate: 'BROKEN_R3C2_B_DYNAMIC_IMPORT_ALLOWED_WOULD_FAIL',
+    after: `await import('node:path');\n${fakeProviderStart}`,
+    expectedIssues: ['dynamic-import:forbidden'], isolationPolicy: { forbidDynamicImports: false } },
+  { category: 'opaque module isolation', gate: 'BROKEN_R3C2_B_NON_RELATIVE_MODULE_ALLOWED_WOULD_FAIL',
+    after: `import { sep as nodeSeparator } from 'path';\n${fakeProviderStart}\n  void nodeSeparator;`,
+    expectedIssues: ['module-specifier:non-relative:path', 'node-builtin:path'],
+    isolationPolicy: { forbidBareBuiltins: false, forbidNonRelativeSpecifiers: false } },
+];
+
+for (const eol of ['\n', '\r\n']) for (const definition of newIsolationMutations) {
+  test(`${definition.category}: ${definition.gate} ${eol === '\n' ? 'LF' : 'CRLF'}`, async (context) => {
+    const original = productionSources().get('fake-provider.js').replace(/\r\n?/gu, '\n').replace(/\n/gu, eol);
+    const before = fakeProviderStart.replace(/\n/gu, eol);
+    const after = definition.after.replace(/\n/gu, eol);
+    assert.equal(original.split(before).length - 1, 1, 'fixture replacement count');
+    const hostile = original.replace(before, after);
+    assert.deepEqual(productionIsolationIssues(hostile), definition.expectedIssues, 'specific authority identified');
+    assert.deepEqual(productionIsolationIssues(hostile, definition.isolationPolicy), [], 'weakened mutant is sensitive');
+
+    const mutant = await importVariant({ file: 'fake-provider.js', before: fakeProviderStart,
+      after: definition.after, eol, isolationPolicy: definition.isolationPolicy });
+    assert.equal(mutant.applied, 1); assert.equal(mutant.importable, true);
+    await assertResponse(await mutant.entry.default.fetch(request(), { COACH_FAKE_ENABLED: 'true' }), 200);
+
+    let failure;
+    try { await importVariant({ file: 'fake-provider.js', before: fakeProviderStart, after: definition.after, eol }); }
+    catch (error) { failure = error; }
+    assert.ok(failure instanceof assert.AssertionError, 'authority assertion failed before unrelated import/runtime failure');
+    for (const issue of definition.expectedIssues) assert.ok(failure.message.includes(issue), issue);
+    context.diagnostic(`fixture=YES syntax=VALID importable=YES isolation=EXECUTED assertion=FAILED authority=${definition.expectedIssues.join(',')}`);
+  });
+}
+
+test('globalThis isolation: direct, computed and alias forms are conservatively rejected', () => {
+  const fixtures = ['globalThis.process', 'globalThis.Buffer', "globalThis['process']", 'globalThis["Buffer"]',
+    'globalThis[`process`]', 'globalThis[`Buffer`]', 'const g = globalThis; g.process',
+    "const g = globalThis; g['process']", 'const g = globalThis; g.Buffer', "const g = globalThis; g['Buffer']"];
+  for (const fixture of fixtures) {
+    assert.ok(productionIsolationIssues(fixture).includes('reserved-identifier:globalThis'), fixture);
+  }
+});
+
+test('opaque module isolation: static imports and re-exports reject every non-relative authority edge', () => {
+  for (const specifier of ['some-package', 'lodash', 'hono', 'openai', 'data:text/javascript,export default 1',
+    'blob:opaque-id', 'http://example.invalid/module.js', 'https://example.invalid/module.js',
+    'file:///tmp/module.js', 'npm:package', 'jsr:@scope/package']) {
+    assert.ok(productionIsolationIssues(`import '${specifier}';`)
+      .includes(`module-specifier:non-relative:${specifier}`), `import ${specifier}`);
+    assert.ok(productionIsolationIssues(`export * from '${specifier}';`)
+      .includes(`module-specifier:non-relative:${specifier}`), `re-export ${specifier}`);
+  }
+});
+
+function normalizedGraph(entries, eol) {
+  return new Map(entries.map(([name, source]) => [name, source.replace(/\n/gu, eol)]));
+}
+
+for (const eol of ['\n', '\r\n']) {
+  test(`production graph boundary: BROKEN_R3C2_B_PRODUCTION_GRAPH_ROOT_ESCAPE_WOULD_FAIL ${eol === '\n' ? 'LF' : 'CRLF'}`, async () => {
+    for (const [specifier, escapedName] of [['../../../outside.js', '../../../outside.js'],
+      ['../../test-support.mjs', '../../test-support.mjs']]) {
+      const sources = normalizedGraph([
+        ['index.js', `import '${specifier}';\nexport const ok = true;`],
+        [escapedName, 'export const escaped = true;'],
+      ], eol);
+      const issue = `index.js:module-specifier:root-escape:${specifier}`;
+      assert.deepEqual(productionGraphIssues(sources), [issue]);
+      assert.throws(() => assertProductionIsolation(sources), (error) => error instanceof assert.AssertionError
+        && error.message.includes(issue));
+      const mutant = await importVariant({ sources, eol, isolationPolicy: { forbidRootEscape: false } });
+      assert.equal(mutant.importable, true);
+    }
+  });
+}
+
+const transitiveAuthorities = [
+  ['process', 'void process.env;', 'hostile.js:reserved-identifier:process'],
+  ['Buffer', "Buffer.from('x');", 'hostile.js:reserved-identifier:Buffer'],
+  ['builtin', "import 'fs';", 'hostile.js:module-specifier:non-relative:fs'],
+  ['opaque module', "import 'data:text/javascript,export default process.env';",
+    'hostile.js:module-specifier:non-relative:data:text/javascript,export default process.env'],
+];
+
+for (const eol of ['\n', '\r\n']) for (const [name, hostile, expectedIssue] of transitiveAuthorities) {
+  test(`production graph boundary: transitive ${name} ${eol === '\n' ? 'LF' : 'CRLF'}`, async () => {
+    const sources = normalizedGraph([
+      ['index.js', "import './safe.js';\nexport const ok = true;"],
+      ['safe.js', "import './hostile.js';"],
+      ['hostile.js', hostile],
+    ], eol);
+    assert.ok(productionGraphIssues(sources).includes(expectedIssue));
+    assert.throws(() => assertProductionIsolation(sources), (error) => error instanceof assert.AssertionError
+      && error.message.includes(expectedIssue));
+    assert.doesNotThrow(() => assertProductionIsolation(sources, { recursive: false }));
+    const mutant = await importVariant({ sources, eol, isolationPolicy: { recursive: false } });
+    assert.equal(mutant.importable, true);
+  });
+}
 
 test('literal constants/policies immutable, no frontend/Node/fixtures/dependencies in production graph', async () => {
   assert.equal(MAX_REQUEST_BYTES, 1024); assert.equal(MAX_RESPONSE_BYTES, 1024);
@@ -605,11 +758,12 @@ test('literal constants/policies immutable, no frontend/Node/fixtures/dependenci
   assert.ok(Object.isFrozen(DEFAULT_PROFILE_POLICY));
   assertProductionIsolation(productionSources());
   for (const [name, source] of productionSources()) {
-    assert.doesNotMatch(source, /(?:test-support|fault-fixture|\.\.\/|game-review|console\.|localStorage|sessionStorage|indexedDB|caches\.|WebSocket|\b(?:await|return|globalThis\.)\s*fetch\s*\()/u, name);
+    assert.doesNotMatch(source, /(?:test-support|fault-fixture|\.\.\/|game-review|console\.|localStorage|sessionStorage|indexedDB|caches\.|WebSocket|\bglobalThis\b|\b(?:await|return)\s*fetch\s*\()/u, name);
   }
   const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
   assert.equal(pkg.private, true); assert.equal(pkg.type, 'module');
   assert.equal(pkg.dependencies, undefined); assert.equal(pkg.devDependencies, undefined);
   assert.deepEqual(Object.keys(pkg.scripts), ['test']);
   const imported = await importVariant(); assert.equal(imported.importable, true);
+  assert.equal(imported.compiledModules, 8);
 });
