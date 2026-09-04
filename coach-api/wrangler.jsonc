@@ -5,5 +5,12 @@
   "compatibility_date": "2026-09-03",
   "workers_dev": false,
   "preview_urls": false,
-  "vars": { "COACH_FAKE_ENABLED": "false" }
+  "vars": { "COACH_FAKE_ENABLED": "false" },
+  "env": {
+    "staging": {
+      "workers_dev": true,
+      "preview_urls": false,
+      "vars": { "COACH_FAKE_ENABLED": "true" }
+    }
+  }
 }
