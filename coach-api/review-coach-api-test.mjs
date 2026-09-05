@@ -237,7 +237,9 @@ const unsafeTexts = ['這步將軍。', '可以將死。', '這步會吃子。',
   '可以一起看看這個地方。 ', '可以一起看看這個地方!', '', '象'.repeat(25), '😀'.repeat(25)];
 for (const [index, leadIn] of unsafeTexts.entries()) test(`untrusted provider text ${index}`, async () => {
   const server = harness({ provider: () => ({ ...SAFE_FRAMING, leadIn }) });
-  await assertResponse(await server.handle(request()), 502);
+  // C1A accepts variable A1-safe framing; these were rejected only by B1's literal-pair gate.
+  const nowSafe = ['你真棒。', '高品質解說。', '**看看**', '可以一起看看這個地方!'].includes(leadIn);
+  await assertResponse(await server.handle(request()), nowSafe ? 200 : 502);
   assert.equal(server.calls.length, 1);
 });
 for (const [index, value] of [null, undefined, [], 'text', 1, {}, { ...SAFE_FRAMING, extra: 'x' },
@@ -1087,10 +1089,10 @@ test('literal constants/policies immutable, no frontend/Node/fixtures/dependenci
   assert.deepEqual(JSON.parse(capabilities.value.body), {
     version: 1, profiles: profiles.map((id) => ({ id, available: true })), defaultProfile: 'economy',
   });
-  assert.equal(capabilities.moduleCount, 8);
+  assert.equal(capabilities.moduleCount, 9);
   const review = runProductionSandbox({ operation: sandboxWorkerOperation });
   assertSandboxWorker200(review);
-  assert.equal(review.moduleCount, 8);
+  assert.equal(review.moduleCount, 9);
 });
 
 test('package policy keeps Wrangler exact, dev-only and limited to non-deploying scripts', () => {

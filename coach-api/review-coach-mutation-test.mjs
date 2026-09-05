@@ -38,7 +38,7 @@ add('ALLOWS_WRONG_ORIGIN', 'http.js', 'return origin === ALLOWED_ORIGIN;', 'retu
 add('RETURNS_UNVALIDATED_PROVIDER_OUTPUT', 'index.js', 'const framing = validateFraming(result.value);',
   'const framing = result.value;', (variant) => statusAndCalls(variant,
     { provider: () => ({ ...SAFE_FRAMING, extra: 'unvalidated' }) }), { status: 502, calls: 1 });
-const framingGuard = 'if (framing.leadIn !== SAFE_FRAMING.leadIn || framing.encouragement !== SAFE_FRAMING.encouragement) return null;';
+const framingGuard = 'if (!safeFramingSegment(framing.leadIn) || !safeFramingSegment(framing.encouragement)) return null;';
 for (const [name, leadIn] of [['ACCEPTS_CHESS_FACT_OUTPUT', '這步可以將軍。'], ['ACCEPTS_QUALITY_LANGUAGE', '這是最好的一步。']]) {
   add(name, 'contract.js', framingGuard, 'if (false) return null;',
     (variant) => statusAndCalls(variant, { provider: () => ({ ...SAFE_FRAMING, leadIn }) }), { status: 502, calls: 1 });

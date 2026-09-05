@@ -1,4 +1,5 @@
 import { purposeFor } from './rule-policy.js';
+import { safeFramingSegment } from './framing-policy.js';
 
 export const REQUEST_KEYS = Object.freeze([
   'version', 'requestId', 'locale', 'sourceRuleId', 'style', 'modelProfile',
@@ -45,8 +46,7 @@ export function validateFraming(value) {
   if (typeof framing.leadIn !== 'string' || typeof framing.encouragement !== 'string') return null;
   const lengths = [Array.from(framing.leadIn).length, Array.from(framing.encouragement).length];
   if (lengths.some((length) => length < 1 || length > 24) || lengths[0] + lengths[1] > 48) return null;
-  // B1 intentionally accepts only this reviewed deterministic pair, not free text.
-  if (framing.leadIn !== SAFE_FRAMING.leadIn || framing.encouragement !== SAFE_FRAMING.encouragement) return null;
+  if (!safeFramingSegment(framing.leadIn) || !safeFramingSegment(framing.encouragement)) return null;
   return Object.freeze(framing);
 }
 
