@@ -58,32 +58,53 @@ export async function executeRealCoachProvider(configuration, input, { signal } 
     let attempted = false;
     let succeeded = false;
     let value;
+    let terminated = true;
+    let termination = Promise.resolve();
+    // A plain provider promise owns its full lifetime. A bounded adapter must
+    // synchronously register its underlying operation before returning early.
+    const registerTermination = (pending) => {
+      terminated = false;
+      termination = Promise.all([termination, pending]).then(
+        () => { terminated = true; },
+        () => { /* Unknown termination remains fail-closed. */ },
+      );
+    };
     try {
       if (signal?.aborted || typeof config.concurrencyAuthority !== 'function') throw failure();
       const rawLease = await config.concurrencyAuthority({ signal });
       lease = snapshotExact(rawLease, ['release']);
       if (!lease || typeof lease.release !== 'function' || signal?.aborted) throw failure();
       attempted = true;
-      value = await config.provider(input, { signal });
+      value = await config.provider(input, { signal, registerTermination });
       if (signal?.aborted) throw failure();
       succeeded = true;
     } catch {
       succeeded = false;
     }
 
-    let cleanupFailed = false;
-    if (lease) {
+    const cleanup = async () => {
+      let cleanupFailed = false;
+      if (lease) {
+        try {
+          if (await lease.release() !== true) cleanupFailed = true;
+        } catch { cleanupFailed = true; }
+      }
+      const outcome = attempted ? (succeeded ? 'succeeded' : 'failed') : 'not_attempted';
       try {
-        if (await lease.release() !== true) cleanupFailed = true;
-      } catch { cleanupFailed = true; }
+        // Provider output and usage are deliberately excluded from budget settlement.
+        if (await reservation.finalize(Object.freeze({ attempted, outcome })) !== true) cleanupFailed = true;
+      } catch {
+        cleanupFailed = true;
+      }
+      return cleanupFailed;
+    };
+    if (!terminated) {
+      // Caller settlement does not refund the reservation or release capacity.
+      // The continuation handles late failures and can never publish a result.
+      void termination.then(() => terminated ? cleanup() : undefined).catch(() => {});
+      throw failure();
     }
-    const outcome = attempted ? (succeeded ? 'succeeded' : 'failed') : 'not_attempted';
-    try {
-      // Provider output and usage are deliberately excluded from budget settlement.
-      if (await reservation.finalize(Object.freeze({ attempted, outcome })) !== true) cleanupFailed = true;
-    } catch {
-      cleanupFailed = true;
-    }
+    const cleanupFailed = await cleanup();
     if (!succeeded || cleanupFailed) throw failure();
     return value;
   } catch {

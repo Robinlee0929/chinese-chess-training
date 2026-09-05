@@ -52,10 +52,15 @@ function parseResponse(value) {
 }
 
 async function readResponse(response, signal) {
-  if (response.status !== 200 || !response.body) throw failure();
+  if (response.status !== 200 || !response.body) {
+    await response.body?.cancel();
+    throw failure();
+  }
   const reader = response.body.getReader();
-  const cancel = () => { reader.cancel().catch(() => {}); };
-  signal.addEventListener('abort', cancel, { once: true });
+  let cancellation;
+  const cancel = () => (cancellation ??= reader.cancel().catch(() => {}));
+  const onAbort = () => { void cancel(); };
+  signal.addEventListener('abort', onAbort, { once: true });
   const chunks = [];
   let size = 0;
   try {
@@ -69,8 +74,8 @@ async function readResponse(response, signal) {
       chunks.push(value);
     }
   } finally {
-    signal.removeEventListener('abort', cancel);
-    cancel();
+    signal.removeEventListener('abort', onAbort);
+    await cancel();
   }
   const bytes = new Uint8Array(size);
   let offset = 0;
@@ -81,16 +86,23 @@ async function readResponse(response, signal) {
 export function createOpenAIProvider({ fetch: fetchImpl, apiKey, clock = SYSTEM_CLOCK } = {}) {
   if (typeof fetchImpl !== 'function' || typeof apiKey !== 'string'
     || apiKey.length < 1 || apiKey.length > 512 || /[^\x21-\x7e]/u.test(apiKey)) throw failure();
-  return async (input, { signal } = {}) => {
+  // registerTermination is a trusted composition hook, never provider/browser data.
+  // It runs synchronously on dispatch and receives a fulfillment-only drain promise.
+  return async (input, { signal, registerTermination } = {}) => {
     try {
       const body = requestBody(input);
-      const result = await boundedOperation(async (requestSignal) => {
-        const response = await fetchImpl(ENDPOINT, {
-          method: 'POST', redirect: 'error', credentials: 'omit', cache: 'no-store', signal: requestSignal,
-          headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-        return readResponse(response, requestSignal);
+      const result = await boundedOperation((requestSignal) => {
+        const operation = (async () => {
+          const response = await fetchImpl(ENDPOINT, {
+            method: 'POST', redirect: 'error', credentials: 'omit', cache: 'no-store', signal: requestSignal,
+            headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          return readResponse(response, requestSignal);
+        })();
+        const terminated = operation.then(() => undefined, () => undefined);
+        registerTermination?.(terminated);
+        return operation;
       }, { clock, deadline: clock.now() + R3C2_B_PROVIDER_TIMEOUT_MS, parentSignal: signal });
       if (result.kind !== 'success') throw failure();
       return result.value;

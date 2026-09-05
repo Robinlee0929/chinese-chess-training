@@ -165,22 +165,31 @@ for (const [name, failingReply] of [
   ['429', () => response({ error: SECRET }, 429)],
   ['500', () => response({ error: SECRET }, 500)],
   ['malformed response', () => response({ secret: SECRET })],
+  ['parser rejection', () => response(envelope('{invalid JSON'))],
   ['unsafe framing', () => response(envelope(JSON.stringify({ ...framing, leadIn: '這步將軍。' })))],
 ]) test(`C1B releases concurrency and finalizes budget after ${name}`, async () => {
   let fail = true;
   let fetches = 0;
+  let active = 0;
+  let maximum = 0;
   const finalizations = [];
   const concurrency = createSingleFlightConcurrencyAuthority();
-  const provider = openAI(async () => { fetches++; return fail ? failingReply() : response(); });
+  const provider = openAI(async () => {
+    fetches++; active++; maximum = Math.max(maximum, active);
+    try { return fail ? failingReply() : response(); }
+    finally { active--; }
+  });
   await assert.rejects(executeRealCoachProvider(
     approvedConfiguration(provider, { concurrency, finalizations }), providerInput(),
   ), redacted);
   assert.equal(fetches, 1, 'no retry');
+  assert.equal(active, 0, 'underlying fetch settled before reuse');
   fail = false;
   assert.deepEqual(await executeRealCoachProvider(
     approvedConfiguration(provider, { concurrency, finalizations }), providerInput(),
   ), framing);
   assert.equal(fetches, 2, 'released lease permits one later call');
+  assert.equal(maximum, 1);
   assert.deepEqual(finalizations, [
     { attempted: true, outcome: 'failed' }, { attempted: true, outcome: 'succeeded' },
   ]);
@@ -206,12 +215,17 @@ test('C1B timeout aborts, releases concurrency, finalizes budget, and permits re
   await first;
   assert.equal(fetches, 1);
   assert.equal(signals[0].aborted, true);
+  assert.deepEqual(finalizations, [], 'active attempt keeps its budget reservation');
+  await assert.rejects(executeRealCoachProvider(
+    approvedConfiguration(provider, { concurrency }), providerInput(),
+  ), redacted);
+  assert.equal(fetches, 1);
+  pending.resolve(response());
+  await flush();
   assert.deepEqual(await executeRealCoachProvider(
     approvedConfiguration(provider, { concurrency, finalizations }), providerInput(),
   ), framing);
   assert.equal(fetches, 2);
-  pending.resolve(response());
-  await flush();
   assert.deepEqual(finalizations, [
     { attempted: true, outcome: 'failed' }, { attempted: true, outcome: 'succeeded' },
   ]);
@@ -255,6 +269,122 @@ test('C1B failures redact secret, budget state, provider diagnostics and logs', 
   config.budgetAuthority = async () => ({ finalize: async () => { throw new Error(`${SECRET}:budget`); } });
   await assert.rejects(executeRealCoachProvider(config, providerInput()), redacted);
   assert.deepEqual(logs, []);
+});
+
+async function drainProbe(implementation = { executeRealCoachProvider, createSingleFlightConcurrencyAuthority },
+  mode = 'late success') {
+  const clock = new FakeClock();
+  const pending = deferred();
+  const controller = new AbortController();
+  let active = 0;
+  let maximum = 0;
+  let calls = 0;
+  let releases = 0;
+  let callerResults = 0;
+  let abortObserved = false;
+  const finalizations = [];
+  const provider = openAI(async (_url, { signal }) => {
+    const ordinal = ++calls;
+    active++;
+    maximum = Math.max(maximum, active);
+    try {
+      if (ordinal === 1) {
+        signal.addEventListener('abort', () => {
+          abortObserved = true;
+          if (mode === 'cooperative') pending.reject(new Error(SECRET));
+        }, { once: true });
+        await pending.promise;
+      }
+      return response();
+    } finally { active--; }
+  }, clock);
+  const acquire = implementation.createSingleFlightConcurrencyAuthority();
+  const concurrency = async (options) => {
+    const lease = await acquire(options);
+    return lease && { release: () => { releases++; return lease.release(); } };
+  };
+  const config = () => approvedConfiguration(provider, { concurrency, finalizations });
+  let firstSucceeded = false;
+  const first = implementation.executeRealCoachProvider(config(), providerInput(), { signal: controller.signal })
+    .then(() => { firstSucceeded = true; callerResults++; }, (error) => { redacted(error); callerResults++; });
+  await flush();
+  if (mode === 'caller abort') controller.abort();
+  else await clock.advance(3000);
+  await first; // Must finish even though the underlying operation is still pending.
+  const before = { active, calls, releases, finalizations: finalizations.length };
+  let secondDenied = false;
+  try { await implementation.executeRealCoachProvider(config(), providerInput()); }
+  catch (error) { redacted(error); secondDenied = true; }
+  const secondFetches = calls - before.calls;
+  if (mode === 'late failure') pending.reject(new Error(SECRET));
+  else pending.resolve();
+  await flush();
+  const afterDrain = { active, releases, callerResults, finalizations: [...finalizations] };
+  const recovered = await implementation.executeRealCoachProvider(config(), providerInput());
+  return { maximum, abortObserved, before, secondDenied, secondFetches, afterDrain,
+    callerResults, firstSucceeded, recovered, releases, finalizations };
+}
+
+for (const mode of ['late success', 'late failure', 'cooperative', 'caller abort']) {
+  test(`C1B actual underlying lifetime remains single-flight: ${mode}`, async () => {
+    const unhandled = [];
+    const listener = (error) => unhandled.push(error);
+    process.on('unhandledRejection', listener);
+    try {
+      const result = await drainProbe(undefined, mode);
+      assert.equal(result.maximum, 1);
+      assert.equal(result.abortObserved, true);
+      assert.equal(result.firstSucceeded, false);
+      assert.equal(result.callerResults, 1);
+      assert.deepEqual(result.recovered, framing);
+      assert.equal(result.afterDrain.active, 0);
+      if (mode !== 'cooperative') {
+        assert.deepEqual(result.before, { active: 1, calls: 1, releases: 0, finalizations: 0 });
+        assert.equal(result.secondDenied, true);
+        assert.equal(result.secondFetches, 0);
+        assert.equal(result.afterDrain.releases, 1);
+        assert.deepEqual(result.afterDrain.finalizations, [
+          { attempted: false, outcome: 'not_attempted' }, { attempted: true, outcome: 'failed' },
+        ]);
+        assert.equal(result.releases, 2);
+      } else {
+        assert.equal(result.before.active, 0);
+        assert.equal(result.secondDenied, false);
+        assert.equal(result.releases, 3);
+      }
+      assert.equal(result.finalizations.filter((v) => v.attempted && v.outcome === 'failed').length, 1);
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.deepEqual(unhandled, []);
+    } finally { process.removeListener('unhandledRejection', listener); }
+  });
+}
+
+test('C1B response-body cancellation must settle before capacity and budget are released', async () => {
+  const clock = new FakeClock();
+  const drain = deferred();
+  let calls = 0;
+  let cancellations = 0;
+  const finalizations = [];
+  const provider = openAI(async () => {
+    calls++;
+    if (calls > 1) return response();
+    return new Response(new ReadableStream({ cancel() { cancellations++; return drain.promise; } }));
+  }, clock);
+  const concurrency = createSingleFlightConcurrencyAuthority();
+  const config = () => approvedConfiguration(provider, { concurrency, finalizations });
+  const first = assert.rejects(executeRealCoachProvider(config(), providerInput()), redacted);
+  await flush();
+  await clock.advance(3000);
+  await first;
+  assert.equal(cancellations, 1);
+  assert.deepEqual(finalizations, []);
+  await assert.rejects(executeRealCoachProvider(config(), providerInput()), redacted);
+  assert.equal(calls, 1);
+  drain.resolve();
+  await flush();
+  assert.deepEqual(await executeRealCoachProvider(config(), providerInput()), framing);
+  assert.equal(calls, 2);
+  assert.equal(cancellations, 1);
 });
 
 const sources = {
@@ -370,6 +500,8 @@ const mutationDefinitions = [
       await flush();
       await clock.advance(3000);
       await first;
+      pending.resolve(response());
+      await flush();
       let recovered = true;
       try { await implementation.executeRealCoachProvider(config, providerInput()); } catch { recovered = false; }
       pending.resolve(response());
@@ -377,8 +509,8 @@ const mutationDefinitions = [
       return { fetches, recovered };
     } },
   { name: 'SAFETY_LAYER_RETRY', target: 'safety',
-    before: 'value = await config.provider(input, { signal });',
-    after: 'try { value = await config.provider(input, { signal }); } catch { value = await config.provider(input, { signal }); }',
+    before: 'value = await config.provider(input, { signal, registerTermination });',
+    after: 'try { value = await config.provider(input, { signal, registerTermination }); } catch { value = await config.provider(input, { signal, registerTermination }); }',
     expected: { calls: 1, succeeded: false }, probe: async (implementation) => {
       let calls = 0;
       const config = simpleConfig(async () => { calls++; if (calls === 1) throw new Error(SECRET); return framing; });
@@ -417,7 +549,11 @@ const mutationDefinitions = [
     } },
 ];
 
-assert.equal(mutationDefinitions.length, 12, 'all required C1B safety mutations are defined');
+mutationDefinitions.push({ name: 'EARLY_TIMEOUT_LEASE_RELEASE', target: 'safety',
+  before: 'if (!terminated) {', after: 'if (false) {', expected: 1,
+  probe: async (implementation) => (await drainProbe(implementation)).maximum,
+});
+assert.equal(mutationDefinitions.length, 13, 'all required C1B safety mutations are defined');
 for (const definition of mutationDefinitions) {
   for (const eol of ['\n', '\r\n']) {
     test(`BROKEN_C1B_${definition.name}_WOULD_FAIL ${eol === '\n' ? 'LF' : 'CRLF'}`, async () => {
@@ -428,6 +564,9 @@ for (const definition of mutationDefinitions) {
       assert.equal(mutant.syntacticallyValid, true);
       assert.equal(mutant.importable, true);
       const actual = await definition.probe(mutant.module);
+      if (definition.name === 'EARLY_TIMEOUT_LEASE_RELEASE') {
+        assert.equal(actual, 2, 'early release must reproduce exactly two underlying fetches');
+      }
       assert.notDeepEqual(actual, definition.expected, 'mutant path executed and broken behavior observed');
       assert.throws(() => invariant(actual), { name: 'AssertionError', code: 'ERR_ASSERTION' });
       console.log('mutation_applied=YES syntax_valid=YES importable=YES path_executed=YES broken_behavior=YES intended_assertion=FAILED');
