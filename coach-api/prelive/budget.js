@@ -9,9 +9,22 @@ export function createDurableBudget(storage) {
       state TEXT NOT NULL, terminated INTEGER NOT NULL DEFAULT 0, finalized INTEGER NOT NULL DEFAULT 0)`);
     sql.exec('CREATE TABLE IF NOT EXISTS coach_slot (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), owner INTEGER)');
     sql.exec('INSERT OR IGNORE INTO coach_slot (singleton, owner) VALUES (1, NULL)');
+    sql.exec(`CREATE TABLE IF NOT EXISTS coach_recovery (
+      singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+      state TEXT NOT NULL, owner INTEGER)`);
+    sql.exec("INSERT OR IGNORE INTO coach_recovery (singleton, state, owner) VALUES (1, 'NORMAL', NULL)");
+    // Reconstruction is uncertainty, never evidence of external termination.
+    sql.exec(`UPDATE coach_recovery SET state = 'RECOVERY_REQUIRED',
+      owner = (SELECT owner FROM coach_slot WHERE singleton = 1)
+      WHERE singleton = 1 AND (SELECT owner FROM coach_slot WHERE singleton = 1) IS NOT NULL`);
   });
   const row = (id) => sql.exec('SELECT * FROM coach_reservations WHERE id = ?', id).toArray()[0];
   return Object.freeze({
+    // Internal/local inspection only: not exported by the DO RPC or HTTP surface.
+    // Arguments (including age, alarm or alleged proof) confer no authority.
+    inspectRecovery() {
+      return Object.freeze(sql.exec('SELECT state, owner FROM coach_recovery WHERE singleton = 1').toArray()[0]);
+    },
     reserve(day, units, limit) {
       return storage.transactionSync(() => {
         sql.exec('INSERT OR IGNORE INTO coach_days (day, units) VALUES (?, 0)', day);
@@ -22,7 +35,12 @@ export function createDurableBudget(storage) {
       });
     },
     acquire(id) {
-      return sql.exec('UPDATE coach_slot SET owner = ? WHERE singleton = 1 AND owner IS NULL RETURNING owner', id).toArray().length === 1;
+      return storage.transactionSync(() => {
+        if (sql.exec('SELECT state FROM coach_recovery WHERE singleton = 1').toArray()[0].state === 'RECOVERY_REQUIRED') return false;
+        const acquired = sql.exec('UPDATE coach_slot SET owner = ? WHERE singleton = 1 AND owner IS NULL RETURNING owner', id).toArray().length === 1;
+        if (acquired) sql.exec("UPDATE coach_recovery SET state = 'ACTIVE_PROVIDER', owner = ? WHERE singleton = 1", id);
+        return acquired;
+      });
     },
     start(id) {
       return storage.transactionSync(() => {
@@ -53,6 +71,9 @@ export function createDurableBudget(storage) {
         if (!started) sql.exec('UPDATE coach_days SET units = units - ? WHERE day = ?', reservation.units, reservation.day);
         sql.exec("UPDATE coach_reservations SET finalized = finalized + 1, state = ? WHERE id = ?", started ? 'consumed' : 'released', id);
         sql.exec('UPDATE coach_slot SET owner = NULL WHERE singleton = 1 AND owner = ?', id);
+        // The AUTOINCREMENT reservation id is also the server-owned operation
+        // generation. A stale completion can only settle its own generation.
+        sql.exec("UPDATE coach_recovery SET state = 'NORMAL', owner = NULL WHERE singleton = 1 AND owner = ?", id);
         return true;
       });
     },

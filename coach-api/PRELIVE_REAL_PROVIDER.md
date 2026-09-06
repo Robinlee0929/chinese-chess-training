@@ -1,5 +1,10 @@
 # C1C isolated real-provider preparation
 
+C1D adds a persistent recovery-required marker and an internal read-only
+inspection helper. See [recovery contract and future live-resource plan](PRELIVE_RECOVERY_AND_LIVE_PLAN.md)
+for the operator-only fail-closed procedure, generation checks, evidence limits,
+and separate owner gates. No force-clear route, alarm, or live authority is added.
+
 `wrangler.real-prelive.jsonc` describes a separate, undeployed Worker named
 `chinese-chess-coach-openai-staging`. The existing `wrangler.jsonc`, fake Worker,
 browser entrypoints, C1A adapter and C1B lifecycle are unchanged. Committed enable
