@@ -1,0 +1,15 @@
+{
+  "name": "chinese-chess-coach-openai-staging",
+  "main": "prelive/worker.js",
+  "compatibility_date": "2026-09-03",
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "COACH_REAL_PROVIDER_ENABLED": "false",
+    "COACH_REAL_DAILY_UNITS": "0"
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "COACH_REAL_COORDINATOR", "class_name": "CoachRealProviderCoordinator" }]
+  },
+  "migrations": [{ "tag": "real-provider-v1", "new_sqlite_classes": ["CoachRealProviderCoordinator"] }]
+}
