@@ -2,14 +2,14 @@ import { createOpenAIProvider } from '../src/openai-provider.js';
 import { executeRealCoachProvider } from '../src/real-provider-safety.js';
 import { SYSTEM_CLOCK, boundedOperation, R3C2_B_PROVIDER_TIMEOUT_MS } from '../src/provider.js';
 import { createDurableBudget } from './budget.js';
+import { createOperatorDispatch } from './operator-dispatch.js';
 import { enabled, providerSecret, dailyLimit, providerInput, PROFILE_UNITS, rateLimit, unavailable } from './policy.js';
 
 // The wrapper supplies platform storage and fetch; tests supply real SQLite and injected I/O.
 // No dependency comes from an HTTP request or RPC argument.
-export function createCoordinator(storage, env, { fetch: fetchImpl, clock = SYSTEM_CLOCK, utcNow = Date.now } = {}) {
+export function createCoordinator(storage, env, { fetch: fetchImpl, clock = SYSTEM_CLOCK, utcNow = Date.now, operatorAuthority } = {}) {
   const budget = createDurableBudget(storage);
-  return Object.freeze({
-    async execute(value) {
+  const execute = async (value) => {
       try {
         const result = await boundedOperation(async (signal) => {
           const input = providerInput(value);
@@ -56,6 +56,7 @@ export function createCoordinator(storage, env, { fetch: fetchImpl, clock = SYST
         if (result.kind !== 'success') throw unavailable();
         return result.value;
       } catch { throw unavailable(); }
-    },
-  });
+  };
+  // Internal core only. The Worker exports no operator RPC method or transport.
+  return Object.freeze({ execute, operator: createOperatorDispatch(storage, { authorize: operatorAuthority, execute }) });
 }

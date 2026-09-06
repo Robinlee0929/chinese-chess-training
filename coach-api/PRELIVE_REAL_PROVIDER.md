@@ -98,3 +98,14 @@ not rely on `waitUntil` as a Durable Object lifetime guarantee; Cloudflare docum
 that `waitUntil` has no effect there. Its persistent fence also survives uncertain
 runtime termination. Rate-limit counters are eventually consistent and are not
 an accounting system.
+# C1E public-path restriction
+
+The undeployed real-staging public path additionally requires the exact server
+value `COACH_REAL_PROVIDER_PUBLIC_ENABLED="true"`. This authority is absent in
+committed config, independent of real-provider enable/secret/rate/budget, and may
+only be enabled in a separately reviewed later phase. Client inputs cannot set it.
+Fake staging and browser request/response schemas are unchanged. The first future
+paid attempt must use the separate internal persistent one-shot operator contract;
+no operator HTTP endpoint or live authentication/transport is implemented here.
+See the C1E section of `PRELIVE_RECOVERY_AND_LIVE_PLAN.md` for the full owner-gated
+sequence and terminal CONSUMED semantics. All current provider tests are mocked.

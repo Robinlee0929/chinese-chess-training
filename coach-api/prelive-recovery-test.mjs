@@ -131,7 +131,13 @@ test('C1D HTTP and RPC cannot accept recovery, generation or proof authority', a
     const disabled = modules.outer.createRealStagingHandler({ ...h.env, COACH_REAL_PROVIDER_ENABLED: 'false' }, { clock: h.clock });
     assert.equal((await disabled(request({ headers: { 'X-Recovery': 'clear', 'X-Generation': '999' } }))).status, 503);
     assert.equal(h.state.calls, 0);
-    assert.deepEqual(Object.keys(h.instance(name).core), ['execute']);
+    // C1E adds INTERNAL composition, not Worker RPC. The wrapper holds this core
+    // in a private field and still exposes no recovery/operator RPC transport.
+    const core = h.instance(name).core;
+    assert.deepEqual(Object.keys(core), ['execute', 'operator']);
+    assert.deepEqual(await core.operator.arm(), { status: 'denied' });
+    assert.deepEqual(await core.operator.dispatch(), { status: 'denied' });
+    assert.equal(h.state.calls, 0);
   } finally { h.close(); }
 });
 

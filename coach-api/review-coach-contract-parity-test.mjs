@@ -4,6 +4,7 @@ import './openai-provider-test.mjs';
 import './real-provider-safety-test.mjs';
 import './real-provider-prelive-test.mjs';
 import './prelive-recovery-test.mjs';
+import './prelive-one-shot-test.mjs';
 import { beginCoachRequest, createIdleCoachState, settleCoachResponse, validateCoachRequestPayload } from '../game-review-coach.js';
 import { harness, request } from './test-support.mjs';
 

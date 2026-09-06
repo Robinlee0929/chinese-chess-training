@@ -44,7 +44,9 @@ export function harness(implementation = modules, overrides = {}) {
   const clock = new FakeClock();
   const state = { calls: 0, active: 0, maximum: 0, aborts: 0, rateCalls: 0, identities: [], requests: [],
     date: Date.UTC(2026, 8, 6, 12), fetch: null };
-  const env = { COACH_REAL_PROVIDER_ENABLED: 'true', COACH_REAL_DAILY_UNITS: '20', OPENAI_API_KEY: SENTINEL,
+  // C1C/C1D regression fixture explicitly models a FUTURE authorized public phase.
+  // C1E tests override this to absent/false; committed configuration never enables it.
+  const env = { COACH_REAL_PROVIDER_PUBLIC_ENABLED: 'true', COACH_REAL_PROVIDER_ENABLED: 'true', COACH_REAL_DAILY_UNITS: '20', OPENAI_API_KEY: SENTINEL,
     COACH_REAL_RATE_LIMITER: { limit: async () => { state.rateCalls++; return { success: true }; } }, ...overrides };
   const instances = new Map(); // Namespace routing only; all authority is in each SQLite database.
   function instance(name) {
@@ -85,11 +87,14 @@ export function harness(implementation = modules, overrides = {}) {
 export async function variant(target, before, after, eol) {
   const loaded = {};
   const urls = {};
-  for (const name of ['policy', 'budget', 'coordinator', 'outer']) {
+  for (const name of ['policy', 'budget', 'operator-dispatch', 'coordinator', 'outer']) {
     let source = (await readFile(new URL(`./prelive/${name}.js`, import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
     if (name === target) {
-      assert.equal(source.split(before).length, 2, 'exactly one mutation site');
-      source = source.replace(before, after);
+      const replacements = Array.isArray(before) ? before.map((text, i) => [text, after[i]]) : [[before, after]];
+      for (const [from, to] of replacements) {
+        assert.equal(source.split(from).length, 2, 'exactly one mutation site');
+        source = source.replace(from, to);
+      }
     }
     source = source.replace(/from '(\.[^']+)'/g, (_match, relative) => {
       const dependency = relative.match(/^\.\/(.*)\.js$/)?.[1];

@@ -318,6 +318,94 @@ enable flag with missing other gates cannot authorize a provider call.
 
 ## Offline evidence and review handoff
 
+### C1E exclusive first-call addition (PRELIVE, not deployed)
+
+The ordinary real-staging HTTP path has a separate server-owned authority:
+`COACH_REAL_PROVIDER_PUBLIC_ENABLED`. Only the exact server value `"true"`
+approves it; absent, false, boolean true, and malformed values deny. It is absent
+from committed configuration. Both outer admission/provider dispatch and the
+Worker's public `execute` RPC check it. No header, query, body, browser preference,
+operator approval, one-shot state, secret, budget, or ordinary provider-enable
+flag can supply this independent authority. Errors retain the existing empty,
+bounded generic disabled/unavailable contract. Fake staging and browser runtime
+are unchanged. A separately reviewed later phase is required to enable public
+real staging; first-call success never enables it.
+
+`prelive/operator-dispatch.js` is an INTERNAL coordinator composition module,
+not an HTTP route or exported Worker RPC. The core installs it against the SAME
+SQLite storage and execution closure used by C1C. The deployed wrapper installs
+no approving operator authority and exports no operator invocation transport.
+`LIVE_OPERATOR_TRANSPORT_IMPLEMENTED=NO`; no live identity technology is selected.
+Future wiring must remain inside this same named global coordinator, not an
+outer-Worker object with an arbitrary namespace or volatile state.
+
+`arm()` and `dispatch()` accept no arguments. A trusted, server-injected verifier
+must return exactly true for the fixed action (`arm` or `dispatch`); absent,
+false, malformed, or throwing authority denies. Test approving functions are
+synthetic only, NOT production authentication. Future transport must be private
+or strongly identity-authenticated with server-side verification, not an ordinary
+user session, static public admin header, query token, or browser-local state.
+Replay of authentication still encounters the persistent one-shot CAS gate.
+Authentication/transport implementation and review remain an owner/resource gate.
+
+The fixed logical identity is `review-coach-first-live-economy-v1`. A new schema
+starts DISARMED; existing rows are never overwritten by construction, and missing
+rows/unknown states deny. Arming conditionally changes only DISARMED to ARMED and
+syncs storage, making zero provider calls. Dispatch authenticates, checks its
+internal executor, atomically changes only ARMED to CONSUMED with SQL
+`UPDATE ... WHERE ... RETURNING`, and awaits `storage.sync()` BEFORE invoking C1C.
+Only then do C1C/C1B secret, enable, rate, budget, concurrency, recovery and C1A
+input/validator checks run. This deliberately consumes even when a later
+zero-cost prerequisite denies. Sync failure also never triggers a retry/rearm.
+No await separates the SQL conditional test and update. See the
+[Cloudflare SQLite storage API](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/).
+
+Input is fixed `check-difference`, zh-Hant, child-neutral-teacher-v1, economy,
+with the existing rule-owned minimal diagnostic framing purpose. No operator
+free text, board, GameRecord, profile or model selection is accepted. C1A retains
+store=false, reasoning=none, max_output_tokens=128, tools=0 and retry=0. Existing
+economy model mapping is unchanged and must be rechecked before any future live
+call. C1B and coordinator retries also remain zero. Operator results contain only
+bounded status and (after consumption) consumed=true: no framing, prompt, key,
+raw result/request ID, reservation/DO ID, accounting totals, or stack. No content
+logging is added.
+
+CONSUMED is terminal in this implementation. Success, network errors, 429/500,
+parser/validator rejection, cancellation, timeout, or loss of continuation cannot
+write the one-shot row. Stale completions cannot change newer one-shot state;
+C1D still protects reservation generations and provider ownership. Reconstruction
+does not prove termination. A genuinely lost attempt remains CONSUMED and fenced,
+with no silent started-unit refund. Follow the C1D containment/proof procedure;
+never clear ownership, delete SQL, restore a database, change logical identity,
+or deploy to rearm. There is NO runtime rearm/reset/forceArm API. A second attempt
+requires a new explicit owner authorization cycle, fresh safety verification and
+a separately reviewed operator re-arm procedure (not implemented by C1E).
+
+Future first-live order, ALL behind separate owner approvals:
+
+1. Deploy reviewed real resources disabled, public authority false/absent.
+2. Verify zero calls and unchanged fake staging.
+3. Establish and independently review live operator authentication/transport.
+4. Create the dedicated project secret through secure owner input.
+5. Verify provider still disabled.
+6. Owner selects a tiny non-zero budget (no value selected here).
+7. Verify provider still disabled.
+8. Owner explicitly authorizes the real-provider enable gate.
+9. Verify ordinary public traffic STILL cannot start a real call; public authority stays false.
+10. Explicitly ARM through verified operator authority.
+11. Verify ARMED and zero provider calls, without exposing internal SQL to clients.
+12. Explicitly DISPATCH once through the operator transport.
+13. Atomically consume and durably sync authority before coordinator execution.
+14. Allow at most one economy provider attempt; never retry or switch models.
+15. Verify CONSUMED using restricted operator-side inspection.
+16. Inspect coordinator, budget, concurrency and recovery state without logging content.
+17. Disable real provider again after the attempt, success OR failure, before experimentation.
+
+No automatic promotion, budget increase, second call or C2 progression occurs.
+If any verification fails, contain and stop; a validation failure is not approval
+to issue another paid call. The public authority is distinct from every first-live
+gate and remains closed throughout this sequence.
+
 `prelive-recovery-test.mjs` exercises SQLite reopen, idle/active reconstruction,
 lost and retained continuations, UTC advancement, internal age/alarm observations,
 HTTP/RPC client controls, stale operation IDs, accounting and separated live gates.
@@ -331,6 +419,26 @@ checks the healthy baseline, observes the exact intended broken outcome, then
 requires the safety assertion to fail. Import/setup errors are not kills. Existing
 C1C/C1B/C1A suites and the local workerd test remain part of backend regression.
 
-Next: `R3C2_C1D_RECOVERY_AND_LIVE_PLAN_INDEPENDENT_REVIEW`. No push/merge/deploy in
-C1D. The immediate handoff is INDEPENDENT_REVIEW_REQUIRED; the persistent external
-authority boundary remains LIVE_RESOURCE_AND_SECRET_GATE.
+C1E evidence: `prelive-one-shot-test.mjs` has 44 functional cases plus 28 viable
+mutation gates run under both LF and CRLF (56 executions). The non-atomic mutant
+actually starts two mocked calls: an adversarial scheduler delays the second
+durability barrier until the first call drains, so C1C concurrency does not mask
+duplicate consumption. This scheduler is not an authorization lock. Healthy
+code rejects the second claim before that barrier. Timeout-rearm isolation uses
+an explicitly test-only ownership-clear fixture to expose the illegal second
+fetch; the separate lost-continuation test preserves and verifies the real fence.
+The prompt mutation observes arbitrary purpose crossing the internal dispatch
+boundary even though the unchanged C1A/C1C validators subsequently deny it.
+Hostile newer-generation SQL fixtures are not approved rearm/recovery procedures.
+No syntax, import, replacement or setup failure counts as a mutation kill.
+
+Local workerd additionally verifies public HTTP/RPC denial, absence of operator
+RPC methods, and one private synthetic operator attempt followed by denial. Its
+test-only transport/verifier is not included in either deployment configuration.
+C1C/C1D public success regression fixtures explicitly model a future server-
+authorized public phase; they do not change committed runtime defaults.
+
+Next: `R3C2_C1E_EXCLUSIVE_ONE_SHOT_OPERATOR_DISPATCH_INDEPENDENT_REVIEW`.
+The immediate handoff is INDEPENDENT_REVIEW_REQUIRED. No push/merge/deploy is
+performed by this implementation task; live operator transport/authentication,
+resources, secrets, positive budget and paid attempts remain separate owner gates.

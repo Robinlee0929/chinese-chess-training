@@ -7,6 +7,11 @@ export const RATE_LIMITER_IS_GLOBAL_BUDGET_AUTHORITY = false;
 export const RATE_LIMITER_IS_GLOBAL_CONCURRENCY_AUTHORITY = false;
 const DEFAULT_ENABLED = false;
 
+// Independent future-phase authority. Never derived from a request or one-shot state.
+export function publicEnabled(env) {
+  return env?.COACH_REAL_PROVIDER_PUBLIC_ENABLED === 'true';
+}
+
 export function enabled(env) {
   return env?.COACH_REAL_PROVIDER_ENABLED === 'true'
     || (env?.COACH_REAL_PROVIDER_ENABLED === undefined && DEFAULT_ENABLED);
