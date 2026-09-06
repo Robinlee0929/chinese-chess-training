@@ -5,10 +5,9 @@ const INPUT = Object.freeze({ sourceRuleId: 'check-difference', locale: 'zh-Hant
   style: 'child-neutral-teacher-v1', modelProfile: 'economy', purpose: purposeFor('check-difference') });
 const denied = () => Object.freeze({ status: 'denied' });
 
-// INTERNAL composition only, inside the existing global coordinator. Neither this
-// factory nor its methods are wired to HTTP or DO RPC. Dependencies are trusted
-// server composition, never request fields. A live identity verifier/transport is
-// deliberately absent; deterministic approving authorities exist ONLY in tests.
+// INTERNAL composition only, inside the existing global coordinator. C1F wraps
+// this factory with platform Access verification; dependencies remain trusted
+// server composition, never request fields. No direct arm/dispatch RPC is exposed.
 export function createOperatorDispatch(storage, { authorize, execute } = {}) {
   const sql = storage.sql;
   storage.transactionSync(() => {

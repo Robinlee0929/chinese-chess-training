@@ -438,7 +438,13 @@ test-only transport/verifier is not included in either deployment configuration.
 C1C/C1D public success regression fixtures explicitly model a future server-
 authorized public phase; they do not change committed runtime defaults.
 
-Next: `R3C2_C1E_EXCLUSIVE_ONE_SHOT_OPERATOR_DISPATCH_INDEPENDENT_REVIEW`.
+The preceding transport-absence and handoff statements describe the C1E baseline.
+C1F now supplies an undeployed Access transport; `PRELIVE_ACCESS_OPERATOR.md`
+supersedes the live authentication sequencing above. Access must be verified
+before secrets, nonzero budget or provider enable, and disabled-prerequisite
+dispatch still irreversibly consumes the one-shot. No recovery contract changes.
+
+Next: `R3C2_C1F_LIVE_OPERATOR_TRANSPORT_INDEPENDENT_REVIEW`.
 The immediate handoff is INDEPENDENT_REVIEW_REQUIRED. No push/merge/deploy is
 performed by this implementation task; live operator transport/authentication,
 resources, secrets, positive budget and paid attempts remain separate owner gates.

@@ -106,6 +106,6 @@ committed config, independent of real-provider enable/secret/rate/budget, and ma
 only be enabled in a separately reviewed later phase. Client inputs cannot set it.
 Fake staging and browser request/response schemas are unchanged. The first future
 paid attempt must use the separate internal persistent one-shot operator contract;
-no operator HTTP endpoint or live authentication/transport is implemented here.
+the C1F undeployed Access transport is documented in `PRELIVE_ACCESS_OPERATOR.md`.
 See the C1E section of `PRELIVE_RECOVERY_AND_LIVE_PLAN.md` for the full owner-gated
 sequence and terminal CONSUMED semantics. All current provider tests are mocked.

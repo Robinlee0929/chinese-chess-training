@@ -57,6 +57,6 @@ export function createCoordinator(storage, env, { fetch: fetchImpl, clock = SYST
         return result.value;
       } catch { throw unavailable(); }
   };
-  // Internal core only. The Worker exports no operator RPC method or transport.
+  // Internal core. C1F transport composes request-scoped authority separately.
   return Object.freeze({ execute, operator: createOperatorDispatch(storage, { authorize: operatorAuthority, execute }) });
 }

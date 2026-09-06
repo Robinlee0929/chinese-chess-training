@@ -1,4 +1,5 @@
 import { createCoachHandler } from '../src/index.js';
+import { accessOperatorResponse } from './access-operator.js';
 import { parseRequestJSON, validateFraming } from '../src/contract.js';
 import { enabled, publicEnabled, providerSecret, rateLimit, COORDINATOR_NAME, unavailable } from './policy.js';
 
@@ -25,4 +26,5 @@ export function createRealStagingHandler(env, options = {}) {
   return handler;
 }
 
-export default { fetch: (request, env) => createRealStagingHandler(env)(request) };
+export default { fetch: (request, env, ctx) => new URL(request.url).pathname.startsWith('/__operator/')
+  ? accessOperatorResponse(request, env, ctx) : createRealStagingHandler(env)(request) };

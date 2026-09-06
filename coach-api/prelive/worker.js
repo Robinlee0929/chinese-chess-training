@@ -1,5 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import { createCoordinator } from './coordinator.js';
+import { executeAccessOperator } from './access-operator.js';
 import { publicEnabled, unavailable } from './policy.js';
 export { default } from './outer.js';
 
@@ -23,5 +24,10 @@ export class CoachRealProviderCoordinator extends DurableObject {
     // RPC object results carry disposal metadata. A bounded flat JSON string keeps
     // that transport metadata out of the exact-key framing contract.
     return JSON.stringify(await this.#coordinator.execute(input));
+  }
+
+  async accessOperator(action, claim) {
+    return JSON.stringify(await executeAccessOperator(this.ctx.storage, this.env,
+      this.#coordinator.execute, action, claim));
   }
 }

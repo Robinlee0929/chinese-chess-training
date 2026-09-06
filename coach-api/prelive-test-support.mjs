@@ -87,7 +87,7 @@ export function harness(implementation = modules, overrides = {}) {
 export async function variant(target, before, after, eol) {
   const loaded = {};
   const urls = {};
-  for (const name of ['policy', 'budget', 'operator-dispatch', 'coordinator', 'outer']) {
+  for (const name of ['policy', 'budget', 'operator-dispatch', 'access-operator', 'coordinator', 'outer']) {
     let source = (await readFile(new URL(`./prelive/${name}.js`, import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
     if (name === target) {
       const replacements = Array.isArray(before) ? before.map((text, i) => [text, after[i]]) : [[before, after]];
