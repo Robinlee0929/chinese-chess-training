@@ -8,6 +8,16 @@
     "COACH_REAL_PROVIDER_ENABLED": "false",
     "COACH_REAL_DAILY_UNITS": "0"
   },
+  "ratelimits": [
+    {
+      "name": "COACH_REAL_RATE_LIMITER",
+      "namespace_id": "41064290422425",
+      "simple": {
+        "limit": 1,
+        "period": 60
+      }
+    }
+  ],
   "durable_objects": {
     "bindings": [{ "name": "COACH_REAL_COORDINATOR", "class_name": "CoachRealProviderCoordinator" }]
   },

@@ -298,7 +298,9 @@ test('C1C committed config resolves isolated disabled Worker with SQLite migrati
   assert.equal(realConfig.name, 'chinese-chess-coach-openai-staging');
   assert.equal(realConfig.main, 'prelive/worker.js');
   assert.deepEqual(realConfig.migrations[0].new_sqlite_classes, ['CoachRealProviderCoordinator']);
-  assert.equal(realConfig.ratelimits, undefined, 'account-wide namespace number deferred to deployment gate');
+  assert.deepEqual(realConfig.ratelimits, [{ name: 'COACH_REAL_RATE_LIMITER',
+    namespace_id: '41064290422425', simple: { limit: 1, period: 60 } }],
+  'owner-approved prelive rate binding; remote activation remains a separate deployment gate');
   const h = harness(modules, realConfig.vars);
   try { assert.notEqual((await h.call()).status, 200); assert.equal(count(h), 0); }
   finally { h.close(); }
