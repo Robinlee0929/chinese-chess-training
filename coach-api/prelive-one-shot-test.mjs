@@ -131,21 +131,22 @@ test('C1E independent concurrent dispatches atomically consume once', async () =
 });
 
 async function failure(m = implementation, kind = 'network') {
-  const h = fixture(m);
+  const h = fixture(m); const pending = deferred();
   try {
-    h.state.fetch = kind === 'timeout' ? () => new Promise(() => {}) : () => { throw Error('PRIVATE'); };
+    h.state.fetch = kind === 'timeout' ? async () => { await pending.promise; return response(); } : () => { throw Error('PRIVATE'); };
     await h.op.arm(); const first = h.op.dispatch(); await settle();
     if (kind === 'timeout') await h.clock.advance(3000);
     await first;
-    // Test-only termination fixture for timeout isolates illegal re-arm from C1D's
-    // independent ownership fence. Production has NO such clearing operation.
+    // Settle the ORIGINAL mocked provider drain before isolating illegal rearm.
+    // Clearing only the owner would now create a correctly fenced orphan.
     if (kind === 'timeout') {
-      h.storage.sql.exec('UPDATE coach_slot SET owner = NULL');
-      h.storage.sql.exec("UPDATE coach_recovery SET state = 'NORMAL', owner = NULL");
+      pending.resolve(); await settle();
+      assert.equal(h.storage.sql.exec('SELECT owner FROM coach_slot').toArray()[0].owner, null);
+      assert.equal(h.storage.sql.exec('SELECT finalized FROM coach_reservations').toArray()[0].finalized, 1);
     }
     h.state.fetch = () => response(); await h.op.dispatch();
     return h.state.calls;
-  } finally { h.close(); }
+  } finally { pending.resolve(); await settle(); h.close(); }
 }
 for (const kind of ['network', 'timeout']) test(`C1E ${kind} never rearms or retries`, async () => {
   assert.equal(await failure(implementation, kind), 1);
@@ -168,7 +169,8 @@ test('C1E lost continuation survives reconstruction consumed and fenced without 
     const first = h.op.dispatch(); await settle(); await h.clock.advance(3000); await first;
     h.restart(); await h.op.arm(); await h.op.dispatch();
     assert.equal(h.state.calls, 1); assert.equal(h.row().state, 'CONSUMED');
-    assert.equal(h.storage.sql.exec('SELECT state FROM coach_recovery').toArray()[0].state, 'RECOVERY_REQUIRED');
+    assert.equal(h.storage.sql.exec('SELECT state FROM coach_recovery').toArray()[0].state, 'ACTIVE_PROVIDER');
+    assert.equal(modules.budget.createDurableBudget(h.storage).inspectRecovery().state, 'RECOVERY_REQUIRED');
     assert.equal(h.storage.sql.exec('SELECT units FROM coach_days').toArray()[0].units, 1);
   } finally { h.close(); }
 });
@@ -240,9 +242,9 @@ async function late(m) {
   } finally { pending.resolve(); h.close(); }
 }
 const gates = [
-  ['default armed', opTarget, "VALUES (?, 'DISARMED')", "VALUES (?, 'ARMED')", async m => { const h = fixture(m); try { await h.op.dispatch(); return h.state.calls; } finally { h.close(); } }, 0, 1],
+  ['default armed', opTarget, 'const sql = storage.sql;', `const sql = storage.sql; sql.exec("UPDATE coach_one_shot SET state = 'ARMED' WHERE state = 'DISARMED'");`, async m => { const h = fixture(m); try { await h.op.dispatch(); return h.state.calls; } finally { h.close(); } }, 0, 1],
   ['client arms', opTarget, "args.length === 0 && typeof authorize", "typeof authorize", async m => { const h = fixture(m); try { await h.op.arm({ operator: true }); return h.row().state; } finally { h.close(); } }, 'DISARMED', 'ARMED'],
-  ['client identity', opTarget, ['const DISPATCH_ID =', "args.length === 0 && typeof authorize", 'if (!await consume()) return denied();'], ['let DISPATCH_ID =', 'typeof authorize', "DISPATCH_ID = args[0]?.dispatchId ?? DISPATCH_ID; if (!await consume()) return denied();"], async m => { const h = fixture(m); try { h.storage.sql.exec("INSERT INTO coach_one_shot (id, state) VALUES ('client', 'ARMED')"); await h.op.dispatch({ dispatchId: 'client' }); return h.storage.sql.exec("SELECT state FROM coach_one_shot WHERE id = 'client'").toArray()[0].state; } finally { h.close(); } }, 'ARMED', 'CONSUMED'],
+  ['client identity', opTarget, ['const DISPATCH_ID =', "args.length === 0 && typeof authorize", 'if (!await consume()) return denied();', ' && storageValid(storage)'], ['let DISPATCH_ID =', 'typeof authorize', "DISPATCH_ID = args[0]?.dispatchId ?? DISPATCH_ID; if (!await consume()) return denied();", ''], async m => { const h = fixture(m); try { h.storage.sql.exec("INSERT INTO coach_one_shot (id, state) VALUES ('client', 'ARMED')"); await h.op.dispatch({ dispatchId: 'client' }); return h.storage.sql.exec("SELECT state FROM coach_one_shot WHERE id = 'client'").toArray()[0].state; } finally { h.close(); } }, 'ARMED', 'CONSUMED'],
   ['client quality', opTarget, ["args.length === 0 && typeof authorize", 'await execute(INPUT);'], ['typeof authorize', 'await execute({ ...INPUT, modelProfile: args[0]?.modelProfile ?? INPUT.modelProfile });'], async m => { const h = fixture(m); try { await h.op.arm(); await h.op.dispatch({ modelProfile: 'quality' }); return h.state.requests[0]?.model ?? null; } finally { h.close(); } }, null, 'gpt-5.6-sol'],
   ['operator prompt', opTarget, ["args.length === 0 && typeof authorize", 'await execute(INPUT);'], ['typeof authorize', 'await execute({ ...INPUT, purpose: args[0]?.prompt ?? INPUT.purpose });'], async m => { const h = fixture(m); let observed = null; try { const op = m['operator-dispatch'].createOperatorDispatch(h.storage, { authorize: approve, execute: value => { observed = value.purpose; return h.core.execute(value); } }); await op.arm(); await op.dispatch({ prompt: 'arbitrary' }); return observed; } finally { h.close(); } }, null, 'arbitrary'],
   ['before consumption', opTarget, 'if (!await consume()) return denied();', 'await execute(INPUT); if (!await consume()) return denied();', async m => { const h = fixture(m); let early = 0; try { h.state.fetch = () => { if (h.row().state !== 'CONSUMED') early++; return response(); }; await h.op.arm(); await h.op.dispatch(); return early; } finally { h.close(); } }, 0, 1],
@@ -254,9 +256,12 @@ const gates = [
   ['success promotion', 'coordinator', 'authorize: operatorAuthority, execute', "authorize: operatorAuthority, execute: async value => { const result = await execute(value); env.COACH_REAL_PROVIDER_PUBLIC_ENABLED = 'true'; return result; }", async m => { const h = fixture(m); try { await h.op.arm(); await h.op.dispatch(); return h.env.COACH_REAL_PROVIDER_PUBLIC_ENABLED ?? null; } finally { h.close(); } }, null, 'true'],
   ['stale completion rearms', opTarget, "return Object.freeze({ status: 'completed', consumed: true });", `sql.exec("UPDATE coach_one_shot SET state = 'ARMED'"); return Object.freeze({ status: 'completed', consumed: true });`, late, 'DISARMED', 'ARMED'],
   ['secret bypass', 'policy', 'const key = env?.OPENAI_API_KEY;', "const key = env?.OPENAI_API_KEY ?? 'MUTANT_SYNTHETIC';", m => dispatchCount(m, { OPENAI_API_KEY: undefined }), 0, 1],
-  ['budget bypass', 'budget', 'if (used + units > limit) return null;', 'if (false) return null;', m => dispatchCount(m, {}, h => h.storage.sql.exec("INSERT INTO coach_days (day, units) VALUES ('2026-09-06', 20)")), 0, 1],
+  ['budget bypass', 'budget', 'if (used + units > limit) return null;', 'if (false) return null;', m => dispatchCount(m, {}, h => {
+    h.storage.sql.exec("INSERT INTO coach_days (day, units) VALUES ('2026-09-06', 20)");
+    h.storage.sql.exec("INSERT INTO coach_reservations (day, units, state, terminated, finalized) VALUES ('2026-09-06', 20, 'consumed', 1, 1)");
+  }), 0, 1],
   ['rate bypass', 'policy', "if (typeof env?.COACH_REAL_RATE_LIMITER?.limit !== 'function') return 'unavailable';", "if (typeof env?.COACH_REAL_RATE_LIMITER?.limit !== 'function') return 'allowed';", m => dispatchCount(m, { COACH_REAL_RATE_LIMITER: undefined }), 0, 1],
-  ['recovery bypass', 'budget', "if (sql.exec('SELECT state FROM coach_recovery WHERE singleton = 1').toArray()[0].state === 'RECOVERY_REQUIRED') return false;", 'if (false) return false;', m => dispatchCount(m, {}, h => h.storage.sql.exec("UPDATE coach_recovery SET state = 'RECOVERY_REQUIRED'")), 0, 1],
+  ['recovery bypass', 'budget', "if (this.inspectRecovery().state === 'RECOVERY_REQUIRED') return false;", 'if (false) return false;', m => dispatchCount(m, {}, h => h.storage.sql.exec("UPDATE coach_recovery SET state = 'RECOVERY_REQUIRED'")), 0, 1],
   ['global coordinator bypass', 'coordinator', 'authorize: operatorAuthority, execute', "authorize: operatorAuthority, execute: async () => fetchImpl('https://api.openai.com/v1/responses', { body: '{}' })", m => dispatchCount(m, { COACH_REAL_DAILY_UNITS: '0' }), 0, 1],
   ['public API invokes one-shot', 'outer', 'return handler;', 'return async request => { await env.TEST_ONLY_OPERATOR.arm(); await env.TEST_ONLY_OPERATOR.dispatch(); return handler(request); };', m => publicOperator(m), 0, 1],
   ['static public admin header', 'outer', 'return handler;', "return async request => { if (request.headers.get('X-Admin-Key') === 'synthetic') { await env.TEST_ONLY_OPERATOR.arm(); await env.TEST_ONLY_OPERATOR.dispatch(); } return handler(request); };", m => publicOperator(m, true), 0, 1],

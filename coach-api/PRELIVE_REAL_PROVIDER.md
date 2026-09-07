@@ -1,5 +1,13 @@
 # C1C isolated real-provider preparation
 
+C1J prelive supersedes the old constructor initialization/recovery-write behavior:
+ordinary reconstruction and internal `forensicSnapshot()` preserve application
+rows. Explicit server bootstrap is separate and has no deployed RPC/HTTP entry.
+See the C1J section of the recovery plan for bounded raw/derived evidence, local
+proofs and future rollout gates. This does not authorize live invocation or deploy.
+The existing live incident is still under containment; this file's original C1C
+deployment descriptions below are historical, not current live-state evidence.
+
 C1D adds a persistent recovery-required marker and an internal read-only
 inspection helper. See [recovery contract and future live-resource plan](PRELIVE_RECOVERY_AND_LIVE_PLAN.md)
 for the operator-only fail-closed procedure, generation checks, evidence limits,

@@ -199,7 +199,7 @@ const mutations = [
   ['budget bypass', 'policy', 'if (limit === 0) return null;', 'if (limit === 0) return 20;', m => prerequisite(m, gates[2][1])],
   ['rate bypass', 'policy', "result?.success === true ? 'allowed'", "true ? 'allowed'", m => prerequisite(m, gates[3][1])],
   ['enable bypass', 'policy', "env?.COACH_REAL_PROVIDER_ENABLED === 'true'", "true", m => prerequisite(m, gates[0][1])],
-  ['recovery bypass', 'budget', "if (sql.exec('SELECT state FROM coach_recovery WHERE singleton = 1').toArray()[0].state === 'RECOVERY_REQUIRED') return false;", '', m => prerequisite(m, {}, true)],
+  ['recovery bypass', 'budget', "if (this.inspectRecovery().state === 'RECOVERY_REQUIRED') return false;", '', m => prerequisite(m, {}, true)],
   ['replay', 'operator-dispatch', "state = 'DISARMED' RETURNING id", "state IN ('DISARMED', 'CONSUMED') RETURNING id", endToEnd],
   ...[['modelProfile', 'quality'], ['prompt', 'private prompt']].map(([field, value]) => [
     `${field} forwarding`, 'access-operator', ['request.body !== null', 'email: identity?.email', 'operatorClaimAllowed(env, claim), execute,'],

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { readFile } from 'node:fs/promises';
+import { provisionCoordinator, INITIAL_PROVISIONING } from './prelive/provision.js';
 import * as outer from './prelive/outer.js';
 import * as coordinator from './prelive/coordinator.js';
 import * as budget from './prelive/budget.js';
@@ -22,7 +23,7 @@ export function response(text = JSON.stringify(framing), status = 200) {
 }
 
 // Real SQLite queries/transactions; state never lives in a JS budget or concurrency counter.
-export function sqliteStorage(db = new DatabaseSync(':memory:')) {
+export function sqliteStorage(db = new DatabaseSync(':memory:'), { provision = true } = {}) {
   const storage = {
     db,
     sql: { exec(query, ...args) {
@@ -37,6 +38,8 @@ export function sqliteStorage(db = new DatabaseSync(':memory:')) {
     },
     sync: async () => {},
   };
+  // Explicit TEST fixture bootstrap only; never repair an existing/partial database.
+  if (provision && !db.prepare("SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' LIMIT 1").get()) provisionCoordinator(storage, INITIAL_PROVISIONING);
   return storage;
 }
 
@@ -87,7 +90,7 @@ export function harness(implementation = modules, overrides = {}) {
 export async function variant(target, before, after, eol) {
   const loaded = {};
   const urls = {};
-  for (const name of ['policy', 'budget', 'operator-dispatch', 'access-operator', 'coordinator', 'outer']) {
+  for (const name of ['policy', 'forensics', 'budget', 'operator-dispatch', 'access-operator', 'coordinator', 'outer']) {
     let source = (await readFile(new URL(`./prelive/${name}.js`, import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
     if (name === target) {
       const replacements = Array.isArray(before) ? before.map((text, i) => [text, after[i]]) : [[before, after]];

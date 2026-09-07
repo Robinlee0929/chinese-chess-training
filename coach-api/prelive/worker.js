@@ -2,6 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { createCoordinator } from './coordinator.js';
 import { executeAccessOperator } from './access-operator.js';
 import { publicEnabled, unavailable } from './policy.js';
+import { forensicSnapshot } from './forensics.js';
 export { default } from './outer.js';
 
 export class CoachRealProviderCoordinator extends DurableObject {
@@ -14,8 +15,13 @@ export class CoachRealProviderCoordinator extends DurableObject {
         // C1A's non-200 rejection/body-cancellation path without following it.
         fetch: (url, options) => fetch(url, { ...options, redirect: 'manual' }),
       });
-      await ctx.storage.sync();
     });
+  }
+
+  // Internal binding only. No HTTP forwarding, identity selector or mutation args.
+  async forensicSnapshot(...args) {
+    if (args.length) throw unavailable();
+    return JSON.stringify(forensicSnapshot(this.ctx.storage));
   }
 
   async execute(input) {

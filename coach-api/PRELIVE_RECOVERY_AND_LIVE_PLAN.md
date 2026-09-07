@@ -37,8 +37,9 @@ and recovery review; v1 does not support it.
 | RECOVERY_REQUIRED, owner=id | Reconstruction observed occupied ownership; no matching continuation can be assumed | Denied |
 
 `coach_recovery` persists the current state and affected operation ID.
-Construction marks an existing occupied slot RECOVERY_REQUIRED without clearing
-it or changing usage. Acquisition and ACTIVE_PROVIDER marking share one SQL
+Before C1J, construction marked an occupied slot RECOVERY_REQUIRED. C1J leaves
+that raw row untouched and derives RECOVERY_REQUIRED from unresolved ownership
+or inconsistent/incomplete evidence. Acquisition and ACTIVE_PROVIDER marking share one SQL
 transaction. An ordinary denied request may temporarily reserve its own units;
 the existing not-started settlement returns those units, never the owner's units.
 The recovery gate independently denies acquisition, even if the slot and incident
@@ -63,7 +64,8 @@ reservation. Original-day units remain charged on started failure or lost work.
 
 `inspectRecovery()` is a read-only internal budget helper, available to local
 tests, not a DO RPC method or HTTP route. Arguments convey no authority. The
-coordinator's only RPC operation remains `execute`. Query/body recovery fields
+coordinator has `execute`, C1F `accessOperator`, and C1J `forensicSnapshot` RPC methods.
+There is no HTTP route forwarding the forensic method. Query/body recovery fields
 are rejected; arbitrary headers neither change state nor enable execution.
 
 RECOVERY_REVIEWED and RECOVERY_AUTHORIZED are **operator incident-record stages**,
@@ -82,13 +84,12 @@ completion. Browser errors intentionally do not distinguish these conditions.
 The operator uses a restricted state snapshot, never prompts, framing, board,
 GameRecord, raw provider responses, API keys, or application requestIds.
 
-For a future deployed SQLite object, [Data Studio](https://developers.cloudflare.com/durable-objects/observability/data-studio/)
-can inspect SQL through the dashboard: Durable Objects → the verified namespace
-→ Data Studio → the fixed coordinator name. It requires platform administration
-permission and sends billed requests to the deployed object; do not use it during
-this prelive task. Use only SELECT, with edit/delete capabilities left unused.
-Queries run separately, so contain traffic first and repeat snapshots to identify
-changes rather than claiming a multi-query atomic snapshot.
+The earlier Data Studio procedure is NOT authorized for the current incident.
+[Data Studio](https://developers.cloudflare.com/durable-objects/observability/data-studio/)
+sends requests to the deployed object and emits audit records. SELECT alone does
+not prevent the currently deployed pre-C1J constructor from changing recovery
+evidence. Do not Explore/query, use RPC, or deploy under C1J prelive authority.
+The following queries are schema documentation, NOT executable live instructions.
 
 ```sql
 SELECT state, owner FROM coach_recovery WHERE singleton = 1;
@@ -100,9 +101,142 @@ SELECT day, units FROM coach_days ORDER BY day;
 
 The operation ID plus namespace identity is the incident correlation identifier;
 store it only in the restricted operator record. No new content logging is added.
-Before first live enablement, verify this inspection path and operator permissions
-on the disabled deployment. If unavailable, remain disabled; do not add a public
-admin endpoint as a workaround.
+Any future inspection needs separate implementation review, rollout review and
+explicit owner authority. Remain disabled; no public admin workaround.
+
+## C1J evidence-preserving reconstruction (local/prelive only)
+
+`prelive/provision.js` is an explicit bootstrap module, NOT imported by the Worker.
+It requires the module-owned `INITIAL_PROVISIONING` capability and completely
+empty application storage. It creates the original five-table schema atomically;
+existing, partial or inconsistent databases are rejected, never repaired. There
+is no initialization RPC, HTTP route, env flag or client-selectable migration.
+Local fixture composition explicitly provisions before constructing the core.
+A future fresh-object bootstrap caller requires separate server-composition
+review and live authority. The incident object must NEVER take that path.
+
+Ordinary construction creates only in-memory helpers and performs SELECT reads.
+No schema initialization, singleton insertion, recovery rewrite, sync of new
+writes, alarm, sequence change or ledger is performed. A constructor read failure
+leaves budget admission unavailable for that instance. Missing/invalid schema,
+rows or enums fail closed. A missing row remains missing in the snapshot.
+
+`forensicSnapshot()` is an argument-free internal binding RPC returning bounded
+JSON. It reads only storage, never env, secrets, Access claims or provider content.
+No deployed HTTP route forwards to it; binding possession is a trusted server
+capability, not browser identity. Do not grant new callers this binding without
+review. No runtime initialization/clear/reset/rearm interface is added.
+
+The snapshot separates `raw` rows from `derived` decisions. Existing ACTIVE_PROVIDER,
+NORMAL, RECOVERY_REQUIRED or mismatched recovery/slot evidence is not normalized.
+An occupied slot is conservatively recovery-required to an external observer.
+The original trusted live continuation can still settle only its own generation;
+its in-memory locally-owned marker is not persisted or used as termination proof.
+Restart, age, alarm, deployment and abort never clear/refund unresolved work.
+
+C1J orphan remediation makes ownership consistency bidirectional: an owner must
+identify an unfinalized reservation, and every unfinalized `dispatching` or
+`started` reservation must match that owner (slot and recovery owners must also
+agree). Dispatch intent is potentially active work, not proof of cancellation.
+`terminated=1` does not waive this relationship before finalization: existing C1D
+termination retains ownership until the trusted finalize transaction converts the
+row to `consumed` and clears only its own generation. An ownerless terminated
+`started` row is SQL-representable, but is not ordinary finalized history.
+`reserved` before acquisition and valid `released`/`consumed` finalized history
+do not acquire this new ownership requirement. Matching active ownership remains
+recognized, with C1D's existing reconstruction fence and original-continuation
+settlement unchanged. No evidence is repaired, normalized or refunded by this
+derived check. Truncated evidence remains recovery-required and admission-denied,
+even if an orphan lies beyond the 16 displayed reservations. A denied operational
+request may still reserve and settle its own new generation; that is distinct
+from zero-write construction/snapshot and never changes the old incident rows.
+
+Budget output is capped at 8 rows, reservations at 16. Completeness counts are
+bounded observations (up to 9/17), NOT total counts when truncated. Truncation sets
+accountingConsistency=UNKNOWN (or INVALID for observed inconsistency), never
+CONSISTENT. Admission conservatively fails closed on incomplete evidence; expanding
+this prelive envelope requires review, not client pagination or hidden repair.
+CONSISTENT describes represented ledger arithmetic only, not proof of upstream
+delivery, termination or billing. `attempted`, `providerFetchStarted` and
+`upstreamDelivery` remain UNKNOWN; absent transition timestamps/kinds remain
+NOT_AVAILABLE. Illegal values are rendered INVALID, never arbitrary raw strings.
+
+Future forensic RPC still invokes the DO and may construct it, incur billing and
+produce Cloudflare audit/runtime telemetry. The local guarantee is ZERO APPLICATION
+persistent writes, not zero platform side effects. Current live incident rows and
+C1H unknowns remain untouched. No claim of live post-remediation preservation is made.
+
+Before any separately authorized rollout: retain class/namespace/binding/logical
+identity/migration lineage; review old/new-version overlap and potential automatic
+restart; keep provider=false, budget=0 and public=false; never deploy the test-only
+bootstrap/seed/inspection transports. Prove the first new constructor plus snapshot
+against preexisting SQLite fixtures locally before independent review. No object
+delete/recreate, database reset, PITR restore, generation reset or force-clear is
+part of this implementation. Do not backfill an incident ledger. D is deferred.
+
+`prelive-forensics-test.mjs` measures SQL write attempts as well as complete
+before/after schema/row equality. Its LF/CRLF mutants must import and exhibit the
+intended broken behavior before the invariant assertion kills them. The local
+workerd test persists seeded legacy-shape rows, disposes runtime, reopens using
+the production constructor and exercises the production forensic RPC with SQL,
+storage-write, env-read and outbound traps. All seed/transport hooks are test-only.
+
+### C1J native write-detector remediation (test-only)
+
+The native workerd proof does NOT infer read-only behavior from a SELECT prefix.
+`SELECT 1; UPDATE x SET value=value` executes one native write while preserving
+the final values; the old prefix trap incorrectly reported zero attempts. The
+focused detector suite retains this exact legacy negative-control reproduction.
+
+Mechanisms were evaluated in order on pinned Miniflare 5.20260903.0-alpha /
+workerd 1.20260903.1. The exposed SQL API has no mutation-authorizer/read-only
+execution option; `PRAGMA query_only` is rejected with SQLITE_AUTH. Native
+`rowsWritten` detects the same-value UPDATE and ordinary DDL, but reports zero
+for no-row UPDATE, already-existing CREATE IF NOT EXISTS, and writable
+`defer_foreign_keys`/`foreign_keys` PRAGMAs. Thus native accounting plus final
+row equality alone cannot prove the absence of mutation ATTEMPTS.
+
+The test-only `prelive-sql-write-detector.mjs` combines a statement-aware lexer
+with native execution accounting. It scans the whole SQL program, separating
+semicolons only outside strings, quoted identifiers and comments, while retaining
+normalized quoted values so statement class cannot depend on identifier quoting. Every statement
+must belong to the narrowly supported SELECT/WITH-read language, with no unquoted
+mutation operations, including a CTE's main UPDATE/INSERT/DELETE/REPLACE. Pure
+SELECT sequences, bound values, quoted keywords, comments, CASE and the scalar
+replace() function retain their read semantics. Unknown statement families fail
+closed rather than being assumed safe. This is not a general SQLite SQL parser.
+
+All standalone PRAGMAs, including nominally read-only forms, transaction/control
+commands, schema operations and extension/file/evaluation operations are denied.
+Quoted and unquoted table-valued PRAGMA relations are denied by default; the sole
+allowlisted relation is the repository-required, read-only pragma_table_info().
+The native suite audits quoted/unquoted optimize, writable PRAGMAs,
+ANALYZE/REINDEX, and fail-closed ATTACH/DETACH/VACUUM classification. Pinned
+workerd rejects query_only, writable_schema, user_version, database_list and
+ATTACH with SQLITE_AUTH, and VACUUM within its transaction. No blanket claim
+about future SQLite extensions or new application SQL is made: those require
+review and renewed calibration. Native CTE UPDATE and REPLACE INTO are exercised;
+the pinned grammar rejects the probed REPLACE form without INTO.
+
+The wrapper counts and rejects non-allowlisted attempts BEFORE execution, even
+when production catches the error. For admitted SQL it consumes the native
+cursor and independently requires rowsWritten=0. It preserves the scoped
+toArray() interface; it does not add production test hooks or modify production
+SQL. Non-SQL storage mutation traps remain installed before the constructor.
+Complete before/after schema and row equality (including sequence state) remains
+mandatory alongside zero attempts. A historical quoted `PRAGMA "optimize"`
+negative control produces `sqlite_stat1` while reporting zero native rows written;
+the full schema/table snapshot makes that internal mutation visible. Local
+persisted-reopen constructor and RPC snapshot injections of both quoted optimize
+and SELECT followed by same-value UPDATE, in LF and CRLF,
+must fail the zero-write assertion for the intended counted attempt, not setup,
+syntax, import or row-difference failures. Eighteen detector mutation gates exercise
+actual native forwarding/rejection; no-op SQL isolates attempt classification
+from the independent native-write backstop. Prefix/same-value bypass mutants
+explicitly defeat both controls to demonstrate their intended broken behavior.
+
+These guarantees concern application writes in the local tested execution paths;
+they do not prove live rollout safety or authorize any incident invocation.
 
 ### Containment — always first
 
@@ -231,7 +365,8 @@ uses economy only unless the owner explicitly changes that choice.
    command and operator timing alone are insufficient on a public endpoint.
 7. Verify disabled/no-secret, missing bindings, malformed input and generic errors
    through that controlled path, with zero provider attempts. Inspect the SQL
-   initialization through the approved operator method. Do not turn on the
+   initialization only through a separately reviewed server bootstrap composition;
+   operator ARM/DISPATCH and forensic reads cannot initialize storage. Do not turn on the
    provider to test these resource/inspection steps.
 8. With gate B, provision OPENAI_API_KEY through the Cloudflare Secret channel.
    The operator supplies it without chat, command-line literal, Git, file logging,

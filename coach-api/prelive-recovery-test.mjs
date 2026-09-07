@@ -8,7 +8,7 @@ import { harness, modules, sqliteStorage, deferred, flush, response, request, in
 
 const settle = async () => { await flush(); await new Promise((resolve) => setImmediate(resolve)); };
 const name = modules.policy.COORDINATOR_NAME;
-const recovery = (h) => h.rows('coach_recovery')[0];
+const recovery = (h) => modules.budget.createDurableBudget(h.instance(name).storage).inspectRecovery();
 
 async function reconstructed(m = modules, observation = {}) {
   const h = harness(m); const pending = deferred();
@@ -156,16 +156,18 @@ const clear = "sql.exec('UPDATE coach_slot SET owner = NULL WHERE singleton = 1'
 const definitions = [
   { name: 'RESTART_CLEARS_OWNER', target: 'budget',
     before: '  const row = (id) =>', after: `  ${clear}\n  const row = (id) =>`,
-    probe: async (m) => (await reconstructed(m)).calls, expected: 1, broken: 2 },
+    // The orphan fence now independently prevents a second fetch after clearing.
+    // Observe the intended destructive raw write before the original drain ends.
+    probe: async (m) => (await reconstructed(m)).owner, expected: 1, broken: null },
   // There is no runtime alarm/timer. These viable mutants turn the local read-only
-  // inspector into unsafe age/alarm-triggered administration; the live SQL fence
-  // and subsequent provider calls, not a source-string check, kill them.
+  // inspector into unsafe age/alarm-triggered administration; observed raw SQL
+  // ownership changes, not a source-string check, kill them.
   { name: 'AGE_OBSERVATION_CLEARS_OWNER', target: 'budget', before: 'inspectRecovery() {',
     after: `inspectRecovery(observation = {}) { if (observation.ageMs > 3000) { ${clear} }`,
-    probe: async (m) => (await reconstructed(m, { ageMs: 864000000 })).calls, expected: 1, broken: 2 },
+    probe: async (m) => (await reconstructed(m, { ageMs: 864000000 })).owner, expected: 1, broken: null },
   { name: 'ALARM_OBSERVATION_CLEARS_OWNER', target: 'budget', before: 'inspectRecovery() {',
     after: `inspectRecovery(observation = {}) { if (observation.alarm === true) { ${clear} }`,
-    probe: async (m) => (await reconstructed(m, { alarm: true })).calls, expected: 1, broken: 2 },
+    probe: async (m) => (await reconstructed(m, { alarm: true })).owner, expected: 1, broken: null },
   { name: 'CLIENT_RECOVERY_ROUTE', target: 'outer', before: 'return handler;',
     after: "return (request) => { if (new URL(request.url).pathname === '/api/recover') { env.RECOVERY_ADMIN(); return new Response(null, { status: 204 }); } return handler(request); };",
     probe: async (m) => (await clientRecovery(m)).invoked, expected: 0, broken: 1 },
