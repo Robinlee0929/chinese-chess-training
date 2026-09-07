@@ -1,6 +1,6 @@
 import {
   bootstrapReviewCoachStaging,
-} from '../review-coach-staging-bootstrap.js?v=88be8103f4';
+} from '../review-coach-staging-bootstrap.js?v=e6fa54af94';
 
 export const STAGING_BROWSER_API_ORIGIN =
   'https://chinese-chess-coach-fake-staging.robinlee700929.workers.dev';

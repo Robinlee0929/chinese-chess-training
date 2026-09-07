@@ -6,12 +6,12 @@ import {
   inCheck,
   name,
   repetitionVerdict,
-} from './game.js?v=7ac7301751';
+} from './game.js?v=e6fa54af94';
 import {
   createGameAnalysis,
   createGameAnalysisFromPosition,
   applyGameAnalysisMove,
-} from './game-analysis.js?v=7ac7301751';
+} from './game-analysis.js?v=e6fa54af94';
 
 export const GAME_REVIEW_EVIDENCE_KIND = 'review-move-comparison';
 export const GAME_REVIEW_EVIDENCE_CANONICAL = 'CANONICAL_FACT';
@@ -29,7 +29,15 @@ export function createGameReviewEvidence(review, r3aState) {
     if (!eligibleIdentity(review, r3aState)) return null;
     const selectedPly = review.selectedPly;
     const playedMove = review.record.moves[selectedPly];
-    const anchor = createGameAnalysis(review.record, selectedPly);
+    const anchor = review.sourceKind === 'live-teaching'
+      ? createGameAnalysisFromPosition({
+        sourceRecordId: review.record.id,
+        sourcePly: selectedPly,
+        board: review.snapshot.board,
+        sideToMove: review.snapshot.sideToMove,
+        repetitionHistory: review.snapshot.repetitionHistory,
+      })
+      : createGameAnalysis(review.record, selectedPly);
     if (!sameBoard(anchor.anchorBoard, review.snapshot.board)
       || anchor.anchorSideToMove !== review.snapshot.sideToMove
       || !sameRepetitionHistory(anchor.anchorRepetitionHistory, review.snapshot.repetitionHistory)) {

@@ -3,10 +3,11 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
 import { RED, BLACK, initialBoard } from './game.js';
-import { createGameRecord, replayGameRecord } from './game-record.js';
+import { createGameRecord, replayGameRecord, createGameTimeline } from './game-record.js';
 import { createGameRecordStore } from './game-record-store.js';
 import {
   createGameReview,
+  createLiveGameReview,
   firstGameReviewPly,
   previousGameReviewPly,
   nextGameReviewPly,
@@ -561,7 +562,8 @@ function harness({
     'renderGameReviewTeaching', 'renderGameReviewEvidence', 'renderGameReviewAi',
     'handleGameReviewAiResponse', 'requestGameReviewAiCandidate',
     'pauseLiveGameForGameRecords', 'restoreLiveGamePresentation',
-    'enterGameRecordLibrary', 'showGameRecordLibrary', 'openGameReview',
+    'enterGameRecordLibrary', 'showGameRecordLibrary', 'openPreparedGameReview', 'openGameReview',
+    'openGameTeachingReviewHandoff',
     'openLastCompletedGameReview', 'openStoredGameReview', 'navigateGameReview',
     'deleteGameRecordFromLibrary', 'exitGameReview', 'exitGameRecordFlow',
     'enterGameAnalysis', 'returnToGameReview',
@@ -613,8 +615,8 @@ function harness({
   if (teachingMutation === 'direct-rule') {
     const index = names.indexOf('renderGameReviewTeaching');
     mainFunctions[index] = mainFunctions[index].replace(
-      '  const [message] = deriveGameReviewTeaching(evidence);',
-      '  legalMoves(gameReviewSession.snapshot.board, 0, 0);\n  const [message] = deriveGameReviewTeaching(evidence);',
+      '  const [derivedMessage] = acceptedMessage === undefined ? deriveGameReviewTeaching(evidence) : [];',
+      '  legalMoves(gameReviewSession.snapshot.board, 0, 0);\n  const [derivedMessage] = acceptedMessage === undefined ? deriveGameReviewTeaching(evidence) : [];',
     );
   }
   if (coachMutation) {
@@ -1022,6 +1024,72 @@ test('just-completed in-memory record opens at the final board with zero persist
   ctx.exitGameRecordFlow();
   assert.equal(ctx.appState, 'NORMAL_GAME');
   assertLiveStateUnchanged(ctx, before, 'just-completed review exit');
+});
+
+test('production live Teaching handoff opens the existing Review at anchor and restores the live game unchanged', () => {
+  const completed = record('live-handoff-review');
+  const timeline = createGameTimeline({
+    id: completed.id,
+    createdAt: completed.createdAt,
+    initialPosition: completed.initialPosition,
+    moves: completed.moves,
+    mode: completed.mode,
+  });
+  const anchor = replayGameRecord(completed, 0);
+  const message = Object.freeze({
+    title: '看看這一著',
+    body: '這是已接受的本機教學提示。',
+    ruleId: 'capture-difference',
+    source: Object.freeze({
+      recordId: completed.id,
+      ply: 0,
+      positionKey: anchor.repetitionHistory.at(-1).key,
+      r3aRevision: 4,
+    }),
+  });
+  const review = createLiveGameReview(timeline, {
+    anchorPly: 0,
+    movePly: 1,
+    teachingTarget: {
+      recordId: completed.id,
+      anchorPly: 0,
+      movePly: 1,
+      positionKey: anchor.repetitionHistory.at(-1).key,
+      teachingRevision: 4,
+      ruleId: message.ruleId,
+      move: completed.moves[0],
+    },
+  });
+  const ctx = harness({ realRenderer: true, mode: 'medium', turn: RED, stagingCoach: true });
+  const before = liveSnapshot(ctx);
+  ctx.gameTeachingReviewHandoff = Object.freeze({ kind: 'test-handoff' });
+  ctx.gameTeachingModeState = Object.freeze({ status: 'ready' });
+  ctx.consumeGameLiveReviewHandoff = () => Object.freeze({
+    accepted: true,
+    review,
+    r3aState: createGameReviewAiState(4),
+    evidence: null,
+    message,
+  });
+
+  assert.equal(ctx.openGameTeachingReviewHandoff(ctx.btnReviewGame), true);
+  assert.equal(ctx.appState, 'GAME_REVIEW');
+  assert.equal(ctx.gameReviewSession.sourceKind, 'live-teaching');
+  assert.equal(ctx.gameReviewSession.selectedPly, 0);
+  assert.equal(ctx.gameReviewSession.teachingTarget.movePly, 1);
+  assert.equal(ctx.gameReviewTeachingTitle.textContent, message.title);
+  assert.equal(ctx.gameReviewTeachingBody.textContent, message.body);
+  assert.deepEqual(ctx.renderedBoard, anchor.board);
+  assertLiveStateUnchanged(ctx, before, 'live Teaching Review entry');
+  assert.equal(ctx.storage.writes, 0);
+  assert.equal(ctx.reviewAiRequestCount, 0);
+  assert.equal(ctx.networkRequests, 0);
+  assert.equal(ctx.coachCapabilitiesRequests.length, 0);
+  assert.equal(ctx.coachRequests.length, 0);
+
+  ctx.exitGameRecordFlow();
+  assert.equal(ctx.appState, 'NORMAL_GAME');
+  assertLiveStateUnchanged(ctx, before, 'live Teaching Review exit');
 });
 
 test('production renderGameReview keeps a different live game immutable across every navigation route', () => {
