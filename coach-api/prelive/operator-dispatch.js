@@ -1,4 +1,5 @@
 import { purposeFor } from '../src/rule-policy.js';
+import { storageValid } from './forensics.js';
 
 const DISPATCH_ID = 'review-coach-first-live-economy-v1';
 const INPUT = Object.freeze({ sourceRuleId: 'check-difference', locale: 'zh-Hant',
@@ -10,15 +11,9 @@ const denied = () => Object.freeze({ status: 'denied' });
 // server composition, never request fields. No direct arm/dispatch RPC is exposed.
 export function createOperatorDispatch(storage, { authorize, execute } = {}) {
   const sql = storage.sql;
-  storage.transactionSync(() => {
-    const exists = sql.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'coach_one_shot'").toArray().length === 1;
-    sql.exec('CREATE TABLE IF NOT EXISTS coach_one_shot (id TEXT PRIMARY KEY, state TEXT NOT NULL)');
-    // Initialize only the new schema: a missing row in an existing schema denies.
-    if (!exists) sql.exec("INSERT INTO coach_one_shot (id, state) VALUES (?, 'DISARMED')", DISPATCH_ID);
-  });
   const permitted = async (action, args) => {
     try {
-      return args.length === 0 && typeof authorize === 'function' && await authorize(action) === true;
+      return args.length === 0 && typeof authorize === 'function' && await authorize(action) === true && storageValid(storage);
     } catch { return false; }
   };
   const consume = () => sql.exec("UPDATE coach_one_shot SET state = 'CONSUMED' WHERE id = ? AND state = 'ARMED' RETURNING id", DISPATCH_ID).toArray().length === 1;

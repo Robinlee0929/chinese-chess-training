@@ -4,6 +4,7 @@ import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { build } from 'esbuild';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { bootstrapSource } from './prelive-runtime-bootstrap.mjs';
 
 test('C1E actual Workers public/RPC deny while private synthetic operator consumes once', async () => {
   // This entire transport and approving verifier exist ONLY in the local test
@@ -12,11 +13,13 @@ test('C1E actual Workers public/RPC deny while private synthetic operator consum
     import { DurableObject } from 'cloudflare:workers';
     import publicWorker, { CoachRealProviderCoordinator } from './prelive/worker.js';
     import { createCoordinator } from './prelive/coordinator.js';
+    import { provisionCoordinator, INITIAL_PROVISIONING } from './prelive/provision.js';
     import { purposeFor } from './src/rule-policy.js';
     export { CoachRealProviderCoordinator };
     export class SyntheticOperatorCoordinator extends DurableObject {
       #core;
       constructor(ctx, env) { super(ctx, env); ctx.blockConcurrencyWhile(async () => {
+        if (!ctx.storage.sql.exec("SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' LIMIT 1").toArray().length) provisionCoordinator(ctx.storage, INITIAL_PROVISIONING);
         this.#core = createCoordinator(ctx.storage, env, { operatorAuthority: async () => true,
           fetch: (url, options) => fetch(url, { ...options, redirect: 'manual' }) });
         await ctx.storage.sync();
@@ -79,7 +82,7 @@ test('C1E actual Workers public/RPC deny while private synthetic operator consum
 
 test('C1C actual local Workers RPC, SQLite and rate binding reject redirects and enforce budget', async () => {
   const configuration = JSON.parse(await readFile(new URL('./wrangler.real-prelive.jsonc', import.meta.url), 'utf8'));
-  const output = await build({ entryPoints: [fileURLToPath(new URL(configuration.main, import.meta.url))],
+  const output = await build({ stdin: { contents: bootstrapSource, resolveDir: fileURLToPath(new URL('.', import.meta.url)) },
     bundle: true, format: 'esm', platform: 'neutral', external: ['cloudflare:workers'], write: false });
   const calls = [];
   let redirect = false;

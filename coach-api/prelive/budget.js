@@ -1,31 +1,24 @@
+import { forensicSnapshot, storageValid } from './forensics.js';
 // SQL is the authority for both the UTC usage buckets and the single occupied slot.
 // Units are a usage circuit breaker, not measured token usage or dollar accounting.
 export function createDurableBudget(storage) {
   const sql = storage.sql;
-  storage.transactionSync(() => {
-    sql.exec('CREATE TABLE IF NOT EXISTS coach_days (day TEXT PRIMARY KEY, units INTEGER NOT NULL CHECK(units >= 0))');
-    sql.exec(`CREATE TABLE IF NOT EXISTS coach_reservations (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, units INTEGER NOT NULL,
-      state TEXT NOT NULL, terminated INTEGER NOT NULL DEFAULT 0, finalized INTEGER NOT NULL DEFAULT 0)`);
-    sql.exec('CREATE TABLE IF NOT EXISTS coach_slot (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), owner INTEGER)');
-    sql.exec('INSERT OR IGNORE INTO coach_slot (singleton, owner) VALUES (1, NULL)');
-    sql.exec(`CREATE TABLE IF NOT EXISTS coach_recovery (
-      singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-      state TEXT NOT NULL, owner INTEGER)`);
-    sql.exec("INSERT OR IGNORE INTO coach_recovery (singleton, state, owner) VALUES (1, 'NORMAL', NULL)");
-    // Reconstruction is uncertainty, never evidence of external termination.
-    sql.exec(`UPDATE coach_recovery SET state = 'RECOVERY_REQUIRED',
-      owner = (SELECT owner FROM coach_slot WHERE singleton = 1)
-      WHERE singleton = 1 AND (SELECT owner FROM coach_slot WHERE singleton = 1) IS NOT NULL`);
-  });
+  // Read-only reconstruction; absent/invalid evidence never triggers provisioning.
+  const initial = forensicSnapshot(storage);
+  const ready = initial.schema.consistencyStatus === 'VALID' && initial.completeness.readComplete && !initial.completeness.truncated;
+  let locallyOwned = null;
   const row = (id) => sql.exec('SELECT * FROM coach_reservations WHERE id = ?', id).toArray()[0];
   return Object.freeze({
     // Internal/local inspection only: not exported by the DO RPC or HTTP surface.
     // Arguments (including age, alarm or alleged proof) confer no authority.
     inspectRecovery() {
-      return Object.freeze(sql.exec('SELECT state, owner FROM coach_recovery WHERE singleton = 1').toArray()[0]);
+      const snapshot = forensicSnapshot(storage);
+      return Object.freeze({ state: snapshot.derived.recoveryRequired
+        ? (locallyOwned === snapshot.raw.slot.ownerGeneration && locallyOwned !== null && snapshot.raw.recovery.state === 'ACTIVE_PROVIDER' ? 'ACTIVE_PROVIDER' : 'RECOVERY_REQUIRED') : 'NORMAL',
+        owner: snapshot.raw.slot.ownerGeneration });
     },
     reserve(day, units, limit) {
+      if (!ready || !storageValid(storage)) return null;
       return storage.transactionSync(() => {
         sql.exec('INSERT OR IGNORE INTO coach_days (day, units) VALUES (?, 0)', day);
         const used = sql.exec('SELECT units FROM coach_days WHERE day = ?', day).toArray()[0].units;
@@ -36,9 +29,10 @@ export function createDurableBudget(storage) {
     },
     acquire(id) {
       return storage.transactionSync(() => {
-        if (sql.exec('SELECT state FROM coach_recovery WHERE singleton = 1').toArray()[0].state === 'RECOVERY_REQUIRED') return false;
+        if (this.inspectRecovery().state === 'RECOVERY_REQUIRED') return false;
         const acquired = sql.exec('UPDATE coach_slot SET owner = ? WHERE singleton = 1 AND owner IS NULL RETURNING owner', id).toArray().length === 1;
         if (acquired) sql.exec("UPDATE coach_recovery SET state = 'ACTIVE_PROVIDER', owner = ? WHERE singleton = 1", id);
+        if (acquired) locallyOwned = id;
         return acquired;
       });
     },

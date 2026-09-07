@@ -4,9 +4,10 @@ import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { build } from 'esbuild';
 import { fileURLToPath } from 'node:url';
 import { response, input } from './prelive-test-support.mjs';
+import { bootstrapSource } from './prelive-runtime-bootstrap.mjs';
 
 test('C1F real workerd Access identity, production routing/RPC/SQLite, mocked outbound only', async () => {
-  const output = await build({ entryPoints: [fileURLToPath(new URL('./prelive/worker.js', import.meta.url))],
+  const output = await build({ stdin: { contents: bootstrapSource, resolveDir: fileURLToPath(new URL('.', import.meta.url)) },
     bundle: true, format: 'esm', platform: 'neutral', external: ['cloudflare:workers'], write: false });
   for (const access of [undefined, { aud: 'synthetic-audience' },
     { aud: 'wrong', identity: { email: 'operator@example.invalid' } },

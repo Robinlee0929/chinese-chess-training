@@ -37,8 +37,9 @@ and recovery review; v1 does not support it.
 | RECOVERY_REQUIRED, owner=id | Reconstruction observed occupied ownership; no matching continuation can be assumed | Denied |
 
 `coach_recovery` persists the current state and affected operation ID.
-Construction marks an existing occupied slot RECOVERY_REQUIRED without clearing
-it or changing usage. Acquisition and ACTIVE_PROVIDER marking share one SQL
+Before C1J, construction marked an occupied slot RECOVERY_REQUIRED. C1J leaves
+that raw row untouched and derives RECOVERY_REQUIRED from unresolved ownership
+or inconsistent/incomplete evidence. Acquisition and ACTIVE_PROVIDER marking share one SQL
 transaction. An ordinary denied request may temporarily reserve its own units;
 the existing not-started settlement returns those units, never the owner's units.
 The recovery gate independently denies acquisition, even if the slot and incident
@@ -63,7 +64,8 @@ reservation. Original-day units remain charged on started failure or lost work.
 
 `inspectRecovery()` is a read-only internal budget helper, available to local
 tests, not a DO RPC method or HTTP route. Arguments convey no authority. The
-coordinator's only RPC operation remains `execute`. Query/body recovery fields
+coordinator has `execute`, C1F `accessOperator`, and C1J `forensicSnapshot` RPC methods.
+There is no HTTP route forwarding the forensic method. Query/body recovery fields
 are rejected; arbitrary headers neither change state nor enable execution.
 
 RECOVERY_REVIEWED and RECOVERY_AUTHORIZED are **operator incident-record stages**,
@@ -82,13 +84,12 @@ completion. Browser errors intentionally do not distinguish these conditions.
 The operator uses a restricted state snapshot, never prompts, framing, board,
 GameRecord, raw provider responses, API keys, or application requestIds.
 
-For a future deployed SQLite object, [Data Studio](https://developers.cloudflare.com/durable-objects/observability/data-studio/)
-can inspect SQL through the dashboard: Durable Objects → the verified namespace
-→ Data Studio → the fixed coordinator name. It requires platform administration
-permission and sends billed requests to the deployed object; do not use it during
-this prelive task. Use only SELECT, with edit/delete capabilities left unused.
-Queries run separately, so contain traffic first and repeat snapshots to identify
-changes rather than claiming a multi-query atomic snapshot.
+The earlier Data Studio procedure is NOT authorized for the current incident.
+[Data Studio](https://developers.cloudflare.com/durable-objects/observability/data-studio/)
+sends requests to the deployed object and emits audit records. SELECT alone does
+not prevent the currently deployed pre-C1J constructor from changing recovery
+evidence. Do not Explore/query, use RPC, or deploy under C1J prelive authority.
+The following queries are schema documentation, NOT executable live instructions.
 
 ```sql
 SELECT state, owner FROM coach_recovery WHERE singleton = 1;
@@ -100,9 +101,68 @@ SELECT day, units FROM coach_days ORDER BY day;
 
 The operation ID plus namespace identity is the incident correlation identifier;
 store it only in the restricted operator record. No new content logging is added.
-Before first live enablement, verify this inspection path and operator permissions
-on the disabled deployment. If unavailable, remain disabled; do not add a public
-admin endpoint as a workaround.
+Any future inspection needs separate implementation review, rollout review and
+explicit owner authority. Remain disabled; no public admin workaround.
+
+## C1J evidence-preserving reconstruction (local/prelive only)
+
+`prelive/provision.js` is an explicit bootstrap module, NOT imported by the Worker.
+It requires the module-owned `INITIAL_PROVISIONING` capability and completely
+empty application storage. It creates the original five-table schema atomically;
+existing, partial or inconsistent databases are rejected, never repaired. There
+is no initialization RPC, HTTP route, env flag or client-selectable migration.
+Local fixture composition explicitly provisions before constructing the core.
+A future fresh-object bootstrap caller requires separate server-composition
+review and live authority. The incident object must NEVER take that path.
+
+Ordinary construction creates only in-memory helpers and performs SELECT reads.
+No schema initialization, singleton insertion, recovery rewrite, sync of new
+writes, alarm, sequence change or ledger is performed. A constructor read failure
+leaves budget admission unavailable for that instance. Missing/invalid schema,
+rows or enums fail closed. A missing row remains missing in the snapshot.
+
+`forensicSnapshot()` is an argument-free internal binding RPC returning bounded
+JSON. It reads only storage, never env, secrets, Access claims or provider content.
+No deployed HTTP route forwards to it; binding possession is a trusted server
+capability, not browser identity. Do not grant new callers this binding without
+review. No runtime initialization/clear/reset/rearm interface is added.
+
+The snapshot separates `raw` rows from `derived` decisions. Existing ACTIVE_PROVIDER,
+NORMAL, RECOVERY_REQUIRED or mismatched recovery/slot evidence is not normalized.
+An occupied slot is conservatively recovery-required to an external observer.
+The original trusted live continuation can still settle only its own generation;
+its in-memory locally-owned marker is not persisted or used as termination proof.
+Restart, age, alarm, deployment and abort never clear/refund unresolved work.
+
+Budget output is capped at 8 rows, reservations at 16. Completeness counts are
+bounded observations (up to 9/17), NOT total counts when truncated. Truncation sets
+accountingConsistency=UNKNOWN (or INVALID for observed inconsistency), never
+CONSISTENT. Admission conservatively fails closed on incomplete evidence; expanding
+this prelive envelope requires review, not client pagination or hidden repair.
+CONSISTENT describes represented ledger arithmetic only, not proof of upstream
+delivery, termination or billing. `attempted`, `providerFetchStarted` and
+`upstreamDelivery` remain UNKNOWN; absent transition timestamps/kinds remain
+NOT_AVAILABLE. Illegal values are rendered INVALID, never arbitrary raw strings.
+
+Future forensic RPC still invokes the DO and may construct it, incur billing and
+produce Cloudflare audit/runtime telemetry. The local guarantee is ZERO APPLICATION
+persistent writes, not zero platform side effects. Current live incident rows and
+C1H unknowns remain untouched. No claim of live post-remediation preservation is made.
+
+Before any separately authorized rollout: retain class/namespace/binding/logical
+identity/migration lineage; review old/new-version overlap and potential automatic
+restart; keep provider=false, budget=0 and public=false; never deploy the test-only
+bootstrap/seed/inspection transports. Prove the first new constructor plus snapshot
+against preexisting SQLite fixtures locally before independent review. No object
+delete/recreate, database reset, PITR restore, generation reset or force-clear is
+part of this implementation. Do not backfill an incident ledger. D is deferred.
+
+`prelive-forensics-test.mjs` measures SQL write attempts as well as complete
+before/after schema/row equality. Its LF/CRLF mutants must import and exhibit the
+intended broken behavior before the invariant assertion kills them. The local
+workerd test persists seeded legacy-shape rows, disposes runtime, reopens using
+the production constructor and exercises the production forensic RPC with SQL,
+storage-write, env-read and outbound traps. All seed/transport hooks are test-only.
 
 ### Containment — always first
 
@@ -231,7 +291,8 @@ uses economy only unless the owner explicitly changes that choice.
    command and operator timing alone are insufficient on a public endpoint.
 7. Verify disabled/no-secret, missing bindings, malformed input and generic errors
    through that controlled path, with zero provider attempts. Inspect the SQL
-   initialization through the approved operator method. Do not turn on the
+   initialization only through a separately reviewed server bootstrap composition;
+   operator ARM/DISPATCH and forensic reads cannot initialize storage. Do not turn on the
    provider to test these resource/inspection steps.
 8. With gate B, provision OPENAI_API_KEY through the Cloudflare Secret channel.
    The operator supplies it without chat, command-line literal, Git, file logging,

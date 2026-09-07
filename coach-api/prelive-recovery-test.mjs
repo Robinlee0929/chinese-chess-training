@@ -8,7 +8,7 @@ import { harness, modules, sqliteStorage, deferred, flush, response, request, in
 
 const settle = async () => { await flush(); await new Promise((resolve) => setImmediate(resolve)); };
 const name = modules.policy.COORDINATOR_NAME;
-const recovery = (h) => h.rows('coach_recovery')[0];
+const recovery = (h) => modules.budget.createDurableBudget(h.instance(name).storage).inspectRecovery();
 
 async function reconstructed(m = modules, observation = {}) {
   const h = harness(m); const pending = deferred();
