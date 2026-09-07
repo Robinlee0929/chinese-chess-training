@@ -6,8 +6,12 @@ import {
   inCheck,
   name,
   repetitionVerdict,
-} from './game.js?v=88be8103f4';
-import { createGameAnalysis, applyGameAnalysisMove } from './game-analysis.js?v=88be8103f4';
+} from './game.js?v=7ac7301751';
+import {
+  createGameAnalysis,
+  createGameAnalysisFromPosition,
+  applyGameAnalysisMove,
+} from './game-analysis.js?v=7ac7301751';
 
 export const GAME_REVIEW_EVIDENCE_KIND = 'review-move-comparison';
 export const GAME_REVIEW_EVIDENCE_CANONICAL = 'CANONICAL_FACT';
@@ -25,46 +29,73 @@ export function createGameReviewEvidence(review, r3aState) {
     if (!eligibleIdentity(review, r3aState)) return null;
     const selectedPly = review.selectedPly;
     const playedMove = review.record.moves[selectedPly];
-    const candidateMove = r3aState.candidate;
     const anchor = createGameAnalysis(review.record, selectedPly);
     if (!sameBoard(anchor.anchorBoard, review.snapshot.board)
       || anchor.anchorSideToMove !== review.snapshot.sideToMove
       || !sameRepetitionHistory(anchor.anchorRepetitionHistory, review.snapshot.repetitionHistory)) {
       return null;
     }
-
-    const materialBefore = countPieces(review.snapshot.board);
-    const sameMove = sameCoordinates(playedMove, candidateMove);
-    const played = deriveOutcome(anchor, playedMove, materialBefore);
-    const candidate = sameMove ? played : deriveOutcome(anchor, candidateMove, materialBefore);
-    if (r3aState.candidate.notation !== candidate.notation) return null;
-
-    return Object.freeze({
-      kind: GAME_REVIEW_EVIDENCE_KIND,
-      evidenceType: GAME_REVIEW_EVIDENCE_CANONICAL,
-      source: Object.freeze({
-        recordId: review.record.id,
-        ply: selectedPly,
-        sideToMove: review.snapshot.sideToMove,
-        positionKey: review.snapshot.repetitionHistory.at(-1).key,
-        r3aRevision: r3aState.revision,
-      }),
-      candidateProvenance: Object.freeze({
-        evidenceType: GAME_REVIEW_EVIDENCE_ENGINE,
-        preset: r3aState.request.analysisPreset,
-        completedDepth: r3aState.candidate.depth,
-      }),
-      materialBefore,
-      played,
-      candidate,
-      comparison: Object.freeze({
-        status: sameMove ? 'MATCH' : 'DIFFERENT',
-        sameMove,
-      }),
-    });
+    return createEvidence({
+      recordId: review.record.id,
+      ply: selectedPly,
+      board: review.snapshot.board,
+      sideToMove: review.snapshot.sideToMove,
+      repetitionHistory: review.snapshot.repetitionHistory,
+      playedMove,
+      anchor,
+    }, r3aState);
   } catch {
     return null;
   }
+}
+
+export function createGameMoveEvidence(source, r3aState) {
+  try {
+    if (!eligibleMoveIdentity(source, r3aState)) return null;
+    const anchor = createGameAnalysisFromPosition({
+      sourceRecordId: source.recordId,
+      sourcePly: source.ply,
+      board: source.board,
+      sideToMove: source.sideToMove,
+      repetitionHistory: source.repetitionHistory,
+    });
+    return createEvidence({ ...source, anchor }, r3aState);
+  } catch {
+    return null;
+  }
+}
+
+function createEvidence(source, r3aState) {
+  const candidateMove = r3aState.candidate;
+  const materialBefore = countPieces(source.board);
+  const sameMove = sameCoordinates(source.playedMove, candidateMove);
+  const played = deriveOutcome(source.anchor, source.playedMove, materialBefore);
+  const candidate = sameMove ? played : deriveOutcome(source.anchor, candidateMove, materialBefore);
+  if (r3aState.candidate.notation !== candidate.notation) return null;
+
+  return Object.freeze({
+    kind: GAME_REVIEW_EVIDENCE_KIND,
+    evidenceType: GAME_REVIEW_EVIDENCE_CANONICAL,
+    source: Object.freeze({
+      recordId: source.recordId,
+      ply: source.ply,
+      sideToMove: source.sideToMove,
+      positionKey: source.repetitionHistory.at(-1).key,
+      r3aRevision: r3aState.revision,
+    }),
+    candidateProvenance: Object.freeze({
+      evidenceType: GAME_REVIEW_EVIDENCE_ENGINE,
+      preset: r3aState.request.analysisPreset,
+      completedDepth: r3aState.candidate.depth,
+    }),
+    materialBefore,
+    played,
+    candidate,
+    comparison: Object.freeze({
+      status: sameMove ? 'MATCH' : 'DIFFERENT',
+      sameMove,
+    }),
+  });
 }
 
 function eligibleIdentity(review, state) {
@@ -90,6 +121,29 @@ function eligibleIdentity(review, state) {
     return false;
   }
   return state.request.repetitionPrefix.at(-1).key === review.snapshot.repetitionHistory.at(-1).key;
+}
+
+function eligibleMoveIdentity(source, state) {
+  if (!source || typeof source !== 'object'
+    || typeof source.recordId !== 'string' || source.recordId.length === 0
+    || !Number.isInteger(source.ply) || source.ply < 0
+    || !Array.isArray(source.board) || !Array.isArray(source.repetitionHistory)
+    || source.repetitionHistory.length === 0 || !source.playedMove
+    || source.sideToMove !== RED && source.sideToMove !== BLACK) return false;
+  if (!state || state.status !== 'success' || !Number.isInteger(state.revision)
+    || !state.request || !state.candidate || state.request.kind !== 'review-candidate'
+    || state.request.recordId !== source.recordId
+    || state.request.ply !== source.ply
+    || state.request.revision !== state.revision
+    || state.request.analysisPreset !== 'review-v1'
+    || state.request.sideToMove !== source.sideToMove
+    || !Number.isInteger(state.candidate.depth) || state.candidate.depth < 1
+    || state.candidate.depth > 3
+    || !sameBoard(state.request.board, source.board)
+    || !sameRepetitionHistory(state.request.repetitionPrefix, source.repetitionHistory)) {
+    return false;
+  }
+  return state.request.repetitionPrefix.at(-1).key === source.repetitionHistory.at(-1).key;
 }
 
 function deriveOutcome(anchor, move, materialBefore) {

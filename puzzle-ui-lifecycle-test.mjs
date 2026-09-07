@@ -187,6 +187,9 @@ function harness(options = {}) {
       context.hintMarkerRoles = [context.practiceHint?.from && 'source', context.practiceHint?.to && 'target'].filter(Boolean);
     },
     showBanner: noop, stopConfetti: noop, toast: noop,
+    invalidateTeachingModeFeedback: noop,
+    captureTeachingModeSource: () => null,
+    requestGameTeachingModeAnalysis: () => false,
     setRecorderMessage: noop, setPracticeMessage: noop,
     syncRecorderUI: () => { if (context.practiceState && context.syncPracticeUI) context.syncPracticeUI(); },
     syncPhotoUI: noop, syncRecognitionUI: noop, markPracticeCompleted: noop,

@@ -69,7 +69,7 @@
   "isBasedOn": "https://github.com/doggy8088/chinese-chess"
 }
 </script>
-<link rel="stylesheet" href="./css/style.css?v=88be8103f4">
+<link rel="stylesheet" href="./css/style.css?v=7ac7301751">
 <script type="importmap">
 {
   "imports": {
@@ -100,6 +100,8 @@
       <button id="btnMore" type="button" aria-haspopup="true" aria-expanded="false" title="更多設定" aria-label="更多設定">⋯</button>
       <div id="hudMore">
         <button id="btnGameRecords" type="button" aria-pressed="false">對局紀錄</button>
+        <button id="btnTeachingMode" type="button" aria-pressed="false"
+          aria-controls="gameTeachingCard">教學模式：關</button>
         <button id="btnHelp" type="button" aria-pressed="false">玩法說明</button>
         <button id="btnSound" type="button" aria-pressed="true">音效：開</button>
         <button id="btnView" type="button" title="循環切換：紅方 → 黑方 → 側面 → 俯視">視角</button>
@@ -598,6 +600,16 @@
     </div>
 
     <aside id="right">
+      <section id="gameTeachingCard" class="game-teaching-card hidden"
+        aria-labelledby="gameTeachingHeading" aria-live="polite" aria-atomic="true">
+        <h3 id="gameTeachingHeading">教學提示</h3>
+        <strong id="gameTeachingTitle"></strong>
+        <p id="gameTeachingBody"></p>
+        <dl class="game-teaching-moves" aria-label="你的著法與本機候選">
+          <div><dt>你走</dt><dd id="gameTeachingPlayed"></dd></div>
+          <div><dt>參考</dt><dd id="gameTeachingCandidate"></dd></div>
+        </dl>
+      </section>
       <h3>棋譜</h3>
       <ol id="log"></ol>
       <p id="logEmpty">尚無著法，紅方先行。</p>
@@ -631,6 +643,6 @@
   <div id="toast" class="hidden" role="status"></div>
 </div>
 
-<script type="module" src="./main.js?v=88be8103f4"></script>
+<script type="module" src="./main.js?v=7ac7301751"></script>
 </body>
 </html>

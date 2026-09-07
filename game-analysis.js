@@ -8,8 +8,8 @@ import {
   hasAnyLegalMove,
   hashBoard,
   repetitionVerdict,
-} from './game.js?v=88be8103f4';
-import { createGameRecord, replayGameRecord } from './game-record.js?v=88be8103f4';
+} from './game.js?v=7ac7301751';
+import { createGameRecord, replayGameRecord } from './game-record.js?v=7ac7301751';
 
 const SIDES = new Set([RED, BLACK]);
 
@@ -33,6 +33,36 @@ export function createGameAnalysis(record, sourcePly) {
     anchorBoard: snapshot.board,
     anchorSide: snapshot.sideToMove,
     anchorRepetitionHistory: snapshot.repetitionHistory,
+    moves: [],
+    revision: 0,
+  });
+}
+
+export function createGameAnalysisFromPosition({
+  sourceRecordId,
+  sourcePly,
+  board,
+  sideToMove,
+  repetitionHistory,
+}) {
+  if (typeof sourceRecordId !== 'string' || sourceRecordId.length === 0
+    || !Number.isInteger(sourcePly) || sourcePly < 0
+    || !Array.isArray(board) || board.length !== 10
+    || !board.every((row) => Array.isArray(row) && row.length === 9)
+    || !SIDES.has(sideToMove)
+    || !Array.isArray(repetitionHistory) || repetitionHistory.length === 0) {
+    throw new TypeError('A valid local analysis position is required.');
+  }
+  const expectedKey = `${hashBoard(board)}|${sideToMove}`;
+  if (repetitionHistory.at(-1)?.key !== expectedKey) {
+    throw new TypeError('Local analysis position identity does not match its history.');
+  }
+  return buildState({
+    sourceRecord: Object.freeze({ id: sourceRecordId }),
+    sourcePly,
+    anchorBoard: board,
+    anchorSide: sideToMove,
+    anchorRepetitionHistory: repetitionHistory,
     moves: [],
     revision: 0,
   });

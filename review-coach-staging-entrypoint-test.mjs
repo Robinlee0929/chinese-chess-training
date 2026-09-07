@@ -13,7 +13,7 @@ import {
 import {
   readInstalledReviewCoachStagingCapability,
   B2A_BROWSER_TIMEOUT_MS,
-} from './review-coach-connectivity.js?v=88be8103f4';
+} from './review-coach-connectivity.js?v=7ac7301751';
 
 const indexSource = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
 const entryHtml = readFileSync(new URL('./staging/review-coach.html', import.meta.url), 'utf8');
@@ -127,8 +127,10 @@ async function importStagingBootstrap(candidate) {
 }
 
 async function importConnectivity(candidate) {
-  const dependencyTarget = "} from './game-review-coach.js?v=88be8103f4';";
-  const dependencyUrl = new URL('./game-review-coach.js?v=88be8103f4', import.meta.url).href;
+  const dependencyTarget = candidate.match(/[}] from '\.\/game-review-coach\.js\?v=[0-9a-f]+';/u)?.[0];
+  assert.ok(dependencyTarget, 'connectivity dependency exists');
+  const dependencySpecifier = dependencyTarget.match(/from '([^']+)'/u)[1];
+  const dependencyUrl = new URL(dependencySpecifier, import.meta.url).href;
   const importable = replaceUnique(candidate, dependencyTarget,
     `} from '${dependencyUrl}';`, 'connectivity dependency rewrite');
   return importDataModule(importable);
@@ -450,7 +452,7 @@ test('B2B2 relies on existing explicit-action, A1 and stale lifecycle gates', ()
 
 test('BROKEN_B2B2_NORMAL_PAGE_LOADS_STAGING_WOULD_FAIL executes real production initialization',
   async () => {
-    assert.match(indexSource, /<script type="module" src="\.\/main\.js\?v=88be8103f4"><\/script>/u);
+    assert.match(indexSource, /<script type="module" src="\.\/main\.js\?v=[0-9a-f]+"><\/script>/u);
     const reasons = [];
     for (const [eol, candidate] of sourceForms(mainSource)) {
       const mutant = mainWithStagingFactory(candidate,

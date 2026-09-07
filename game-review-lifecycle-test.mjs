@@ -499,6 +499,7 @@ function harness({
     renderGameAnalysis() {},
     checkBoardMeshInvariant: () => ({ ok: true, errors: [] }),
     toast: (message) => context.messages.push(message),
+    invalidateTeachingModeFeedback() {},
     createGameReviewAiWorker: () => {
       if (workerCreationError) throw new Error('worker unavailable');
       return new FakeReviewAiWorker();
