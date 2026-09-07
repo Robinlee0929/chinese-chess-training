@@ -134,6 +134,23 @@ The original trusted live continuation can still settle only its own generation;
 its in-memory locally-owned marker is not persisted or used as termination proof.
 Restart, age, alarm, deployment and abort never clear/refund unresolved work.
 
+C1J orphan remediation makes ownership consistency bidirectional: an owner must
+identify an unfinalized reservation, and every unfinalized `dispatching` or
+`started` reservation must match that owner (slot and recovery owners must also
+agree). Dispatch intent is potentially active work, not proof of cancellation.
+`terminated=1` does not waive this relationship before finalization: existing C1D
+termination retains ownership until the trusted finalize transaction converts the
+row to `consumed` and clears only its own generation. An ownerless terminated
+`started` row is SQL-representable, but is not ordinary finalized history.
+`reserved` before acquisition and valid `released`/`consumed` finalized history
+do not acquire this new ownership requirement. Matching active ownership remains
+recognized, with C1D's existing reconstruction fence and original-continuation
+settlement unchanged. No evidence is repaired, normalized or refunded by this
+derived check. Truncated evidence remains recovery-required and admission-denied,
+even if an orphan lies beyond the 16 displayed reservations. A denied operational
+request may still reserve and settle its own new generation; that is distinct
+from zero-write construction/snapshot and never changes the old incident rows.
+
 Budget output is capped at 8 rows, reservations at 16. Completeness counts are
 bounded observations (up to 9/17), NOT total counts when truncated. Truncation sets
 accountingConsistency=UNKNOWN (or INVALID for observed inconsistency), never

@@ -131,21 +131,22 @@ test('C1E independent concurrent dispatches atomically consume once', async () =
 });
 
 async function failure(m = implementation, kind = 'network') {
-  const h = fixture(m);
+  const h = fixture(m); const pending = deferred();
   try {
-    h.state.fetch = kind === 'timeout' ? () => new Promise(() => {}) : () => { throw Error('PRIVATE'); };
+    h.state.fetch = kind === 'timeout' ? async () => { await pending.promise; return response(); } : () => { throw Error('PRIVATE'); };
     await h.op.arm(); const first = h.op.dispatch(); await settle();
     if (kind === 'timeout') await h.clock.advance(3000);
     await first;
-    // Test-only termination fixture for timeout isolates illegal re-arm from C1D's
-    // independent ownership fence. Production has NO such clearing operation.
+    // Settle the ORIGINAL mocked provider drain before isolating illegal rearm.
+    // Clearing only the owner would now create a correctly fenced orphan.
     if (kind === 'timeout') {
-      h.storage.sql.exec('UPDATE coach_slot SET owner = NULL');
-      h.storage.sql.exec("UPDATE coach_recovery SET state = 'NORMAL', owner = NULL");
+      pending.resolve(); await settle();
+      assert.equal(h.storage.sql.exec('SELECT owner FROM coach_slot').toArray()[0].owner, null);
+      assert.equal(h.storage.sql.exec('SELECT finalized FROM coach_reservations').toArray()[0].finalized, 1);
     }
     h.state.fetch = () => response(); await h.op.dispatch();
     return h.state.calls;
-  } finally { h.close(); }
+  } finally { pending.resolve(); await settle(); h.close(); }
 }
 for (const kind of ['network', 'timeout']) test(`C1E ${kind} never rearms or retries`, async () => {
   assert.equal(await failure(implementation, kind), 1);

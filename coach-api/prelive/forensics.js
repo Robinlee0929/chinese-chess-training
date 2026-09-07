@@ -69,6 +69,10 @@ export function forensicSnapshot(storage, ...args) {
     valid &&= owner === recovery.ownerGeneration && (owner === null ? recovery.state === 'NORMAL' : recovery.state !== 'NORMAL');
     if (!result.completeness.truncated && valid) {
       valid &&= owner === null || reservations.some(row => row.generation === owner && row.finalized === 0);
+      // Dispatch intent and started work retain ownership until finalization,
+      // including the terminated-but-not-yet-finalized interval (C1D).
+      valid &&= reservations.every(row => !['dispatching', 'started'].includes(row.state)
+        || row.finalized !== 0 || row.generation === owner);
       valid &&= reservations.every(row => row.units > 0 && budgetRows.some(bucket => bucket.day === row.day)
         && (['consumed', 'released'].includes(row.state) ? row.finalized === 1 : row.finalized === 0)
         && (row.state !== 'consumed' || row.terminated === 1));

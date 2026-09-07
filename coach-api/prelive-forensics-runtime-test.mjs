@@ -7,7 +7,12 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-test('C1J actual workerd existing SQLite reopen -> production constructor -> forensic RPC: zero writes/network', async () => {
+for (const fixture of [
+  { name: 'owned started incident', state: 'started', owner: true, terminated: 0 },
+  { name: 'orphaned started incident', state: 'started', owner: false, terminated: 0 },
+  { name: 'orphaned dispatch intent', state: 'dispatching', owner: false, terminated: 0 },
+  { name: 'orphaned terminated awaiting finalize', state: 'started', owner: false, terminated: 1 },
+]) test(`C1J actual workerd existing SQLite reopen -> production constructor -> forensic RPC: ${fixture.name}`, async () => {
   const directory = mkdtempSync(join(tmpdir(), 'coach-c1j-runtime-'));
   const dumpSource = `function dump(storage) {
     return storage.sql.exec("SELECT name, sql FROM sqlite_master ORDER BY name").toArray().map(row => ({ ...row,
@@ -22,9 +27,9 @@ test('C1J actual workerd existing SQLite reopen -> production constructor -> for
         provisionCoordinator(this.ctx.storage, INITIAL_PROVISIONING);
         this.ctx.storage.sql.exec("UPDATE coach_one_shot SET state = 'CONSUMED'");
         this.ctx.storage.sql.exec("INSERT INTO coach_days VALUES ('2026-09-07', 1)");
-        this.ctx.storage.sql.exec("INSERT INTO coach_reservations (day, units, state) VALUES ('2026-09-07', 1, 'started')");
-        this.ctx.storage.sql.exec('UPDATE coach_slot SET owner = 1');
-        this.ctx.storage.sql.exec("UPDATE coach_recovery SET owner = 1, state = 'ACTIVE_PROVIDER'");
+        this.ctx.storage.sql.exec("INSERT INTO coach_reservations (day, units, state, terminated) VALUES ('2026-09-07', 1, ?, ?)", '${fixture.state}', ${fixture.terminated});
+        ${fixture.owner ? `this.ctx.storage.sql.exec('UPDATE coach_slot SET owner = 1');
+        this.ctx.storage.sql.exec("UPDATE coach_recovery SET owner = 1, state = 'ACTIVE_PROVIDER'");` : ''}
         await this.ctx.storage.sync(); return JSON.stringify(dump(this.ctx.storage));
       }
     }
@@ -83,7 +88,12 @@ test('C1J actual workerd existing SQLite reopen -> production constructor -> for
     assert.deepEqual(result.counts, { writes: 0, secretReads: 0 }); assert.equal(result.denied, true);
     assert.deepEqual(result.snapshots[0], result.snapshots[1]);
     const snapshot = JSON.parse(result.snapshots[0]);
-    assert.equal(snapshot.raw.oneShot.state, 'CONSUMED'); assert.equal(snapshot.raw.recovery.state, 'ACTIVE_PROVIDER');
+    assert.equal(snapshot.raw.oneShot.state, 'CONSUMED');
+    assert.equal(snapshot.raw.recovery.state, fixture.owner ? 'ACTIVE_PROVIDER' : 'NORMAL');
+    assert.equal(snapshot.raw.slot.ownerGeneration, fixture.owner ? 1 : null);
+    assert.equal(snapshot.raw.reservations[0].state, fixture.state);
+    assert.equal(snapshot.raw.reservations[0].terminated, fixture.terminated);
+    assert.equal(snapshot.derived.accountingConsistency, fixture.owner ? 'CONSISTENT' : 'INVALID');
     assert.equal(snapshot.derived.recoveryRequired, true);
     const publicResult = await runtime.dispatchFetch('https://local.invalid/__operator/forensics');
     assert.equal(publicResult.status, 403); assert.equal(calls, 0);
