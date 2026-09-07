@@ -13,7 +13,10 @@ for (const fixture of [
   { name: 'orphaned started incident', state: 'started', owner: false, terminated: 0 },
   { name: 'orphaned dispatch intent', state: 'dispatching', owner: false, terminated: 0 },
   { name: 'orphaned terminated awaiting finalize', state: 'started', owner: false, terminated: 1 },
-]) for (const mutation of [null, ...(fixture.owner ? ['constructor LF', 'constructor CRLF', 'snapshot LF', 'snapshot CRLF'] : [])])
+]) for (const mutation of [null, ...(fixture.owner ? [
+  'constructor update LF', 'constructor update CRLF', 'snapshot update LF', 'snapshot update CRLF',
+  'constructor pragma LF', 'constructor pragma CRLF', 'snapshot pragma LF', 'snapshot pragma CRLF',
+] : [])])
 test(`C1J actual workerd existing SQLite reopen -> production constructor -> forensic RPC: ${fixture.name}${mutation ? ` / injected ${mutation}` : ''}`, async () => {
   const directory = mkdtempSync(join(tmpdir(), 'coach-c1j-runtime-'));
   const dumpSource = `function dump(storage) {
@@ -79,7 +82,9 @@ test(`C1J actual workerd existing SQLite reopen -> production constructor -> for
           assert.equal(source.split(site).length, 2, 'unique production mutation site');
           // The catch models production forensic error containment. The counter
           // must expose a denied attempt even when application code swallows it.
-          source = source.replace(site, `    try { ${storage}.sql.exec('SELECT 1; UPDATE coach_slot SET owner=owner'); } catch {}\n${site}`);
+          const sql = mutation.includes('pragma') ? 'PRAGMA "optimize"'
+            : 'SELECT 1; UPDATE coach_slot SET owner=owner';
+          source = source.replace(site, `    try { ${storage}.sql.exec(${JSON.stringify(sql)}); } catch {}\n${site}`);
           if (mutation.endsWith('CRLF')) source = source.replace(/\n/gu, '\r\n');
           return { contents: source, loader: 'js' };
         });

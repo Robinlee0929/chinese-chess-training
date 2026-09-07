@@ -198,18 +198,22 @@ row equality alone cannot prove the absence of mutation ATTEMPTS.
 
 The test-only `prelive-sql-write-detector.mjs` combines a statement-aware lexer
 with native execution accounting. It scans the whole SQL program, separating
-semicolons only outside strings, quoted identifiers and comments. Every statement
+semicolons only outside strings, quoted identifiers and comments, while retaining
+normalized quoted values so statement class cannot depend on identifier quoting. Every statement
 must belong to the narrowly supported SELECT/WITH-read language, with no unquoted
 mutation operations, including a CTE's main UPDATE/INSERT/DELETE/REPLACE. Pure
 SELECT sequences, bound values, quoted keywords, comments, CASE and the scalar
 replace() function retain their read semantics. Unknown statement families fail
 closed rather than being assumed safe. This is not a general SQLite SQL parser.
 
-All standalone PRAGMAs, transaction/control commands, schema operations and
-extension/file/evaluation operations are denied. The sole allowed table-valued
-PRAGMA is the repository's read-only pragma_table_info(). The native suite audits
-supported writable PRAGMAs plus ANALYZE/REINDEX; writable_schema/user_version are
-runtime-rejected, not misreported as successful test mutations. No blanket claim
+All standalone PRAGMAs, including nominally read-only forms, transaction/control
+commands, schema operations and extension/file/evaluation operations are denied.
+Quoted and unquoted table-valued PRAGMA relations are denied by default; the sole
+allowlisted relation is the repository-required, read-only pragma_table_info().
+The native suite audits quoted/unquoted optimize, writable PRAGMAs,
+ANALYZE/REINDEX, and fail-closed ATTACH/DETACH/VACUUM classification. Pinned
+workerd rejects query_only, writable_schema, user_version, database_list and
+ATTACH with SQLITE_AUTH, and VACUUM within its transaction. No blanket claim
 about future SQLite extensions or new application SQL is made: those require
 review and renewed calibration. Native CTE UPDATE and REPLACE INTO are exercised;
 the pinned grammar rejects the probed REPLACE form without INTO.
@@ -220,10 +224,13 @@ cursor and independently requires rowsWritten=0. It preserves the scoped
 toArray() interface; it does not add production test hooks or modify production
 SQL. Non-SQL storage mutation traps remain installed before the constructor.
 Complete before/after schema and row equality (including sequence state) remains
-mandatory alongside zero attempts. Local persisted-reopen constructor and RPC
-snapshot injections of SELECT followed by same-value UPDATE, in LF and CRLF,
+mandatory alongside zero attempts. A historical quoted `PRAGMA "optimize"`
+negative control produces `sqlite_stat1` while reporting zero native rows written;
+the full schema/table snapshot makes that internal mutation visible. Local
+persisted-reopen constructor and RPC snapshot injections of both quoted optimize
+and SELECT followed by same-value UPDATE, in LF and CRLF,
 must fail the zero-write assertion for the intended counted attempt, not setup,
-syntax, import or row-difference failures. Eight detector mutation gates exercise
+syntax, import or row-difference failures. Eighteen detector mutation gates exercise
 actual native forwarding/rejection; no-op SQL isolates attempt classification
 from the independent native-write backstop. Prefix/same-value bypass mutants
 explicitly defeat both controls to demonstrate their intended broken behavior.

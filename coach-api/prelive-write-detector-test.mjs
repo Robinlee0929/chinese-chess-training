@@ -3,6 +3,7 @@ import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { build } from 'esbuild';
+import { isReadOnlySQL } from './prelive-sql-write-detector.mjs';
 
 const source = await readFile(new URL('./prelive-sql-write-detector.mjs', import.meta.url), 'utf8');
 const gateSite = '    if (!isReadOnlySQL(query)) return deny();';
@@ -12,11 +13,18 @@ const cases = [
   ['keyword literal', "SELECT 'UPDATE x SET y=1; DELETE FROM x'", false],
   ['quoted identifiers', 'SELECT "UPDATE", [UPDATE], `UPDATE` FROM x', false],
   ['quoted comment delimiters', "SELECT '--; UPDATE', '/* DELETE */', 'it''s; CREATE'", false],
+  ['nonstandard mutator literals', "SELECT 'PRAGMA optimize', 'UPDATE x SET y=1', 'VACUUM'", false],
+  ['pragma virtual-table name literal', "SELECT 'pragma_optimize'", false],
+  ['pragma virtual-table quoted column', 'SELECT "pragma_optimize" FROM x', false],
   ['comment keywords', '/* UPDATE; */ SELECT 1; -- DELETE;\nSELECT 2', false],
   ['CTE SELECT', 'WITH c AS (SELECT value FROM x) SELECT * FROM c', false],
   ['replace function and CASE', "SELECT replace('a', 'a', 'b'), CASE WHEN 1 THEN 2 END", false],
   ['bound value', 'SELECT ? AS value', false, ['UPDATE x; DELETE']],
   ['table info', "SELECT name FROM pragma_table_info('x')", false],
+  ['quoted table info', "SELECT name FROM \"pragma_table_info\"('x')", false],
+  ['single-quoted table info', "SELECT name FROM 'pragma_table_info'('x')", false],
+  ['bracketed table info', "SELECT name FROM [pragma_table_info]('x')", false],
+  ['backtick table info', "SELECT name FROM `pragma_table_info`('x')", false],
   ['same value', 'UPDATE x SET value=value', true],
   ['SELECT then same value', 'SELECT 1; UPDATE x SET value=value', true],
   ['SELECT then INSERT', 'SELECT 1; INSERT INTO x(value) VALUES(2)', true],
@@ -37,9 +45,30 @@ const cases = [
   ['writable PRAGMA', 'PRAGMA defer_foreign_keys=ON', true],
   ['SELECT then writable PRAGMA', 'SELECT 1; PRAGMA defer_foreign_keys=ON', true],
   ['foreign keys PRAGMA', 'PRAGMA foreign_keys=OFF', true],
-  ['optimize', 'PRAGMA optimize', true],
-  ['ANALYZE', 'ANALYZE x', true],
-  ['REINDEX', 'REINDEX', true],
+  ['standalone table-info PRAGMA denied by proof policy', "PRAGMA table_info('x')", true],
+  ['optimize', 'PRAGMA optimize', true, [], 'state'],
+  ['double-quoted optimize', 'PRAGMA "optimize"', true, [], 'state'],
+  ['single-quoted optimize', "PRAGMA 'optimize'", true, [], 'state'],
+  ['bracketed optimize', 'PRAGMA [optimize]', true, [], 'state'],
+  ['backtick optimize', 'PRAGMA `optimize`', true, [], 'state'],
+  ['schema optimize', 'PRAGMA main.optimize', true, [], 'state'],
+  ['schema double-quoted optimize', 'PRAGMA main."optimize"', true, [], 'state'],
+  ['pragma optimize virtual table', 'SELECT * FROM pragma_optimize', true, [], 'state'],
+  ['double-quoted pragma optimize virtual table', 'SELECT * FROM "pragma_optimize"', true, [], 'state'],
+  ['single-quoted pragma optimize virtual table', "SELECT * FROM 'pragma_optimize'", true, [], 'state'],
+  ['bracketed pragma optimize virtual table', 'SELECT * FROM [pragma_optimize]', true, [], 'state'],
+  ['backtick pragma optimize virtual table', 'SELECT * FROM `pragma_optimize`', true, [], 'state'],
+  ['schema quoted pragma optimize virtual table', 'SELECT * FROM main."pragma_optimize"', true, [], 'state'],
+  ['WITH quoted pragma optimize', 'WITH p AS (SELECT * FROM "pragma_optimize") SELECT * FROM p', true, [], 'state'],
+  ['SELECT then standalone quoted pragma optimize', 'SELECT 1; PRAGMA "optimize"', true, [], 'state'],
+  ['SELECT then quoted pragma optimize', 'SELECT 1; SELECT * FROM "pragma_optimize"', true, [], 'state'],
+  ['block comment then standalone quoted pragma optimize', '/* harmless */ PRAGMA "optimize"', true, [], 'state'],
+  ['line comment then standalone quoted pragma optimize', '-- harmless\nPRAGMA "optimize"', true, [], 'state'],
+  ['block comment then quoted pragma optimize', '/* harmless */ SELECT * FROM "pragma_optimize"', true, [], 'state'],
+  ['line comment then quoted pragma optimize', '-- harmless\nSELECT * FROM "pragma_optimize"', true, [], 'state'],
+  ['ANALYZE', 'ANALYZE x', true, [], 'state'],
+  ['REINDEX', 'REINDEX', true, [], 'rows'],
+  ['unknown EXPLAIN', 'EXPLAIN SELECT 1', true],
 ];
 
 // Every mutant changes the actual exec detector, stays importable, and runs in
@@ -65,8 +94,44 @@ const gates = [
     replacements: [[gateSite, "    if (!query.startsWith('CREATE ') && !isReadOnlySQL(query)) return deny();"]] },
   { name: 'overmatch literal keyword', query: "SELECT 'UPDATE x SET value=value'", readonly: true,
     replacements: [[gateSite, "    if (query.includes('UPDATE') || !isReadOnlySQL(query)) return deny();"]] },
+  { name: 'quoted PRAGMA treated safe', query: 'PRAGMA "optimize"',
+    replacements: [[gateSite, "    if (query !== 'PRAGMA \"optimize\"' && !isReadOnlySQL(query)) return deny();"]] },
+  { name: 'optimize explicitly allowed', query: 'PRAGMA optimize',
+    replacements: [[gateSite, "    if (query !== 'PRAGMA optimize' && !isReadOnlySQL(query)) return deny();"]] },
+  { name: 'only unquoted PRAGMA relation detected', query: 'SELECT * FROM "pragma_optimize"',
+    replacements: [["      programs.at(-1).push({ quoted: c, value: value.toUpperCase() }); continue;",
+      "      programs.at(-1).push(c === '\"' ? '#QUOTED' : { quoted: c, value: value.toUpperCase() }); continue;"]] },
+  { name: 'second-statement PRAGMA ignored', query: 'SELECT 1; PRAGMA "optimize"',
+    replacements: [['return programs.every(tokens =>', 'return programs.slice(0, 1).every(tokens =>']] },
+  { name: 'comment-prefixed PRAGMA ignored', query: '/* harmless */ PRAGMA "optimize"',
+    replacements: [[gateSite, "    if (!query.startsWith('/*') && !isReadOnlySQL(query)) return deny();"]] },
+  { name: 'unknown SQL defaults read-only', query: 'EXPLAIN SELECT 1',
+    replacements: [[gateSite, "    if (query !== 'EXPLAIN SELECT 1' && !isReadOnlySQL(query)) return deny();"]] },
+  { name: 'ANALYZE treated safe', query: 'ANALYZE x',
+    replacements: [[gateSite, "    if (query !== 'ANALYZE x' && !isReadOnlySQL(query)) return deny();"],
+      ['if (cursor.rowsWritten !== 0)', "if (query !== 'ANALYZE x' && cursor.rowsWritten !== 0)"]] },
+  { name: 'bracket identifier normalization disabled', query: 'SELECT * FROM [pragma_optimize]',
+    replacements: [["      programs.at(-1).push({ quoted: c, value: value.toUpperCase() }); continue;",
+      "      programs.at(-1).push(c === '[' ? '#QUOTED' : { quoted: c, value: value.toUpperCase() }); continue;"]] },
+  { name: 'sqlite_stat mutation relation ignored', query: 'SELECT * FROM "pragma_optimize"',
+    replacements: [["      if (typeof token !== 'string') {\n        const pragmaRelation = value.startsWith('PRAGMA_') && !READ_ONLY_PRAGMA_RELATIONS.has(value);",
+      "      if (typeof token !== 'string') {\n        const pragmaRelation = value.startsWith('PRAGMA_') && !READ_ONLY_PRAGMA_RELATIONS.has(value) && value !== 'PRAGMA_OPTIMIZE';"]] },
+  { name: 'false positive PRAGMA string literal', query: "SELECT 'PRAGMA optimize'", readonly: true,
+    replacements: [[gateSite, "    if (query.includes('PRAGMA') || !isReadOnlySQL(query)) return deny();"]] },
 ];
-assert.equal(gates.length, 8);
+assert.equal(gates.length, 18);
+
+test('C1J fail-closed SQLite nonstandard statement classifier audit', () => {
+  for (const query of ['PRAGMA optimize', 'PRAGMA "optimize"', 'ANALYZE x', 'VACUUM',
+    'REINDEX', "ATTACH DATABASE ':memory:' AS other", 'DETACH DATABASE other',
+    'EXPLAIN SELECT 1', 'VALUES(1)', 'BEGIN', 'COMMIT', 'ROLLBACK']) {
+    assert.equal(isReadOnlySQL(query), false, query);
+  }
+  for (const query of ["SELECT 'PRAGMA optimize'", "SELECT 'UPDATE x'", "SELECT 'VACUUM'",
+    '/* PRAGMA "optimize" */ SELECT 1', '-- ANALYZE x\nSELECT 1']) {
+    assert.equal(isReadOnlySQL(query), true, query);
+  }
+});
 
 test('C1J native SQL detector calibration, adversarial matrix and viable mutations', async t => {
   const variants = [source];
@@ -90,8 +155,13 @@ test('C1J native SQL detector calibration, adversarial matrix and viable mutatio
         const sql = this.ctx.storage.sql;
         sql.exec('CREATE TABLE x(value INTEGER, "UPDATE" TEXT)');
         sql.exec("INSERT INTO x VALUES(1,'ok')");
+        sql.exec('CREATE INDEX x_value_idx ON x(value)');
         const raw = sql.exec.bind(sql);
-        const before = raw('SELECT * FROM x').toArray();
+        raw('SELECT * FROM x WHERE value = 1').toArray();
+        const snapshot = () => raw('SELECT name, type, tbl_name, sql FROM sqlite_master ORDER BY name').toArray()
+          .map(row => ({ ...row, rows: row.type === 'table'
+            ? raw('SELECT * FROM "' + row.name.replaceAll('"', '""') + '" ORDER BY rowid').toArray() : [] }));
+        const before = snapshot();
         const counts = { writes: 0 }; let nativeCalls = 0; let actualRowsWritten = 0;
         const execute = (q, ...args) => { nativeCalls++; const cursor = raw(q, ...args);
           const rows = cursor.toArray(); actualRowsWritten += cursor.rowsWritten;
@@ -100,12 +170,13 @@ test('C1J native SQL detector calibration, adversarial matrix and viable mutatio
           ? detectors[0](() => execute('UPDATE x SET value=value'), counts)
           : mode === 'raw' ? execute : mode === 'legacy'
           ? (q, ...args) => { if (!/^\\s*SELECT\\b/i.test(q)) { counts.writes++; throw Error('WRITE ATTEMPT'); } return execute(q, ...args); }
+          : mode === 'legacy-quoted-pragma'
+          ? (q, ...args) => { if (/^\\s*PRAGMA\\s+[A-Za-z_]/i.test(q)) { counts.writes++; throw Error('WRITE ATTEMPT'); } return execute(q, ...args); }
           : detectors[mode](execute, counts);
         let error = null; let rows = null;
         try { rows = guarded(query, ...params).toArray(); } catch (e) { error = e.message; }
-        const present = raw("SELECT name FROM sqlite_master WHERE name='x'").toArray().length;
         return { counts, nativeCalls, actualRowsWritten, error, rows, before,
-          after: present ? raw('SELECT * FROM x').toArray() : null };
+          after: snapshot() };
       }
     }
     export default { async fetch(r,e) { const {query,mode,params,id} = await r.json();
@@ -127,20 +198,32 @@ test('C1J native SQL detector calibration, adversarial matrix and viable mutatio
     await t.test('fresh exact legacy bypass and native read-only capability audit', async () => {
       const old = await probe('SELECT 1; UPDATE x SET value=value', 'legacy');
       assert.equal(old.error, null); assert.equal(old.counts.writes, 0);
-      assert.equal(old.actualRowsWritten, 1); assert.deepEqual(old.after, old.before);
-      for (const query of ['PRAGMA query_only=ON', 'PRAGMA user_version=1', 'PRAGMA writable_schema=ON']) {
-        const r = await probe(query, 'raw'); assert.match(r.error, /not authorized/u);
+      assert.ok(old.actualRowsWritten > 0); assert.deepEqual(old.after, old.before);
+      const quotedPragma = await probe('PRAGMA "optimize"', 'legacy-quoted-pragma');
+      assert.equal(quotedPragma.error, null); assert.equal(quotedPragma.counts.writes, 0);
+      assert.equal(quotedPragma.actualRowsWritten, 0); assert.notDeepEqual(quotedPragma.after, quotedPragma.before);
+      assert.ok(quotedPragma.after.some(row => row.name === 'sqlite_stat1'));
+      for (const [query, error] of [
+        ['PRAGMA query_only=ON', /not authorized/u], ['PRAGMA user_version=1', /not authorized/u],
+        ['PRAGMA writable_schema=ON', /not authorized/u], ['PRAGMA database_list', /not authorized/u],
+        ["ATTACH DATABASE ':memory:' AS other", /not authorized/u], ['VACUUM', /within a transaction/u],
+      ]) {
+        const r = await probe(query, 'raw'); assert.match(r.error, error);
       }
     });
     await t.test('native accounting independently detects an execution-layer same-value write', async () => {
       const result = await probe('SELECT 1', 'accounting-control');
-      assert.equal(result.nativeCalls, 1); assert.equal(result.actualRowsWritten, 1);
+      assert.equal(result.nativeCalls, 1); assert.ok(result.actualRowsWritten > 0);
       assert.equal(result.counts.writes, 1); assert.equal(result.error, 'WRITE ATTEMPT');
       assert.deepEqual(result.after, result.before);
     });
-    for (const [name, query, mutation, params = []] of cases) await t.test(`detector matrix: ${name}`, async () => {
+    for (const [name, query, mutation, params = [], evidence] of cases) await t.test(`detector matrix: ${name}`, async () => {
       const raw = await probe(query, 'raw', params);
       assert.equal(raw.error, null, 'fixture SQL must actually be supported');
+      if (evidence === 'state') {
+        assert.notDeepEqual(raw.after, raw.before, 'native mutation must change internal SQLite state');
+        assert.ok(raw.after.some(row => row.name === 'sqlite_stat1'));
+      }
       const result = await probe(query, 0, params);
       assert.equal(result.counts.writes, mutation ? 1 : 0);
       assert.equal(result.error, mutation ? 'WRITE ATTEMPT' : null);
