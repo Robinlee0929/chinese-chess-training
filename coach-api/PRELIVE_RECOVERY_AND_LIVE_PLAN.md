@@ -181,6 +181,56 @@ workerd test persists seeded legacy-shape rows, disposes runtime, reopens using
 the production constructor and exercises the production forensic RPC with SQL,
 storage-write, env-read and outbound traps. All seed/transport hooks are test-only.
 
+### C1J native write-detector remediation (test-only)
+
+The native workerd proof does NOT infer read-only behavior from a SELECT prefix.
+`SELECT 1; UPDATE x SET value=value` executes one native write while preserving
+the final values; the old prefix trap incorrectly reported zero attempts. The
+focused detector suite retains this exact legacy negative-control reproduction.
+
+Mechanisms were evaluated in order on pinned Miniflare 5.20260903.0-alpha /
+workerd 1.20260903.1. The exposed SQL API has no mutation-authorizer/read-only
+execution option; `PRAGMA query_only` is rejected with SQLITE_AUTH. Native
+`rowsWritten` detects the same-value UPDATE and ordinary DDL, but reports zero
+for no-row UPDATE, already-existing CREATE IF NOT EXISTS, and writable
+`defer_foreign_keys`/`foreign_keys` PRAGMAs. Thus native accounting plus final
+row equality alone cannot prove the absence of mutation ATTEMPTS.
+
+The test-only `prelive-sql-write-detector.mjs` combines a statement-aware lexer
+with native execution accounting. It scans the whole SQL program, separating
+semicolons only outside strings, quoted identifiers and comments. Every statement
+must belong to the narrowly supported SELECT/WITH-read language, with no unquoted
+mutation operations, including a CTE's main UPDATE/INSERT/DELETE/REPLACE. Pure
+SELECT sequences, bound values, quoted keywords, comments, CASE and the scalar
+replace() function retain their read semantics. Unknown statement families fail
+closed rather than being assumed safe. This is not a general SQLite SQL parser.
+
+All standalone PRAGMAs, transaction/control commands, schema operations and
+extension/file/evaluation operations are denied. The sole allowed table-valued
+PRAGMA is the repository's read-only pragma_table_info(). The native suite audits
+supported writable PRAGMAs plus ANALYZE/REINDEX; writable_schema/user_version are
+runtime-rejected, not misreported as successful test mutations. No blanket claim
+about future SQLite extensions or new application SQL is made: those require
+review and renewed calibration. Native CTE UPDATE and REPLACE INTO are exercised;
+the pinned grammar rejects the probed REPLACE form without INTO.
+
+The wrapper counts and rejects non-allowlisted attempts BEFORE execution, even
+when production catches the error. For admitted SQL it consumes the native
+cursor and independently requires rowsWritten=0. It preserves the scoped
+toArray() interface; it does not add production test hooks or modify production
+SQL. Non-SQL storage mutation traps remain installed before the constructor.
+Complete before/after schema and row equality (including sequence state) remains
+mandatory alongside zero attempts. Local persisted-reopen constructor and RPC
+snapshot injections of SELECT followed by same-value UPDATE, in LF and CRLF,
+must fail the zero-write assertion for the intended counted attempt, not setup,
+syntax, import or row-difference failures. Eight detector mutation gates exercise
+actual native forwarding/rejection; no-op SQL isolates attempt classification
+from the independent native-write backstop. Prefix/same-value bypass mutants
+explicitly defeat both controls to demonstrate their intended broken behavior.
+
+These guarantees concern application writes in the local tested execution paths;
+they do not prove live rollout safety or authorize any incident invocation.
+
 ### Containment — always first
 
 Disable the real provider, zero/remove live budget authorization, and close the

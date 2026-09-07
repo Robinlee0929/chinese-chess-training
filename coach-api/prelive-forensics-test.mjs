@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import './prelive-forensics-runtime-test.mjs';
 import './prelive-orphan-recovery-test.mjs';
+import './prelive-write-detector-test.mjs';
 import { sqliteStorage, modules, variant, input, response } from './prelive-test-support.mjs';
 import * as forensics from './prelive/forensics.js';
 import { provisionCoordinator, INITIAL_PROVISIONING } from './prelive/provision.js';

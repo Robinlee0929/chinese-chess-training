@@ -6,13 +6,15 @@ import { fileURLToPath } from 'node:url';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
 
 for (const fixture of [
   { name: 'owned started incident', state: 'started', owner: true, terminated: 0 },
   { name: 'orphaned started incident', state: 'started', owner: false, terminated: 0 },
   { name: 'orphaned dispatch intent', state: 'dispatching', owner: false, terminated: 0 },
   { name: 'orphaned terminated awaiting finalize', state: 'started', owner: false, terminated: 1 },
-]) test(`C1J actual workerd existing SQLite reopen -> production constructor -> forensic RPC: ${fixture.name}`, async () => {
+]) for (const mutation of [null, ...(fixture.owner ? ['constructor LF', 'constructor CRLF', 'snapshot LF', 'snapshot CRLF'] : [])])
+test(`C1J actual workerd existing SQLite reopen -> production constructor -> forensic RPC: ${fixture.name}${mutation ? ` / injected ${mutation}` : ''}`, async () => {
   const directory = mkdtempSync(join(tmpdir(), 'coach-c1j-runtime-'));
   const dumpSource = `function dump(storage) {
     return storage.sql.exec("SELECT name, sql FROM sqlite_master ORDER BY name").toArray().map(row => ({ ...row,
@@ -37,6 +39,7 @@ for (const fixture of [
   `;
   const readSource = `
     import worker, { CoachRealProviderCoordinator as Production } from './prelive/worker.js';
+    import { createSQLWriteDetector } from './prelive-sql-write-detector.mjs';
     ${dumpSource}
     const counters = new WeakMap();
     export class CoachRealProviderCoordinator extends Production {
@@ -44,10 +47,7 @@ for (const fixture of [
         const counts = { writes: 0, secretReads: 0 };
         const sql = ctx.storage.sql;
         const originalExec = sql.exec.bind(sql);
-        sql.exec = (query, ...args) => {
-          if (!/^\\s*SELECT\\b/i.test(query)) { counts.writes++; throw new Error('WRITE ATTEMPT'); }
-          return originalExec(query, ...args);
-        };
+        sql.exec = createSQLWriteDetector(originalExec, counts);
         for (const key of ['put', 'delete', 'deleteAll', 'setAlarm', 'deleteAlarm', 'onNextSessionRestoreBookmark', 'transaction', 'transactionSync'])
           ctx.storage[key] = () => { counts.writes++; throw new Error('WRITE ATTEMPT'); };
         super(ctx, new Proxy(env, { get() { counts.secretReads++; throw new Error('ENV READ'); } }));
@@ -66,9 +66,25 @@ for (const fixture of [
     } };
   `;
   let runtime; let calls = 0;
-  async function boot(contents) {
+  async function boot(contents, inject = false) {
     const output = await build({ stdin: { contents, resolveDir: fileURLToPath(new URL('.', import.meta.url)) },
-      bundle: true, format: 'esm', platform: 'neutral', external: ['cloudflare:workers'], write: false });
+      bundle: true, format: 'esm', platform: 'neutral', external: ['cloudflare:workers'], write: false,
+      plugins: !inject ? [] : [{ name: 'test-only-write-injection', setup(builder) {
+        const constructor = mutation.startsWith('constructor');
+        builder.onLoad({ filter: constructor ? /prelive[\\/]budget\.js$/ : /prelive[\\/]worker\.js$/ }, async args => {
+          let source = (await readFile(args.path, 'utf8')).replace(/\r\n/gu, '\n');
+          const site = constructor ? '  const initial = forensicSnapshot(storage);'
+            : '    return JSON.stringify(forensicSnapshot(this.ctx.storage));';
+          const storage = constructor ? 'storage' : 'this.ctx.storage';
+          assert.equal(source.split(site).length, 2, 'unique production mutation site');
+          // The catch models production forensic error containment. The counter
+          // must expose a denied attempt even when application code swallows it.
+          source = source.replace(site, `    try { ${storage}.sql.exec('SELECT 1; UPDATE coach_slot SET owner=owner'); } catch {}\n${site}`);
+          if (mutation.endsWith('CRLF')) source = source.replace(/\n/gu, '\r\n');
+          return { contents: source, loader: 'js' };
+        });
+      } }],
+    });
     return new Miniflare({ ...convertV4MiniflareOptions({ name: 'c1j-local-runtime', modules: true, script: output.outputFiles[0].text,
       compatibilityDate: '2026-09-03', cf: false,
       bindings: { COACH_REAL_PROVIDER_ENABLED: 'false', COACH_REAL_DAILY_UNITS: '0', COACH_REAL_PROVIDER_PUBLIC_ENABLED: 'false' },
@@ -79,13 +95,19 @@ for (const fixture of [
   try {
     runtime = await boot(seedSource);
     const seeded = await (await runtime.dispatchFetch('https://local.invalid/')).json();
-    await runtime.dispose(); runtime = await boot(readSource);
+    await runtime.dispose(); runtime = null; runtime = await boot(readSource, !!mutation);
     const response = await runtime.dispatchFetch('https://local.invalid/__test/snapshot');
     const responseText = await response.text();
     assert.equal(response.status, 200, responseText);
     const result = JSON.parse(responseText);
     assert.deepEqual(result.before, seeded); assert.deepEqual(result.after, seeded);
-    assert.deepEqual(result.counts, { writes: 0, secretReads: 0 }); assert.equal(result.denied, true);
+    assert.equal(result.counts.secretReads, 0); assert.equal(result.denied, true);
+    const zeroWrites = () => assert.equal(result.counts.writes, 0);
+    if (mutation) {
+      assert.equal(result.counts.writes, mutation.startsWith('constructor') ? 1 : 2,
+        'injected actual SQL path must execute and reach the write-attempt detector');
+      assert.throws(zeroWrites, { name: 'AssertionError', code: 'ERR_ASSERTION' });
+    } else zeroWrites();
     assert.deepEqual(result.snapshots[0], result.snapshots[1]);
     const snapshot = JSON.parse(result.snapshots[0]);
     assert.equal(snapshot.raw.oneShot.state, 'CONSUMED');
