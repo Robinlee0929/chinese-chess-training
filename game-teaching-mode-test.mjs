@@ -345,6 +345,40 @@ function withAbsoluteImports(source) {
   ));
 }
 
+function injectIntoBeginGameTeachingModeAnalysis(source, statement) {
+  const prologue = /^export function beginGameTeachingModeAnalysis\(state, source\) \{\r?\n  requireState\(state\);(?=\r?$)/gm;
+  const matches = [...source.matchAll(prologue)];
+  assert.equal(matches.length, 1, 'Teaching Mode analysis prologue must match exactly once');
+  const eol = matches[0][0].includes('\r\n') ? '\r\n' : '\n';
+  return source.replace(prologue, (match) => `${match}${eol}  ${statement}`);
+}
+
+test('Teaching mutation injection is line-ending neutral and fails closed', () => {
+  const lf = [
+    'export function beginGameTeachingModeAnalysis(state, source) {',
+    '  requireState(state);',
+    '  return source;',
+  ].join('\n');
+  const crlf = lf.replaceAll('\n', '\r\n');
+  const statement = 'globalThis.__teachingNetwork?.();';
+
+  for (const [label, fixture, eol] of [['LF', lf, '\n'], ['CRLF', crlf, '\r\n']]) {
+    const mutated = injectIntoBeginGameTeachingModeAnalysis(fixture, statement);
+    assert.equal(mutated.split(statement).length - 1, 1, `${label}: one semantic target is mutated`);
+    assert.ok(mutated.includes(`requireState(state);${eol}  ${statement}${eol}`), `${label}: line ending is preserved`);
+  }
+
+  const decoys = [
+    '// export function beginGameTeachingModeAnalysis(state, source) {',
+    '//   requireState(state);',
+    "const text = 'export function beginGameTeachingModeAnalysis(state, source) {';",
+    'export function unrelatedLifecycle(state, source) {',
+    '  requireState(state);',
+  ].join('\n');
+  assert.throws(() => injectIntoBeginGameTeachingModeAnalysis(decoys, statement), /must match exactly once/);
+  assert.throws(() => injectIntoBeginGameTeachingModeAnalysis(`${lf}\n${lf}`, statement), /must match exactly once/);
+});
+
 async function importMutant(label, transform) {
   const base = withAbsoluteImports(moduleSource);
   const mutant = transform(base);
@@ -386,12 +420,17 @@ test('all 10 Teaching Mode behavioral mutation gates apply, execute and are kill
       (s) => s.replace('const [message] = deriveGameReviewTeaching(evidence);', "const [canonicalMessage] = deriveGameReviewTeaching(evidence);\n    const message = canonicalMessage ? { ...canonicalMessage, title: '最佳著' } : canonicalMessage;"),
       async (api) => { const state = readyState(api); assert.doesNotMatch(`${state.message.title}${state.message.body}`, FORBIDDEN); }],
     ['Teaching Mode changes opponent difficulty',
-      (s) => s.replace('export function beginGameTeachingModeAnalysis(state, source) {\n  requireState(state);', "export function beginGameTeachingModeAnalysis(state, source) {\n  requireState(state);\n  globalThis.__teachingDifficulty?.('hard');"),
+      (s) => injectIntoBeginGameTeachingModeAnalysis(s, "globalThis.__teachingDifficulty?.('hard');"),
       async (api) => { let difficulty = 'medium'; globalThis.__teachingDifficulty = (value) => { difficulty = value; }; try { api.beginGameTeachingModeAnalysis(enable(api), mateSource()); assert.equal(difficulty, 'medium'); } finally { delete globalThis.__teachingDifficulty; } }],
     ['Teaching Mode invokes network',
-      (s) => s.replace('export function beginGameTeachingModeAnalysis(state, source) {\n  requireState(state);', 'export function beginGameTeachingModeAnalysis(state, source) {\n  requireState(state);\n  globalThis.__teachingNetwork?.();'),
+      (s) => injectIntoBeginGameTeachingModeAnalysis(s, 'globalThis.__teachingNetwork?.();'),
       async (api) => { let requests = 0; globalThis.__teachingNetwork = () => { requests++; }; try { api.beginGameTeachingModeAnalysis(enable(api), mateSource()); assert.equal(requests, 0); } finally { delete globalThis.__teachingNetwork; } }],
   ];
-  for (const [label, transform, assertion] of gates) await killed(label, transform, assertion);
+  let executions = 0;
+  for (const [label, transform, assertion] of gates) {
+    await killed(label, transform, assertion);
+    executions++;
+  }
   assert.equal(gates.length, 10);
+  assert.equal(executions, 10);
 });
