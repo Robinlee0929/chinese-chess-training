@@ -7,6 +7,7 @@ import './prelive-recovery-test.mjs';
 import './prelive-one-shot-test.mjs';
 import './prelive-access-operator-test.mjs';
 import './prelive-forensics-test.mjs';
+import './prelive-ingress-config-test.mjs';
 import { beginCoachRequest, createIdleCoachState, settleCoachResponse, validateCoachRequestPayload } from '../game-review-coach.js';
 import { harness, request } from './test-support.mjs';
 
