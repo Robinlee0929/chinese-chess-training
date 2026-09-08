@@ -46,7 +46,7 @@ async function observe(module, scenario = {}) {
     CALLER_KV: { put: async () => called('storage') } };
   const env = new Proxy(target, { get(object, key, receiver) { state.reads.push(String(key)); return Reflect.get(object, key, receiver); } });
   const ctx = scenario.unauthenticated ? {} : { access: { aud: scenario.audience ?? AUDIENCE,
-    getIdentity: async () => ({ email: scenario.email ?? EMAIL }) } };
+    getIdentity: async () => { state.identities.push('getIdentity'); return { email: scenario.email ?? EMAIL }; } } };
   const headers = { Origin: scenario.origin ?? ORIGIN, ...(scenario.headers ?? {}) };
   const path = scenario.path ?? '/__operator/forensics';
   const response = await module.createForensicCaller()(new Request(`${ORIGIN}${path}`,
@@ -85,12 +85,29 @@ const gates = [
     before: "      if (url.origin === FORENSIC_ORIGIN && request.method === 'GET' && url.pathname === '/' && !url.search) {\n        return forensicPage();\n      }",
     after: "      if (url.origin === FORENSIC_ORIGIN && request.method === 'GET' && url.pathname === '/' && !url.search) {\n        await env.COACH_REAL_FORENSICS.forensicSnapshot();\n        return forensicPage();\n      }",
     scenario: { method: 'GET', path: '/' }, observe: state => calls(state, 'forensicSnapshot'), good: 0, bad: 1 },
+  { name: 'read Access identity while rendering root page',
+    before: "      if (url.origin === FORENSIC_ORIGIN && request.method === 'GET' && url.pathname === '/' && !url.search) {\n        return forensicPage();\n      }",
+    after: "      if (url.origin === FORENSIC_ORIGIN && request.method === 'GET' && url.pathname === '/' && !url.search) {\n        await ctx.access.getIdentity();\n        return forensicPage();\n      }",
+    scenario: { method: 'GET', path: '/' }, observe: state => state.identities.length, good: 0, bad: 1 },
   { name: 'retarget root form', before: 'action="/__operator/forensics"',
     after: 'action="/__operator/one-shot/arm"', scenario: { method: 'GET', path: '/' },
     observe: state => state.text.includes('action="/__operator/forensics"'), good: true, bad: false },
+  { name: 'change root form method', before: '<form method="post" action="/__operator/forensics">',
+    after: '<form method="get" action="/__operator/forensics">', scenario: { method: 'GET', path: '/' },
+    observe: state => state.text.includes('<form method="post" action="/__operator/forensics">'), good: true, bad: false },
+  { name: 'add successful root form control', before: '<button type="submit">Request forensic snapshot</button>',
+    after: '<input type="hidden" name="action" value="execute">\n<button type="submit">Request forensic snapshot</button>',
+    scenario: { method: 'GET', path: '/' },
+    observe: state => (state.text.match(/<(?:button|input|select|textarea)\b[^>]*\sname\s*=/giu) ?? []).length, good: 0, bad: 1 },
   { name: 'add executable root script', before: '<body>',
     after: '<body>\n<script src="https://foreign.invalid/x.js"></script>', scenario: { method: 'GET', path: '/' },
     observe: state => /<script\b/iu.test(state.text), good: false, bad: true },
+  { name: 'add automatic root form submission',
+    before: ['</form>', "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"],
+    after: ['</form>\n<script>document.forms[0].submit()</script>',
+      "default-src 'none'; script-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"],
+    scenario: { method: 'GET', path: '/' }, observe: state => /document\.forms\[0\]\.submit\(\)/u.test(state.text)
+      && (state.csp?.includes("script-src 'unsafe-inline'") ?? false), good: false, bad: true },
   { name: 'remove root form-action restriction',
     before: "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
     after: "default-src 'none'; frame-ancestors 'none'; base-uri 'none'", scenario: { method: 'GET', path: '/' },
@@ -150,16 +167,16 @@ const gates = [
     observe: state => calls(state, 'storage'), good: 0, bad: 1 },
 ];
 
-for (const [index, gate] of gates.entries()) test(`C1K P2B viable mutation ${gate.name}`, async () => {
-  const invariant = value => assert.deepEqual(value, gate.good);
-  const baseline = gate.observe(gate.reader ? await observeReader(readerImplementation) : await observe(implementation, gate.scenario));
-  invariant(baseline);
-  // The transform canonicalizes either LF or CRLF before exact replacement, then
-  // alternates emitted endings. Each viable gate therefore executes exactly once.
-  const mutant = await variant(gate.target ?? 'caller', gate.before, gate.after, index % 2 === 1);
-  const broken = gate.observe(gate.reader ? await observeReader(mutant) : await observe(mutant, gate.scenario));
-  assert.deepEqual(broken, gate.bad, 'the intended semantic defect must execute');
-  assert.throws(() => invariant(broken), { name: 'AssertionError', code: 'ERR_ASSERTION' });
-});
+for (const gate of gates) for (const [lineEnding, useCRLF] of [['LF', false], ['CRLF', true]]) {
+  test(`C1K P2B viable mutation ${gate.name} ${lineEnding}`, async () => {
+    const invariant = value => assert.deepEqual(value, gate.good);
+    const baseline = gate.observe(gate.reader ? await observeReader(readerImplementation) : await observe(implementation, gate.scenario));
+    invariant(baseline);
+    const mutant = await variant(gate.target ?? 'caller', gate.before, gate.after, useCRLF);
+    const broken = gate.observe(gate.reader ? await observeReader(mutant) : await observe(mutant, gate.scenario));
+    assert.deepEqual(broken, gate.bad, 'the intended semantic defect must execute');
+    assert.throws(() => invariant(broken), { name: 'AssertionError', code: 'ERR_ASSERTION' });
+  });
+}
 
-assert.equal(gates.length, 28);
+assert.equal(gates.length, 32);

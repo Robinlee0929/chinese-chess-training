@@ -100,7 +100,10 @@ test('C1K B2 exact root GET returns one static form before Access or env lookup'
   assert.match(body, /<form method="post" action="\/__operator\/forensics">/u);
   assert.equal(/<script\b/iu.test(body), false);
   assert.equal(/<(?:input|select|textarea)\b/iu.test(body), false);
-  assert.equal(/\sname\s*=/iu.test(body), false);
+  assert.equal(/<(?:button|input|select|textarea)\b[^>]*\sname\s*=/iu.test(body), false);
+  assert.equal(/\son[a-z]+\s*=/iu.test(body), false);
+  assert.equal(/\s(?:src|href)\s*=/iu.test(body), false);
+  assert.equal(/(?:\.submit|\.requestSubmit)\s*\(/iu.test(body), false);
   assert.equal(identityCalls, 0);
   assert.deepEqual(h.state.envReads, []);
   assert.deepEqual(Object.keys(h.state.calls), []);
@@ -117,10 +120,32 @@ test('C1K B2 every non-exact root request fails before Access or env lookup', as
   assert.equal(response.status, 403); assert.deepEqual(await response.json(), { status: 'failed' });
   assert.deepEqual(h.state.envReads, []); assert.deepEqual(Object.keys(h.state.calls), []);
 });
-test('C1K B2 zero-byte POST stream preserves the exact forensic POST contract', async () => {
-  const h = fixture(); const response = await h.send({ body: '' });
+test('C1K B2 browser-equivalent zero-control form POST preserves the exact forensic POST contract', async () => {
+  const controls = new URLSearchParams();
+  const request = new Request(`${ORIGIN}/__operator/forensics`, {
+    method: 'POST', headers: { Origin: ORIGIN }, body: controls,
+  });
+  const inspected = request.clone();
+  const url = new URL(request.url);
+  const contentTypeParts = request.headers.get('Content-Type').split(';').map(part => part.trim());
+  assert.equal(request.method, 'POST');
+  assert.equal(url.pathname, '/__operator/forensics');
+  assert.equal(url.search, '');
+  assert.equal(request.headers.get('Origin'), ORIGIN);
+  assert.equal(contentTypeParts.shift().toLowerCase(), 'application/x-www-form-urlencoded');
+  assert.equal(contentTypeParts.every(parameter => /^charset=utf-8$/iu.test(parameter)), true);
+  assert.equal([...controls].length, 0);
+  assert.equal((await inspected.arrayBuffer()).byteLength, 0);
+  const h = fixture(); const response = await h.handler(request, h.env, context());
   assert.equal(response.status, 200); assert.deepEqual(await response.json(), snapshot);
   assert.equal(h.state.calls.forensicSnapshot, 1);
+  assert.deepEqual(h.state.args, [[]]);
+});
+test('C1K B2 nonempty browser form payload remains rejected before the binding', async () => {
+  const h = fixture(); const body = new URLSearchParams({ action: 'execute' });
+  await expectFailure(h, { body });
+  assert.equal(body.toString(), 'action=execute');
+  assert.equal(h.state.calls.forensicSnapshot ?? 0, 0);
 });
 test('C1K P2B unauthenticated request makes zero DO calls', async () => {
   const h = fixture(); await expectFailure(h, {}, {}); assert.equal(h.state.identities.length, 0);
