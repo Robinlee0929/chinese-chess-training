@@ -1,8 +1,9 @@
-import { DurableObject } from 'cloudflare:workers';
+import { DurableObject, WorkerEntrypoint } from 'cloudflare:workers';
 import { createCoordinator } from './coordinator.js';
 import { executeAccessOperator } from './access-operator.js';
 import { publicEnabled, unavailable } from './policy.js';
 import { forensicSnapshot } from './forensics.js';
+import { createForensicReader } from './forensic-reader.js';
 export { default } from './outer.js';
 
 export class CoachRealProviderCoordinator extends DurableObject {
@@ -35,5 +36,13 @@ export class CoachRealProviderCoordinator extends DurableObject {
   async accessOperator(action, claim) {
     return JSON.stringify(await executeAccessOperator(this.ctx.storage, this.env,
       this.#coordinator.execute, action, claim));
+  }
+}
+
+// Cross-Worker capability boundary: this named entrypoint deliberately exposes
+// no fetch, execute, accessOperator, storage, or caller-selected object method.
+export class CoachRealForensicReader extends WorkerEntrypoint {
+  async forensicSnapshot(...args) {
+    return createForensicReader(this.env).forensicSnapshot(...args);
   }
 }

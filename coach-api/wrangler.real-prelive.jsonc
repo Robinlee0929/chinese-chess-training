@@ -2,7 +2,7 @@
   "name": "chinese-chess-coach-openai-staging",
   "main": "prelive/worker.js",
   "compatibility_date": "2026-09-03",
-  "workers_dev": false,
+  "workers_dev": true,
   "preview_urls": false,
   "vars": {
     "COACH_REAL_PROVIDER_ENABLED": "false",
