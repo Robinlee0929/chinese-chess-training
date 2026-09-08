@@ -4,6 +4,18 @@ const EXPECTED_OPERATOR_EMAIL = 'robinlee700929@gmail.com';
 const IDENTITY_TIMEOUT_MS = 1000;
 const SNAPSHOT_TIMEOUT_MS = 3000;
 const MAX_SNAPSHOT_LENGTH = 8192;
+const FORENSIC_PAGE = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Forensic snapshot</title>
+</head>
+<body>
+<form method="post" action="/__operator/forensics">
+<button type="submit">Request forensic snapshot</button>
+</form>
+</body>
+</html>`;
 
 const SYSTEM_CLOCK = Object.freeze({
   now: () => performance.now(),
@@ -13,6 +25,14 @@ const SYSTEM_CLOCK = Object.freeze({
 const boundedPolicy = value => typeof value === 'string' && /^[\x21-\x7e]{1,254}$/u.test(value);
 const failure = (status = 403) => Response.json({ status: 'failed' }, { status,
   headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
+const forensicPage = () => new Response(FORENSIC_PAGE, { status: 200, headers: {
+  'Cache-Control': 'no-store',
+  'Content-Security-Policy': "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+  'Content-Type': 'text/html; charset=utf-8',
+  'Referrer-Policy': 'no-referrer',
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+} });
 
 function singleAttempt(operation, clock, timeout) {
   return new Promise(resolve => {
@@ -108,6 +128,9 @@ export function createForensicCaller({ clock = SYSTEM_CLOCK } = {}) {
   return async function forensicCaller(request, env, ctx) {
     try {
       const url = new URL(request.url);
+      if (url.origin === FORENSIC_ORIGIN && request.method === 'GET' && url.pathname === '/' && !url.search) {
+        return forensicPage();
+      }
       if (url.pathname !== FORENSIC_PATH || request.method !== 'POST' || url.search
         || !await emptyBody(request, clock)) return failure();
       if (url.origin !== FORENSIC_ORIGIN || request.headers.get('Origin') !== FORENSIC_ORIGIN) return failure();

@@ -53,7 +53,8 @@ async function observe(module, scenario = {}) {
     { method: scenario.method ?? 'POST', headers, body: scenario.body }), env, ctx);
   const text = await response.text(); state.leaked = text.includes('PRIVATE_STACK_SENTINEL');
   return { status: response.status, calls: state.calls, identities: state.identities, args: state.args,
-    reads: state.reads, leaked: state.leaked };
+    reads: state.reads, leaked: state.leaked, text,
+    contentType: response.headers.get('Content-Type'), csp: response.headers.get('Content-Security-Policy') };
 }
 
 async function observeReader(module) {
@@ -78,6 +79,22 @@ const gates = [
     after: 'if (false) return failure();', scenario: { origin: 'https://foreign.invalid' }, observe: state => calls(state, 'forensicSnapshot'), good: 0, bad: 1 },
   { name: 'allow GET', before: "request.method !== 'POST'", after: 'false', scenario: { method: 'GET' },
     observe: state => calls(state, 'forensicSnapshot'), good: 0, bad: 1 },
+  { name: 'allow root query', before: "url.pathname === '/' && !url.search", after: "url.pathname === '/'",
+    scenario: { method: 'GET', path: '/?action=execute' }, observe: state => state.status, good: 403, bad: 200 },
+  { name: 'invoke binding while rendering root page',
+    before: "      if (url.origin === FORENSIC_ORIGIN && request.method === 'GET' && url.pathname === '/' && !url.search) {\n        return forensicPage();\n      }",
+    after: "      if (url.origin === FORENSIC_ORIGIN && request.method === 'GET' && url.pathname === '/' && !url.search) {\n        await env.COACH_REAL_FORENSICS.forensicSnapshot();\n        return forensicPage();\n      }",
+    scenario: { method: 'GET', path: '/' }, observe: state => calls(state, 'forensicSnapshot'), good: 0, bad: 1 },
+  { name: 'retarget root form', before: 'action="/__operator/forensics"',
+    after: 'action="/__operator/one-shot/arm"', scenario: { method: 'GET', path: '/' },
+    observe: state => state.text.includes('action="/__operator/forensics"'), good: true, bad: false },
+  { name: 'add executable root script', before: '<body>',
+    after: '<body>\n<script src="https://foreign.invalid/x.js"></script>', scenario: { method: 'GET', path: '/' },
+    observe: state => /<script\b/iu.test(state.text), good: false, bad: true },
+  { name: 'remove root form-action restriction',
+    before: "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+    after: "default-src 'none'; frame-ancestors 'none'; base-uri 'none'", scenario: { method: 'GET', path: '/' },
+    observe: state => state.csp?.includes("form-action 'self'") ?? false, good: true, bad: false },
   { name: 'allow arbitrary action field', before: '|| !await emptyBody(request, clock)', after: '|| false',
     scenario: { body: '{"action":"execute"}' }, observe: state => calls(state, 'forensicSnapshot'), good: 0, bad: 1 },
   { name: 'allow client object identity', target: 'reader',
@@ -145,4 +162,4 @@ for (const [index, gate] of gates.entries()) test(`C1K P2B viable mutation ${gat
   assert.throws(() => invariant(broken), { name: 'AssertionError', code: 'ERR_ASSERTION' });
 });
 
-assert.equal(gates.length, 23);
+assert.equal(gates.length, 28);

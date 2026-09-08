@@ -15,6 +15,18 @@ const EMAIL = 'robinlee700929@gmail.com';
 const AUDIENCE = 'synthetic-forensic-audience';
 const FIXED_IDENTITY = 'review-coach-real-provider-global-v1';
 const CONFIG_URL = new URL('./wrangler.forensic-caller.jsonc', import.meta.url);
+const FORENSIC_PAGE = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Forensic snapshot</title>
+</head>
+<body>
+<form method="post" action="/__operator/forensics">
+<button type="submit">Request forensic snapshot</button>
+</form>
+</body>
+</html>`;
 const snapshot = Object.freeze({
   version: 1,
   schema: { tablesPresent: { coach_days: true, coach_reservations: true, coach_slot: true,
@@ -53,7 +65,7 @@ function fixture({ value = encodedSnapshot(snapshot), ctx = context(), envOverri
     return handler(new Request(`${ORIGIN}${path}`, { method: 'POST', headers: { Origin: ORIGIN, ...headers },
       ...requestOptions }), env, suppliedContext);
   };
-  return { state, stub, env, clock, send };
+  return { state, stub, env, clock, handler, send };
 }
 
 async function expectFailure(h, options = {}, ctx, status = 403) {
@@ -66,6 +78,47 @@ async function expectFailure(h, options = {}, ctx, status = 403) {
 
 test('C1K P2B trusted exact operator makes one bounded forensic call', async () => {
   const h = fixture(); const response = await h.send();
+  assert.equal(response.status, 200); assert.deepEqual(await response.json(), snapshot);
+  assert.equal(h.state.calls.forensicSnapshot, 1);
+});
+test('C1K B2 exact root GET returns one static form before Access or env lookup', async () => {
+  let identityCalls = 0;
+  const h = fixture();
+  const response = await h.handler(new Request(`${ORIGIN}/`, { method: 'GET' }), h.env,
+    { access: { aud: AUDIENCE, getIdentity: async () => { identityCalls++; return { email: EMAIL }; } } });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('Cache-Control'), 'no-store');
+  assert.equal(response.headers.get('Content-Type'), 'text/html; charset=utf-8');
+  assert.equal(response.headers.get('Content-Security-Policy'),
+    "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
+  assert.equal(response.headers.get('Referrer-Policy'), 'no-referrer');
+  assert.equal(response.headers.get('X-Content-Type-Options'), 'nosniff');
+  assert.equal(response.headers.get('X-Frame-Options'), 'DENY');
+  const body = await response.text();
+  assert.equal(body, FORENSIC_PAGE);
+  assert.equal((body.match(/<form\b/giu) ?? []).length, 1);
+  assert.match(body, /<form method="post" action="\/__operator\/forensics">/u);
+  assert.equal(/<script\b/iu.test(body), false);
+  assert.equal(/<(?:input|select|textarea)\b/iu.test(body), false);
+  assert.equal(/\sname\s*=/iu.test(body), false);
+  assert.equal(identityCalls, 0);
+  assert.deepEqual(h.state.envReads, []);
+  assert.deepEqual(Object.keys(h.state.calls), []);
+});
+test('C1K B2 every non-exact root request fails before Access or env lookup', async () => {
+  for (const [method, path] of [['GET', '/?probe=1'], ['HEAD', '/'], ['POST', '/'],
+    ['GET', '/__operator/forensics'], ['GET', '/other']]) {
+    const h = fixture(); await expectFailure(h, { method, path });
+    assert.deepEqual(h.state.envReads, [], `${method} ${path} env reads`);
+    assert.deepEqual(Object.keys(h.state.calls), [], `${method} ${path} capability calls`);
+  }
+  const h = fixture();
+  const response = await h.handler(new Request('https://foreign.invalid/', { method: 'GET' }), h.env, context());
+  assert.equal(response.status, 403); assert.deepEqual(await response.json(), { status: 'failed' });
+  assert.deepEqual(h.state.envReads, []); assert.deepEqual(Object.keys(h.state.calls), []);
+});
+test('C1K B2 zero-byte POST stream preserves the exact forensic POST contract', async () => {
+  const h = fixture(); const response = await h.send({ body: '' });
   assert.equal(response.status, 200); assert.deepEqual(await response.json(), snapshot);
   assert.equal(h.state.calls.forensicSnapshot, 1);
 });
