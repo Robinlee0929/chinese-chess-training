@@ -8,6 +8,8 @@ import './prelive-one-shot-test.mjs';
 import './prelive-access-operator-test.mjs';
 import './prelive-forensics-test.mjs';
 import './prelive-ingress-config-test.mjs';
+import './forensic-caller-test.mjs';
+import './forensic-caller-mutation-test.mjs';
 import { beginCoachRequest, createIdleCoachState, settleCoachResponse, validateCoachRequestPayload } from '../game-review-coach.js';
 import { harness, request } from './test-support.mjs';
 
