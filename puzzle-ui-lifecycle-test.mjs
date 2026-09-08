@@ -156,7 +156,7 @@ function harness(options = {}) {
     aiWorker: { postMessage: () => { context.aiRequestCount++; } }, aiModule: null,
     practiceToken: 0, appState: 'NORMAL_GAME', editorState: null, recorderState: null,
     gameReviewSession: null, gameReviewPuzzleReturnContext: null, reviewAiInvalidations: 0,
-    gameReviewEvidenceState: null, r4StaleEvidence: null,
+    gameReviewEvidenceState: null, gameReviewTeachingMessageState: undefined, r4StaleEvidence: null,
     gameReviewCoachRequester,
     gameReviewCoachState: options.coachEnabled ? createIdleCoachState() : createDisabledCoachState(),
     gameReviewCoachRequest: null, gameReviewCoachRequestSequence: 0,

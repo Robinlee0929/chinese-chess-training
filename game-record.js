@@ -10,7 +10,7 @@ import {
   hasAnyLegalMove,
   hashBoard,
   repetitionVerdict,
-} from './game.js?v=7ac7301751';
+} from './game.js?v=3a54e4a165';
 
 export const GAME_RECORD_SCHEMA_VERSION = 1;
 
@@ -27,6 +27,7 @@ const TERMINATION_REASONS = new Set([
 const ROOT_FIELDS = Object.freeze([
   'schemaVersion', 'id', 'createdAt', 'completedAt', 'initialPosition', 'moves', 'mode', 'result',
 ]);
+const TIMELINE_FIELDS = Object.freeze(['id', 'createdAt', 'initialPosition', 'moves', 'mode']);
 const INITIAL_POSITION_FIELDS = Object.freeze(['board', 'sideToMove']);
 const PIECE_FIELDS = Object.freeze(['type', 'side']);
 const MOVE_FIELDS = Object.freeze(['from', 'to']);
@@ -75,6 +76,20 @@ export function replayGameRecord(input, ply) {
   return replayCanonical(record, ply);
 }
 
+// An in-memory, non-persistent move timeline. It deliberately is not a
+// GameRecord: live games do not have completion metadata or a result yet.
+export function createGameTimeline(input) {
+  const timeline = canonicalTimeline(input);
+  replayTimelineCanonical(timeline, timeline.moves.length, false);
+  return freezeTimeline(timeline);
+}
+
+export function replayGameTimeline(input, ply) {
+  const timeline = canonicalTimeline(input);
+  validateReplayPly(ply, timeline.moves.length);
+  return replayTimelineCanonical(timeline, ply, false);
+}
+
 function canonicalRecord(input) {
   requirePlainObject(input, 'INVALID_RECORD', 'GameRecord must be an object.', 'record');
   requireExactFields(input, ROOT_FIELDS, 'record');
@@ -113,6 +128,22 @@ function canonicalRecord(input) {
     mode: input.mode,
     result,
   };
+}
+
+function canonicalTimeline(input) {
+  requirePlainObject(input, 'INVALID_TIMELINE', 'Game timeline must be an object.', 'timeline');
+  requireExactFields(input, TIMELINE_FIELDS, 'timeline');
+  const id = requireCanonicalId(input.id);
+  const createdAt = requireTimestamp(input.createdAt, 'createdAt');
+  const initialPosition = canonicalInitialPosition(input.initialPosition);
+  if (!Array.isArray(input.moves)) {
+    fail('INVALID_MOVES', 'Game timeline moves must be an array.', { path: 'moves' });
+  }
+  const moves = input.moves.map((move, index) => canonicalMove(move, index));
+  if (!MODES.has(input.mode)) {
+    fail('UNSUPPORTED_MODE', 'Game timeline mode is unsupported.', { path: 'mode' });
+  }
+  return { id, createdAt, initialPosition, moves, mode: input.mode };
 }
 
 function canonicalInitialPosition(input) {
@@ -227,6 +258,10 @@ function canonicalResult(result) {
 }
 
 function replayCanonical(record, selectedPly) {
+  return replayTimelineCanonical(record, selectedPly, true);
+}
+
+function replayTimelineCanonical(record, selectedPly, requireCompletedResult) {
   const board = cloneBoard(record.initialPosition.board);
   let sideToMove = record.initialPosition.sideToMove;
   const positionHashes = [hashBoard(board)];
@@ -307,20 +342,22 @@ function replayCanonical(record, selectedPly) {
     }
   }
 
-  if (!terminal) {
-    fail('NONTERMINAL_RECORD', 'GameRecord move sequence does not reach a terminal position.', {
-      path: 'moves',
-    });
-  }
-  if (record.result.winner !== terminal.winner) {
-    fail('RESULT_WINNER_MISMATCH', 'Stored winner does not match canonical replay.', {
-      path: 'result.winner',
-    });
-  }
-  if (record.result.terminationReason !== terminal.terminationReason) {
-    fail('RESULT_REASON_MISMATCH', 'Stored terminationReason does not match canonical replay.', {
-      path: 'result.terminationReason',
-    });
+  if (requireCompletedResult) {
+    if (!terminal) {
+      fail('NONTERMINAL_RECORD', 'GameRecord move sequence does not reach a terminal position.', {
+        path: 'moves',
+      });
+    }
+    if (record.result.winner !== terminal.winner) {
+      fail('RESULT_WINNER_MISMATCH', 'Stored winner does not match canonical replay.', {
+        path: 'result.winner',
+      });
+    }
+    if (record.result.terminationReason !== terminal.terminationReason) {
+      fail('RESULT_REASON_MISMATCH', 'Stored terminationReason does not match canonical replay.', {
+        path: 'result.terminationReason',
+      });
+    }
   }
 
   return freezeReplaySnapshot({
@@ -469,6 +506,22 @@ function freezeRecord(record) {
     }))),
     mode: record.mode,
     result: Object.freeze({ ...record.result }),
+  });
+}
+
+function freezeTimeline(timeline) {
+  return Object.freeze({
+    id: timeline.id,
+    createdAt: timeline.createdAt,
+    initialPosition: Object.freeze({
+      board: freezeBoard(timeline.initialPosition.board),
+      sideToMove: timeline.initialPosition.sideToMove,
+    }),
+    moves: Object.freeze(timeline.moves.map((move) => Object.freeze({
+      from: Object.freeze(cloneCoordinate(move.from)),
+      to: Object.freeze(cloneCoordinate(move.to)),
+    }))),
+    mode: timeline.mode,
   });
 }
 
