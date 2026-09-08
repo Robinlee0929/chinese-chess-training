@@ -2,8 +2,13 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
-import { RED, BLACK, initialBoard } from './game.js';
-import { createGameRecord, replayGameRecord, createGameTimeline } from './game-record.js';
+import { RED, BLACK, initialBoard, name } from './game.js';
+import {
+  createGameRecord,
+  replayGameRecord,
+  createGameTimeline,
+  replayGameTimeline,
+} from './game-record.js';
 import { createGameRecordStore } from './game-record-store.js';
 import {
   createGameReview,
@@ -169,7 +174,8 @@ function vector() {
 
 function harness({
   records = [], serialized, readError, writeError, confirm = true,
-  mode = 'pvp', turn = RED, realRenderer = false, rendererMutation = null,
+  mode = 'pvp', turn = RED, realRenderer = false, realHud = false, rendererMutation = null,
+  liveResultMutation = null, liveResultEol = null,
   reviewAiMutation = null, teachingMutation = null, workerCreationError = false,
   coachEnabled = false, coachMutation = null, coachEol = null,
   stagingCoach = false,
@@ -254,7 +260,7 @@ function harness({
     createElement: (tagName) => domNode(false, tagName),
   };
   const context = vm.createContext({
-    RED, BLACK, structuredClone,
+    RED, BLACK, structuredClone, name,
     APP_STATE: Object.freeze({
       NORMAL_GAME: 'NORMAL_GAME',
       GAME_RECORD_LIBRARY: 'GAME_RECORD_LIBRARY',
@@ -409,6 +415,16 @@ function harness({
     gameReviewMoveCount: domNode(),
     gameReviewMoveList: domNode(),
     btnReviewGame: domNode(),
+    turnText: domNode(),
+    turnDot: Object.assign(domNode(), { style: {} }),
+    turnBox: domNode(),
+    capRedEl: domNode(),
+    capBlackEl: domNode(),
+    btnUndo: domNode(),
+    btnNew: domNode(),
+    modeSel: domNode(),
+    btnEditor: domNode(),
+    btnLibrary: domNode(),
     btnGameRecords: domNode(),
     btnGameReviewFirst: domNode(),
     btnGameReviewPrevious: domNode(),
@@ -455,6 +471,12 @@ function harness({
     normalGameActive: () => context.appState === 'NORMAL_GAME',
     gameRecordFlowActive: () => ['GAME_RECORD_LIBRARY', 'GAME_REVIEW', 'GAME_ANALYSIS'].includes(context.appState),
     puzzleFlowActive: () => context.appState.startsWith('PUZZLE_'),
+    practiceActive: () => false,
+    recorderBoardActive: () => false,
+    authoringActive: () => false,
+    libraryActive: () => false,
+    normalUndoAvailable: () => false,
+    isAI: () => context.mode !== 'pvp',
     clearSelection: () => { context.selected = null; context.legal = []; },
     clearGameAnalysisSelection: () => {
       context.gameAnalysisSelected = null;
@@ -497,6 +519,7 @@ function harness({
       return context.libraryView;
     },
     refreshHUD() {},
+    renderGameTeachingMode() {},
     renderGameAnalysis() {},
     checkBoardMeshInvariant: () => ({ ok: true, errors: [] }),
     toast: (message) => context.messages.push(message),
@@ -571,11 +594,50 @@ function harness({
   ];
   // In realRenderer mode these are byte-identical production functions from main.js.
   // Only low-level DOM, mesh rebuilding, HUD, audio/confetti, and storage boundaries are doubled.
-  const rendererHelpers = realRenderer ? [
+  const rendererHelperNames = [
     'gameRecordModeLabel', 'gameRecordResultLabel', 'formatGameRecordCompletedAt',
     'appendGameReviewMeta', 'syncGameReviewMoveMark', 'gameReviewAnnouncement',
-  ].map(functionSource) : [];
+  ];
+  const rendererHelpers = realRenderer ? rendererHelperNames.map(functionSource) : [];
   let rendererSource = realRenderer ? functionSource('renderGameReview') : '';
+  let hudSource = realHud ? functionSource('refreshHUD') : '';
+  const normalizeLiveResultEol = (text) => liveResultEol
+    ? text.replace(/\r\n?/g, '\n').replace(/\n/g, liveResultEol)
+    : text;
+  for (let index = 0; index < rendererHelpers.length; index++) {
+    rendererHelpers[index] = normalizeLiveResultEol(rendererHelpers[index]);
+  }
+  rendererSource = normalizeLiveResultEol(rendererSource);
+  hudSource = normalizeLiveResultEol(hudSource);
+  if (liveResultMutation) {
+    const replaceLiveResultOnce = (text, target, replacement) => {
+      assert.equal(text.split(target).length - 1, 1,
+        `live result mutation exact replacement count: ${liveResultMutation}`);
+      return text.replace(target, replacement);
+    };
+    if (liveResultMutation === 'announcement-at-last-is-completed') {
+      const index = rendererHelperNames.indexOf('gameReviewAnnouncement');
+      rendererHelpers[index] = replaceLiveResultOnce(
+        rendererHelpers[index],
+        "review.sourceKind === 'completed' && review.atLast && review.snapshot.terminal",
+        'review.atLast && review.snapshot.terminal',
+      );
+    } else if (liveResultMutation === 'hud-at-last-is-completed') {
+      hudSource = replaceLiveResultOnce(
+        hudSource,
+        "gameReviewSession.sourceKind === 'completed' && gameReviewSession.atLast",
+        'gameReviewSession.atLast',
+      );
+    } else if (liveResultMutation === 'synthetic-live-result') {
+      hudSource = replaceLiveResultOnce(
+        hudSource,
+        ": `複盤・第 ${gameReviewSession.selectedPly} / ${gameReviewSession.totalPlies} 著`;",
+        ": gameReviewSession.atLast ? '複盤・和局・未知' : `複盤・第 ${gameReviewSession.selectedPly} / ${gameReviewSession.totalPlies} 著`;",
+      );
+    } else {
+      assert.fail(`unknown live result mutation: ${liveResultMutation}`);
+    }
+  }
   const mutations = {
     board: 'board = structuredClone(review.snapshot.board);',
     turn: 'turn = review.snapshot.sideToMove;',
@@ -753,7 +815,10 @@ function harness({
   const initialization = source.match(/let gameReviewCoachState = gameReviewCoachRequester[^]*?: createDisabledCoachState\(\);/)[0];
   context.createDisabledCoachState = createDisabledCoachState;
   vm.runInContext(initialization.replace('let gameReviewCoachState', 'globalThis.gameReviewCoachState'), context);
-  vm.runInContext([...rendererHelpers, rendererSource, ...mainFunctions].filter(Boolean).join('\n'), context);
+  vm.runInContext(
+    [...rendererHelpers, rendererSource, hudSource, ...mainFunctions].filter(Boolean).join('\n'),
+    context,
+  );
   const realCoachResponse = context.handleGameReviewCoachResponse;
   const realCoachSettlement = context.settleCoachResponse;
   context.coachSettlementCalls = 0;
@@ -1026,7 +1091,24 @@ test('just-completed in-memory record opens at the final board with zero persist
   assertLiveStateUnchanged(ctx, before, 'just-completed review exit');
 });
 
-test('production live Teaching handoff opens the existing Review at anchor and restores the live game unchanged', () => {
+test('completed Review preserves final checkmate, stalemate and repetition result rendering', () => {
+  const cases = [
+    [record('completed-checkmate-render'), '紅方勝・將死'],
+    [stalemateRecord('completed-stalemate-render'), '紅方勝・困斃'],
+    [repetitionRecord('completed-repetition-render'), '和局・三次重複局面'],
+  ];
+  for (const [completed, label] of cases) {
+    const ctx = harness({ realRenderer: true, realHud: true });
+    assert.equal(ctx.openGameReview(completed, { returnState: 'NORMAL_GAME' }), true);
+    assert.equal(ctx.gameReviewSession.sourceKind, 'completed');
+    assert.equal(ctx.gameReviewSession.atLast, true);
+    assert.equal(ctx.turnText.textContent, `複盤・${label}`);
+    assert.match(ctx.gameReviewStatus.textContent, new RegExp(`終局：${label}`));
+    ctx.exitGameRecordFlow();
+  }
+});
+
+test('production live Teaching handoff navigates every live ply and restores the live game unchanged', () => {
   const completed = record('live-handoff-review');
   const timeline = createGameTimeline({
     id: completed.id,
@@ -1060,7 +1142,13 @@ test('production live Teaching handoff opens the existing Review at anchor and r
       move: completed.moves[0],
     },
   });
-  const ctx = harness({ realRenderer: true, mode: 'medium', turn: RED, stagingCoach: true });
+  const ctx = harness({
+    realRenderer: true,
+    realHud: true,
+    mode: 'medium',
+    turn: RED,
+    stagingCoach: true,
+  });
   const before = liveSnapshot(ctx);
   ctx.gameTeachingReviewHandoff = Object.freeze({ kind: 'test-handoff' });
   ctx.gameTeachingModeState = Object.freeze({ status: 'ready' });
@@ -1087,9 +1175,175 @@ test('production live Teaching handoff opens the existing Review at anchor and r
   assert.equal(ctx.coachCapabilitiesRequests.length, 0);
   assert.equal(ctx.coachRequests.length, 0);
 
+  const assertNavigation = (target, expectedPly, stage) => {
+    assert.doesNotThrow(() => assert.equal(ctx.navigateGameReview(target), true), stage);
+    assert.equal(ctx.gameReviewSession.selectedPly, expectedPly, `${stage}: selected ply`);
+    assert.deepEqual(
+      ctx.renderedBoard,
+      replayGameTimeline(timeline, expectedPly).board,
+      `${stage}: exact timeline board`,
+    );
+    assert.equal(
+      ctx.turnText.textContent,
+      `複盤・第 ${expectedPly} / ${timeline.moves.length} 著`,
+      `${stage}: live HUD`,
+    );
+    assert.equal(
+      Object.hasOwn(ctx.gameReviewSession.record, 'result'),
+      false,
+      `${stage}: no fabricated result`,
+    );
+    assertLiveStateUnchanged(ctx, before, stage);
+  };
+  assertNavigation('next', 1, 'next to taught move and live last ply');
+  assertNavigation('next', 1, 'repeated next at live last ply');
+  assertNavigation('previous', 0, 'previous to anchor');
+  assertNavigation('first', 0, 'home to anchor');
+  assertNavigation('last', 1, 'end to live last ply');
+  assertNavigation('previous', 0, 'previous after end');
+  assertNavigation('last', 1, 'repeated end navigation');
+
   ctx.exitGameRecordFlow();
   assert.equal(ctx.appState, 'NORMAL_GAME');
   assertLiveStateUnchanged(ctx, before, 'live Teaching Review exit');
+});
+
+const LIVE_RESULT_MUTATIONS = Object.freeze([
+  Object.freeze({ name: 'announcement-at-last-is-completed', outcome: 'missing-result' }),
+  Object.freeze({ name: 'hud-at-last-is-completed', outcome: 'missing-result' }),
+  Object.freeze({ name: 'synthetic-live-result', outcome: 'synthetic-result' }),
+]);
+
+function liveResultMutationScenario(liveResultMutation, liveResultEol = null) {
+  const completed = record(`live-result-${liveResultMutation}-${liveResultEol === '\r\n' ? 'crlf' : 'lf'}`);
+  const timeline = createGameTimeline({
+    id: completed.id,
+    createdAt: completed.createdAt,
+    initialPosition: completed.initialPosition,
+    moves: completed.moves,
+    mode: completed.mode,
+  });
+  const anchor = replayGameRecord(completed, 0);
+  const message = Object.freeze({
+    title: '看看這一著',
+    body: '這是已接受的本機教學提示。',
+    ruleId: 'capture-difference',
+    source: Object.freeze({
+      recordId: completed.id,
+      ply: 0,
+      positionKey: anchor.repetitionHistory.at(-1).key,
+      r3aRevision: 4,
+    }),
+  });
+  const review = createLiveGameReview(timeline, {
+    anchorPly: 0,
+    movePly: 1,
+    teachingTarget: {
+      recordId: completed.id,
+      anchorPly: 0,
+      movePly: 1,
+      positionKey: anchor.repetitionHistory.at(-1).key,
+      teachingRevision: 4,
+      ruleId: message.ruleId,
+      move: completed.moves[0],
+    },
+  });
+  const ctx = harness({
+    realRenderer: true,
+    realHud: true,
+    liveResultMutation,
+    liveResultEol,
+    mode: 'medium',
+    turn: RED,
+  });
+  ctx.gameTeachingReviewHandoff = Object.freeze({ kind: 'test-handoff' });
+  ctx.gameTeachingModeState = Object.freeze({ status: 'ready' });
+  ctx.consumeGameLiveReviewHandoff = () => Object.freeze({
+    accepted: true,
+    review,
+    r3aState: createGameReviewAiState(4),
+    evidence: null,
+    message,
+  });
+  assert.equal(ctx.openGameTeachingReviewHandoff(ctx.btnReviewGame), true);
+  return { ctx, timeline };
+}
+
+function stalemateRecord(id = 'record-stalemate') {
+  const board = emptyBoard();
+  board[9][5] = { type: 'K', side: BLACK };
+  board[0][5] = { type: 'K', side: RED };
+  board[4][5] = { type: 'P', side: RED };
+  board[7][5] = { type: 'N', side: RED };
+  board[7][0] = { type: 'R', side: RED };
+  return createGameRecord({
+    schemaVersion: 1,
+    id,
+    createdAt: '2026-08-31T02:10:00.000Z',
+    completedAt: '2026-08-31T02:11:00.000Z',
+    initialPosition: { board, sideToMove: RED },
+    moves: [{ from: { r: 7, c: 0 }, to: { r: 8, c: 0 } }],
+    mode: 'pvp',
+    result: { winner: RED, terminationReason: 'stalemate' },
+  });
+}
+
+test('three live-result renderer mutations reach their intended path and are behaviorally killed', () => {
+  let applied = 0;
+  let imported = 0;
+  let executed = 0;
+  let intendedPathReached = 0;
+  let killed = 0;
+  for (const mutation of LIVE_RESULT_MUTATIONS) {
+    applied++;
+    const { ctx, timeline } = liveResultMutationScenario(mutation.name);
+    imported++;
+    executed++;
+    if (mutation.outcome === 'missing-result') {
+      let kill;
+      try {
+        assert.doesNotThrow(
+          () => ctx.navigateGameReview('next'),
+          `${mutation.name}: live last ply must not require record.result`,
+        );
+      } catch (error) {
+        kill = error;
+      }
+      assert.equal(kill?.code, 'ERR_ASSERTION', `${mutation.name}: targeted assertion killed mutant`);
+      assert.equal(kill?.actual?.name, 'TypeError', `${mutation.name}: intended missing-result path`);
+      assert.match(kill.actual.message, /terminationReason/);
+    } else {
+      assert.equal(ctx.navigateGameReview('next'), true);
+      assert.equal(ctx.turnText.textContent, '複盤・和局・未知', 'synthetic result path reached');
+      let kill;
+      try {
+        assert.equal(
+          ctx.turnText.textContent,
+          `複盤・第 1 / ${timeline.moves.length} 著`,
+          'live Review must report progress without a fabricated result',
+        );
+      } catch (error) {
+        kill = error;
+      }
+      assert.equal(kill?.code, 'ERR_ASSERTION', 'synthetic result is killed behaviorally');
+    }
+    intendedPathReached++;
+    killed++;
+  }
+  assert.deepEqual(
+    { applied, imported, executed, intendedPathReached, killed },
+    { applied: 3, imported: 3, executed: 3, intendedPathReached: 3, killed: 3 },
+  );
+});
+
+test('live-result renderer mutation transforms execute under LF and CRLF', () => {
+  for (const eol of ['\n', '\r\n']) {
+    const { ctx } = liveResultMutationScenario('hud-at-last-is-completed', eol);
+    assert.throws(
+      () => ctx.navigateGameReview('next'),
+      (error) => error?.name === 'TypeError' && /terminationReason/.test(error.message),
+    );
+  }
 });
 
 test('production renderGameReview keeps a different live game immutable across every navigation route', () => {

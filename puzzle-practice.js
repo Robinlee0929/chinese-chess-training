@@ -1,5 +1,5 @@
-import { ROWS, COLS, RED, BLACK, legalMoves, applyMove, name, notation } from './game.js?v=e6fa54af94';
-import { validatePuzzle, isCheckmateAfterSolution } from './puzzle-domain.js?v=e6fa54af94';
+import { ROWS, COLS, RED, BLACK, legalMoves, applyMove, name, notation } from './game.js?v=3a54e4a165';
+import { validatePuzzle, isCheckmateAfterSolution } from './puzzle-domain.js?v=3a54e4a165';
 
 const SIDES = new Set([RED, BLACK]);
 const STATUSES = new Set(['practicing', 'complete']);

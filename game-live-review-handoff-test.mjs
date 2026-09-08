@@ -493,7 +493,12 @@ const MUTATIONS = [
     (s) => replaceOnce(s, "|| source.sideToMove !== RED", "|| false"),
     async (api) => assert.throws(() => api.createGameLiveReviewHandoff(computerFixture()), /committed human move/)],
   ['allow-off-state',
-    (s) => replaceOnce(s, "if (!teachingState?.enabled || teachingState.status", "if (false || teachingState.status"),
+    (s) => replaceOnce(
+      replaceOnce(s,
+        "if (!teachingState?.enabled || teachingState.status",
+        "if (false || teachingState.status"),
+      "|| teachingState.enabled !== true",
+      "|| false"),
     async (api, values) => assert.equal(api.createGameLiveReviewHandoff({ ...values, teachingState: { ...values.teachingState, enabled: false } }), null)],
   ['duplicate-r3a',
     (s) => replaceOnce(s, "export function consumeGameLiveReviewHandoff(handoff, { teachingState, session, history }) {\n  try {", "export function consumeGameLiveReviewHandoff(handoff, { teachingState, session, history }) {\n  globalThis.__t2aR3A?.();\n  try {"),
@@ -502,8 +507,23 @@ const MUTATIONS = [
     (s) => replaceOnce(s, "} catch (error) {\n    if (!(error instanceof GameLiveReviewHandoffError))", "} catch (error) {\n    globalThis.__t2aFallbackReanalysis?.();\n    if (!(error instanceof GameLiveReviewHandoffError))"),
     async (api, values) => { let calls = 0; globalThis.__t2aFallbackReanalysis = () => calls++; try { api.consumeGameLiveReviewHandoff({ ...clone(values.handoff), positionKey: 'wrong|red' }, values); assert.equal(calls, 0); } finally { delete globalThis.__t2aFallbackReanalysis; } }],
   ['analysis-uses-live-board',
-    (s) => replaceOnce(s, "board: review.snapshot.board,", "board: globalThis.__t2aAnalysisLiveBoard,"),
-    async (api, values) => { const review = consume(values).review; const latest = clone(review.snapshot.board); applyMove(latest, PLAYED.from, PLAYED.to); globalThis.__t2aAnalysisLiveBoard = latest; try { assert.deepEqual(api.createGameLiveReviewAnalysis(review).anchorBoard, review.snapshot.board); } finally { delete globalThis.__t2aAnalysisLiveBoard; } }],
+    (s) => replaceOnce(
+      s,
+      "board: review.snapshot.board,\n    sideToMove: review.snapshot.sideToMove,\n    repetitionHistory: review.snapshot.repetitionHistory,",
+      "board: globalThis.__t2aAnalysisLiveSnapshot.board,\n    sideToMove: globalThis.__t2aAnalysisLiveSnapshot.sideToMove,\n    repetitionHistory: globalThis.__t2aAnalysisLiveSnapshot.repetitionHistory,"),
+    async (api, values) => {
+      const review = consume(values).review;
+      const laterTimeline = createGameTimeline({
+        ...values.handoff.timeline,
+        moves: [PLAYED, COMPUTER_REPLY],
+      });
+      globalThis.__t2aAnalysisLiveSnapshot = replayGameTimeline(laterTimeline, 2);
+      try {
+        assert.deepEqual(api.createGameLiveReviewAnalysis(review).anchorBoard, review.snapshot.board);
+      } finally {
+        delete globalThis.__t2aAnalysisLiveSnapshot;
+      }
+    }],
   ['puzzle-uses-live-board',
     (s) => replaceOnce(s, "board: review.snapshot.board,", "board: globalThis.__t2aPuzzleLiveBoard,"),
     async (api, values) => { const review = consume(values).review; const latest = clone(review.snapshot.board); applyMove(latest, PLAYED.from, PLAYED.to); globalThis.__t2aPuzzleLiveBoard = latest; try { assert.deepEqual(api.createGameReviewPuzzleHandoff(review).editorState.board, review.snapshot.board); } finally { delete globalThis.__t2aPuzzleLiveBoard; } }],
@@ -529,6 +549,28 @@ test('mutation injection is LF/CRLF neutral', async () => {
   }
 });
 
+test('OFF mutant reaches the intended forbidden creation path and is killed behaviorally', async () => {
+  const api = await mutatedApi(MUTATIONS[7][1]);
+  const values = makeHandoff();
+  const offValues = {
+    ...values,
+    teachingState: { ...values.teachingState, enabled: false },
+  };
+  let brokenHandoff;
+  assert.doesNotThrow(() => {
+    brokenHandoff = api.createGameLiveReviewHandoff(offValues);
+  });
+  assert.ok(brokenHandoff, 'mutant must create the forbidden OFF-state handoff');
+  assert.equal(brokenHandoff.kind, 'live-teaching-review-handoff');
+  let behavioralKill;
+  try {
+    assert.equal(brokenHandoff, null, 'healthy OFF behavior requires no handoff');
+  } catch (error) {
+    behavioralKill = error;
+  }
+  assert.equal(behavioralKill?.code, 'ERR_ASSERTION');
+});
+
 test('all 16 live handoff behavioral mutations apply, import, execute and are killed', async () => {
   let applied = 0;
   let imported = 0;
@@ -546,7 +588,12 @@ test('all 16 live handoff behavioral mutations apply, import, execute and are ki
     executed++;
     try {
       await oracle(api, values);
-    } catch {
+    } catch (error) {
+      assert.equal(
+        error?.code,
+        'ERR_ASSERTION',
+        `${name}: arbitrary production/import exceptions are not behavioral kills`,
+      );
       killed++;
       continue;
     }
