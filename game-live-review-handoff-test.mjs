@@ -33,6 +33,8 @@ const moduleSource = readFileSync(new URL('./game-live-review-handoff.js', impor
 const reviewSource = readFileSync(new URL('./game-review.js', import.meta.url), 'utf8');
 const puzzleHandoffSource = readFileSync(new URL('./game-review-puzzle-handoff.js', import.meta.url), 'utf8');
 const mainSource = readFileSync(new URL('./main.js', import.meta.url), 'utf8');
+const htmlSource = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
+const cssSource = readFileSync(new URL('./css/style.css', import.meta.url), 'utf8');
 
 function emptyBoard() {
   return Array.from({ length: 10 }, () => Array(9).fill(null));
@@ -329,8 +331,14 @@ test('create and consume leave the live board, session, history and Teaching sta
   assert.deepEqual(values, before);
 });
 
-test('production seam has no visible T2B control and routes live Review consumers through snapshots', () => {
-  assert.doesNotMatch(readFileSync(new URL('./index.html', import.meta.url), 'utf8'), /TeachingReview|liveReviewHandoff/i);
+test('production seam exposes one bounded CTA while routing live Review consumers through snapshots', () => {
+  assert.equal((htmlSource.match(/id="btnGameTeachingReview"/gu) || []).length, 1);
+  assert.match(htmlSource, /<button id="btnGameTeachingReview" type="button"[^>]*>複盤這一步<\/button>/u);
+  assert.match(mainSource, /gameTeachingReviewCtaReady/u);
+  assert.match(mainSource, /consumeGameLiveReviewHandoff\(gameTeachingReviewHandoff/u);
+  assert.match(mainSource, /openGameTeachingReviewHandoff\(btnGameTeachingReview\)/u);
+  assert.match(mainSource, /move\.ply === review\.teachingTarget\?\.movePly/u);
+  assert.match(cssSource, /\.game-review-teaching-move-marker/u);
   assert.match(mainSource, /openGameTeachingReviewHandoff/);
   assert.match(mainSource, /createGameLiveReviewAnalysis\(gameReviewSession\)/);
   assert.match(mainSource, /createGameReviewPuzzleHandoff\(gameReviewSession\)/);

@@ -13,7 +13,7 @@ import {
 import {
   readInstalledReviewCoachStagingCapability,
   B2A_BROWSER_TIMEOUT_MS,
-} from './review-coach-connectivity.js?v=3a54e4a165';
+} from './review-coach-connectivity.js?v=c9eecddb53';
 
 const indexSource = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
 const entryHtml = readFileSync(new URL('./staging/review-coach.html', import.meta.url), 'utf8');
@@ -40,7 +40,7 @@ function exactKeys(value, keys) {
   assert.deepEqual(Object.keys(value).sort(), [...keys].sort());
 }
 
-function fakeDocument(mainSource = './main.js?v=3a54e4a165') {
+function fakeDocument(mainSource = './main.js?v=c9eecddb53') {
   return {
     baseURI: 'https://robinlee0929.github.io/chinese-chess-training/',
     querySelector(selector) {
@@ -117,9 +117,9 @@ async function importDataModule(source, cacheKey = '') {
 }
 
 async function importStagingBootstrap(candidate) {
-  const dependencyTarget = "} from '../review-coach-staging-bootstrap.js?v=3a54e4a165';";
+  const dependencyTarget = "} from '../review-coach-staging-bootstrap.js?v=c9eecddb53';";
   const dependencyUrl = new URL(
-    './review-coach-staging-bootstrap.js?v=3a54e4a165', import.meta.url,
+    './review-coach-staging-bootstrap.js?v=c9eecddb53', import.meta.url,
   ).href;
   const importable = replaceUnique(candidate, dependencyTarget,
     `} from '${dependencyUrl}';`, 'staging dependency rewrite');
@@ -412,7 +412,7 @@ test('staging capability is branded and installed before main initialization', a
   });
   assert.equal(installedAtMain, capability);
   assert.equal(readInstalledReviewCoachStagingCapability(target), capability);
-  assert.equal(mainUrl, 'https://robinlee0929.github.io/chinese-chess-training/main.js?v=3a54e4a165');
+  assert.equal(mainUrl, 'https://robinlee0929.github.io/chinese-chess-training/main.js?v=c9eecddb53');
   assert.equal(calls.length, 0, 'bootstrap and main initialization do not fetch Worker capabilities');
 });
 

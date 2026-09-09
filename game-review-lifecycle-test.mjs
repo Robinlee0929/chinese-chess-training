@@ -168,6 +168,48 @@ function domNode(initiallyHidden = false, tagName = 'div') {
   return node;
 }
 
+function teachingCtaHarness({ enabled = true, accepted = true, hasMessage = true,
+  hasHandoff = true, active = true, ai = true } = {}) {
+  const context = vm.createContext({
+    gameTeachingModeState: Object.freeze({
+      enabled,
+      status: hasMessage ? 'ready' : 'idle',
+      message: hasMessage ? Object.freeze({ title: '看看這一著', body: '一起複盤。' }) : null,
+      evidence: hasMessage ? Object.freeze({
+        played: Object.freeze({ notation: '傌八進七' }),
+        candidate: Object.freeze({ notation: '炮二平五' }),
+      }) : null,
+    }),
+    gameTeachingReviewHandoff: hasHandoff ? Object.freeze({ kind: 'live-teaching-review-handoff' }) : null,
+    normalGameRecordSession: Object.freeze({ id: 'live-session' }),
+    history: Object.freeze([]),
+    consumeCalls: 0,
+    consumeGameLiveReviewHandoff() {
+      context.consumeCalls++;
+      return Object.freeze({ accepted });
+    },
+    normalGameActive: () => active,
+    isAI: () => ai,
+    btnTeachingMode: domNode(false, 'button'),
+    gameTeachingCard: domNode(true),
+    rightPanel: domNode(),
+    gameTeachingTitle: domNode(),
+    gameTeachingBody: domNode(),
+    gameTeachingPlayed: domNode(),
+    gameTeachingCandidate: domNode(),
+    btnGameTeachingReview: domNode(true, 'button'),
+  });
+  vm.runInContext([
+    functionSource('gameTeachingReviewCtaReady'),
+    functionSource('renderGameTeachingMode'),
+  ].join('\n'), context);
+  return context;
+}
+
+function renderedReviewMoveButtons(ctx) {
+  return ctx.gameReviewMoveList.children.map((item) => item.children[0]);
+}
+
 function vector() {
   return { set() {} };
 }
@@ -315,6 +357,7 @@ function harness({
     gameReviewAiState: createGameReviewAiState(),
     gameReviewAiWorker: null,
     gameReviewEvidenceState: null,
+    gameReviewTeachingMessageState: undefined,
     gameReviewCoachRequester,
     gameReviewCoachState: coachAvailable ? createIdleCoachState() : createDisabledCoachState(),
     gameReviewCoachRequest: null,
@@ -415,6 +458,7 @@ function harness({
     gameReviewMoveCount: domNode(),
     gameReviewMoveList: domNode(),
     btnReviewGame: domNode(),
+    btnGameTeachingReview: domNode(true, 'button'),
     turnText: domNode(),
     turnDot: Object.assign(domNode(), { style: {} }),
     turnBox: domNode(),
@@ -1108,6 +1152,81 @@ test('completed Review preserves final checkmate, stalemate and repetition resul
   }
 });
 
+test('visible Teaching CTA is gated by the existing handoff validation and keeps native accessibility', () => {
+  const valid = teachingCtaHarness();
+  valid.renderGameTeachingMode();
+  assert.equal(valid.gameTeachingCard.classList.contains('hidden'), false);
+  assert.equal(valid.btnGameTeachingReview.classList.contains('hidden'), false);
+  assert.equal(valid.btnGameTeachingReview.disabled, false);
+  assert.equal(valid.consumeCalls, 1);
+
+  const off = teachingCtaHarness({ enabled: false });
+  off.renderGameTeachingMode();
+  assert.equal(off.gameTeachingCard.classList.contains('hidden'), true);
+  assert.equal(off.btnGameTeachingReview.classList.contains('hidden'), true);
+  assert.equal(off.btnGameTeachingReview.disabled, true);
+  assert.equal(off.consumeCalls, 0, 'Teaching Mode OFF performs no handoff validation');
+
+  const stale = teachingCtaHarness({ accepted: false });
+  stale.renderGameTeachingMode();
+  assert.equal(stale.gameTeachingCard.classList.contains('hidden'), false);
+  assert.equal(stale.btnGameTeachingReview.classList.contains('hidden'), true);
+  assert.equal(stale.btnGameTeachingReview.disabled, true);
+  assert.equal(stale.consumeCalls, 1);
+
+  const missing = teachingCtaHarness({ hasHandoff: false });
+  missing.renderGameTeachingMode();
+  assert.equal(missing.btnGameTeachingReview.classList.contains('hidden'), true);
+  assert.equal(missing.consumeCalls, 0);
+
+  assert.match(html, /<button id="btnGameTeachingReview" type="button"[^>]*>複盤這一步<\/button>/u);
+  assert.match(html, /aria-controls="gameReviewView"/u);
+  assert.match(css, /\.game-teaching-review-button:focus-visible\s*\{/u);
+  assert.match(source, /btnGameTeachingReview\.addEventListener\('click',[^]*?openGameTeachingReviewHandoff\(btnGameTeachingReview\)/u);
+});
+
+test('Review marks exactly teachingTarget.movePly and never anchor, neighbor, or ordinary moves', () => {
+  const completed = repetitionRecord('teaching-marker-exact');
+  const timeline = createGameTimeline({
+    id: completed.id,
+    createdAt: completed.createdAt,
+    initialPosition: completed.initialPosition,
+    moves: completed.moves,
+    mode: completed.mode,
+  });
+  const anchorPly = 3;
+  const movePly = 4;
+  const review = createLiveGameReview(timeline, {
+    anchorPly,
+    movePly,
+    teachingTarget: {
+      recordId: completed.id,
+      anchorPly,
+      movePly,
+      positionKey: 'reviewed-position',
+      teachingRevision: 7,
+      move: timeline.moves[movePly - 1],
+    },
+  });
+  const ctx = harness({ realRenderer: true });
+  ctx.gameReviewSession = review;
+  ctx.renderGameReview();
+
+  const buttons = renderedReviewMoveButtons(ctx);
+  const marked = buttons.filter((button) => button.dataset.teachingMove === 'true');
+  assert.equal(review.selectedPly, anchorPly, 'T2A still lands on the board before the taught move');
+  assert.equal(marked.length, 1);
+  assert.equal(marked[0].dataset.reviewPly, String(movePly));
+  assert.match(marked[0].getAttribute('aria-label'), /教學著/u);
+  assert.equal(marked[0].children.at(-1).textContent, '教學著');
+  assert.equal(buttons.find((button) => button.dataset.reviewPly === String(anchorPly)).dataset.teachingMove, undefined);
+  assert.equal(buttons.find((button) => button.dataset.reviewPly === String(movePly + 1)).dataset.teachingMove, undefined);
+
+  ctx.gameReviewSession = createGameReview(completed);
+  ctx.renderGameReview();
+  assert.equal(renderedReviewMoveButtons(ctx).filter((button) => button.dataset.teachingMove === 'true').length, 0);
+});
+
 test('production live Teaching handoff navigates every live ply and restores the live game unchanged', () => {
   const completed = record('live-handoff-review');
   const timeline = createGameTimeline({
@@ -1152,15 +1271,20 @@ test('production live Teaching handoff navigates every live ply and restores the
   const before = liveSnapshot(ctx);
   ctx.gameTeachingReviewHandoff = Object.freeze({ kind: 'test-handoff' });
   ctx.gameTeachingModeState = Object.freeze({ status: 'ready' });
-  ctx.consumeGameLiveReviewHandoff = () => Object.freeze({
-    accepted: true,
-    review,
-    r3aState: createGameReviewAiState(4),
-    evidence: null,
-    message,
-  });
+  let consumeCalls = 0;
+  ctx.consumeGameLiveReviewHandoff = () => {
+    consumeCalls++;
+    return Object.freeze({
+      accepted: true,
+      review,
+      r3aState: createGameReviewAiState(4),
+      evidence: null,
+      message,
+    });
+  };
 
-  assert.equal(ctx.openGameTeachingReviewHandoff(ctx.btnReviewGame), true);
+  assert.equal(ctx.openGameTeachingReviewHandoff(ctx.btnGameTeachingReview), true);
+  assert.equal(consumeCalls, 1, 'CTA activation reuses the existing T2A consume path exactly once');
   assert.equal(ctx.appState, 'GAME_REVIEW');
   assert.equal(ctx.gameReviewSession.sourceKind, 'live-teaching');
   assert.equal(ctx.gameReviewSession.selectedPly, 0);
@@ -1174,6 +1298,11 @@ test('production live Teaching handoff navigates every live ply and restores the
   assert.equal(ctx.networkRequests, 0);
   assert.equal(ctx.coachCapabilitiesRequests.length, 0);
   assert.equal(ctx.coachRequests.length, 0);
+  assert.equal(ctx.engineSearches, 0);
+  const marked = renderedReviewMoveButtons(ctx).filter((button) => button.dataset.teachingMove === 'true');
+  assert.equal(marked.length, 1);
+  assert.equal(marked[0].dataset.reviewPly, '1');
+  assert.match(marked[0].getAttribute('aria-label'), /教學著/u);
 
   const assertNavigation = (target, expectedPly, stage) => {
     assert.doesNotThrow(() => assert.equal(ctx.navigateGameReview(target), true), stage);

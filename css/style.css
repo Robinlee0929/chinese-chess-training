@@ -247,6 +247,23 @@ aside {
   color: var(--text);
   font-size: 11.5px;
 }
+.game-teaching-review-button {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 3px;
+  color: #bfe9dd;
+  border-color: rgba(101, 183, 164, 0.48);
+  background: rgba(101, 183, 164, 0.09);
+  font-weight: 700;
+}
+.game-teaching-review-button:hover:not(:disabled) {
+  border-color: #65b7a4;
+  background: rgba(101, 183, 164, 0.16);
+}
+.game-teaching-review-button:focus-visible {
+  outline: 2px solid #9adbc8;
+  outline-offset: 2px;
+}
 #btnTeachingMode[aria-pressed="true"] {
   color: #102a25;
   border-color: #65b7a4;
@@ -1078,7 +1095,7 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
   width: 100%;
   min-height: 38px;
   display: grid;
-  grid-template-columns: 34px 28px 1fr;
+  grid-template-columns: 34px 28px minmax(0, 1fr) auto;
   align-items: center;
   gap: 5px;
   padding: 6px 8px;
@@ -1087,8 +1104,20 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
 }
 .game-review-move .ply { color: var(--muted); font-variant-numeric: tabular-nums; }
 .game-review-move .side { font-weight: 700; }
+.game-review-move .notation { min-width: 0; overflow-wrap: anywhere; }
 .game-review-move .side.red { color: #ef776a; }
 .game-review-move .side.black { color: #c8cbd0; }
+.game-review-teaching-move-marker {
+  padding: 2px 5px;
+  border: 1px solid rgba(101, 183, 164, 0.68);
+  border-radius: 999px;
+  color: #bfe9dd;
+  background: rgba(101, 183, 164, 0.12);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.25;
+  white-space: nowrap;
+}
 .game-review-move[aria-current="step"] {
   color: #241a0c;
   border-color: #f0c463;
@@ -1097,6 +1126,11 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
 }
 .game-review-move[aria-current="step"] .ply,
 .game-review-move[aria-current="step"] .side { color: #3a2511; }
+.game-review-move[aria-current="step"] .game-review-teaching-move-marker {
+  color: #241a0c;
+  border-color: rgba(36, 26, 12, 0.58);
+  background: rgba(255, 255, 255, 0.2);
+}
 #btnGameReviewDelete { width: 100%; min-height: 40px; }
 .game-review-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
 .game-review-actions button { min-width: 0; min-height: 44px; padding: 7px 8px; font-size: 12px; }
@@ -1253,6 +1287,12 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
 @media (max-width: 420px) {
   .game-review-evidence-moves { grid-template-columns: 1fr; }
   .game-review-teaching { padding: 8px; }
+  .game-review-move {
+    grid-template-columns: 28px 24px minmax(0, 1fr) auto;
+    gap: 4px;
+    padding-inline: 6px;
+  }
+  .game-review-teaching-move-marker { padding-inline: 4px; font-size: 9.5px; }
 }
 .game-analysis-badge { color: #9adbc8; border-color: rgba(101, 183, 164, 0.5); background: rgba(101, 183, 164, 0.1); }
 .game-analysis-status {
