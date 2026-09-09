@@ -1,7 +1,7 @@
-import { RED, hashBoard } from './game.js?v=c9eecddb53';
-import { createGameTimeline, replayGameTimeline } from './game-record.js?v=c9eecddb53';
-import { createLiveGameReview } from './game-review.js?v=c9eecddb53';
-import { createGameAnalysisFromPosition } from './game-analysis.js?v=c9eecddb53';
+import { RED, hashBoard } from './game.js?v=406217217c';
+import { createGameTimeline, replayGameTimeline } from './game-record.js?v=406217217c';
+import { createLiveGameReview } from './game-review.js?v=406217217c';
+import { createGameAnalysisFromPosition } from './game-analysis.js?v=406217217c';
 
 export const GAME_LIVE_REVIEW_HANDOFF_KIND = 'live-teaching-review-handoff';
 export const GAME_LIVE_REVIEW_HANDOFF_VERSION = 1;
@@ -132,13 +132,15 @@ export function createGameLiveReviewAnalysis(review) {
     || !Number.isInteger(review.selectedPly) || review.snapshot.terminal) {
     fail('INVALID_LIVE_REVIEW', 'A nonterminal live Teaching Review snapshot is required.');
   }
-  return createGameAnalysisFromPosition({
-    sourceRecordId: review.record.id,
+  const sourceTimeline = createGameTimeline(review.record);
+  const analysis = createGameAnalysisFromPosition({
+    sourceRecordId: sourceTimeline.id,
     sourcePly: review.selectedPly,
     board: review.snapshot.board,
     sideToMove: review.snapshot.sideToMove,
     repetitionHistory: review.snapshot.repetitionHistory,
   });
+  return Object.freeze({ ...analysis, sourceRecord: sourceTimeline });
 }
 
 function validateCurrentAuthority(teachingState, session, history) {

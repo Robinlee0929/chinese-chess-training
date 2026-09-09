@@ -314,6 +314,42 @@ test('Analysis starts from the Review anchor snapshot, never a later live board'
   assert.deepEqual(createGameLiveReviewAnalysis(review).anchorBoard, review.snapshot.board);
 });
 
+test('P1-01 live Teaching Review Analysis preserves the canonical incomplete timeline at every edge ply', () => {
+  const values = makeHandoff();
+  const before = clone(values);
+  const review = consume(values).review;
+  const first = firstGameReviewPly(review);
+  const last = lastGameReviewPly(review);
+  const cases = [
+    ['anchor/start', first, values.handoff.anchorPly],
+    ['ply 1', last, 1],
+    ['taught move', last, values.handoff.movePly],
+    ['last available', last, review.totalPlies],
+    ['incomplete-game last', last, review.totalPlies],
+  ];
+
+  for (const [label, selected, expectedPly] of cases) {
+    const analysis = createGameLiveReviewAnalysis(selected);
+    assert.equal(selected.selectedPly, expectedPly, `${label}: selected Review ply`);
+    assert.equal(analysis.sourcePly, expectedPly, `${label}: Analysis source ply`);
+    assert.equal(
+      analysis.sourceRecord.moves.length,
+      review.totalPlies,
+      `${label}: renderable source progress uses the canonical timeline`,
+    );
+    assert.deepEqual(analysis.anchorBoard, selected.snapshot.board, `${label}: exact board`);
+    assert.equal(analysis.anchorSideToMove, selected.snapshot.sideToMove, `${label}: exact side`);
+    assert.deepEqual(
+      analysis.anchorRepetitionHistory,
+      selected.snapshot.repetitionHistory,
+      `${label}: exact repetition prefix`,
+    );
+    assert.equal(Object.hasOwn(analysis.sourceRecord, 'result'), false, `${label}: no result fabricated`);
+  }
+
+  assert.deepEqual(values, before, 'Analysis initialization leaves the live game inputs unchanged');
+});
+
 test('Puzzle handoff starts from the same Review anchor snapshot', () => {
   const review = consume(makeHandoff()).review;
   const puzzle = createGameReviewPuzzleHandoff(review);
