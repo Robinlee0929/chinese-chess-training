@@ -14,6 +14,14 @@ const ORIGIN = 'https://chinese-chess-coach-forensic-staging.robinlee700929.work
 const EMAIL = 'robinlee700929@gmail.com';
 const AUDIENCE = 'synthetic-forensic-audience';
 const FIXED_IDENTITY = 'review-coach-real-provider-global-v1';
+const CORRELATION_ID = '123e4567-e89b-42d3-a456-426614174000';
+const SECOND_CORRELATION_ID = 'fedcba98-7654-4321-8abc-def012345678';
+const NIL_CORRELATION_ID = '00000000-0000-0000-0000-000000000000';
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const FAILURE_KEYS = ['status', 'failureVersion', 'stage', 'correlationId'];
+const FAILURE_STATUS = Object.freeze({ REQUEST_GATE: 403, ACCESS_IDENTITY: 403, AUTH_CLAIMS: 403,
+  BINDING: 503, DOWNSTREAM: 503, SNAPSHOT_SCHEMA: 503, INTERNAL: 503 });
+const FAILURE_RESPONSE_MAX_BYTES = 128;
 const CONFIG_URL = new URL('./wrangler.forensic-caller.jsonc', import.meta.url);
 const FORENSIC_PAGE = `<!doctype html>
 <html lang="en">
@@ -42,8 +50,9 @@ const encodedSnapshot = value => JSON.stringify(value);
 const context = (email = EMAIL, audience = AUDIENCE) => ({ access: { aud: audience,
   getIdentity: async () => ({ email }) } });
 
-function fixture({ value = encodedSnapshot(snapshot), ctx = context(), envOverrides = {}, clock = new FakeClock(), methods = {} } = {}) {
-  const state = { identities: [], args: [], calls: Object.create(null), envReads: [] };
+function fixture({ value = encodedSnapshot(snapshot), ctx = context(), envOverrides = {}, clock = new FakeClock(),
+  methods = {}, idFactory = () => CORRELATION_ID } = {}) {
+  const state = { identities: [], args: [], calls: Object.create(null), envReads: [], idCalls: 0 };
   const called = name => { state.calls[name] = (state.calls[name] ?? 0) + 1; };
   const stub = {
     async forensicSnapshot(...args) { called('forensicSnapshot'); state.args.push(args); return value; },
@@ -59,7 +68,7 @@ function fixture({ value = encodedSnapshot(snapshot), ctx = context(), envOverri
   const env = new Proxy(target, { get(object, key, receiver) {
     state.envReads.push(String(key)); return Reflect.get(object, key, receiver);
   } });
-  const handler = createForensicCaller({ clock });
+  const handler = createForensicCaller({ clock, idFactory: () => { state.idCalls++; return idFactory(); } });
   const send = (options = {}, suppliedContext = ctx) => {
     const { path = '/__operator/forensics', headers = {}, ...requestOptions } = options;
     return handler(new Request(`${ORIGIN}${path}`, { method: 'POST', headers: { Origin: ORIGIN, ...headers },
@@ -68,18 +77,170 @@ function fixture({ value = encodedSnapshot(snapshot), ctx = context(), envOverri
   return { state, stub, env, clock, handler, send };
 }
 
-async function expectFailure(h, options = {}, ctx, status = 403) {
-  const response = await h.send(options, ctx);
-  assert.equal(response.status, status);
-  assert.deepEqual(await response.json(), { status: 'failed' });
+async function inspectFailure(response, stage) {
+  const text = await response.text();
+  const body = JSON.parse(text);
+  assert.equal(response.status, FAILURE_STATUS[stage]);
+  assert.deepEqual(Object.keys(body), FAILURE_KEYS);
+  assert.equal(body.status, 'failed');
+  assert.equal(body.failureVersion, 1);
+  assert.equal(body.stage, stage);
+  assert.equal(UUID_V4.test(body.correlationId) || body.correlationId === NIL_CORRELATION_ID, true);
+  assert.ok(Buffer.byteLength(text, 'utf8') <= FAILURE_RESPONSE_MAX_BYTES);
   assert.equal(response.headers.get('Cache-Control'), 'no-store');
-  return response;
+  assert.equal(response.headers.get('X-Content-Type-Options'), 'nosniff');
+  return { response, body, text };
+}
+
+async function expectFailure(h, options = {}, ctx, stage = 'REQUEST_GATE') {
+  return inspectFailure(await h.send(options, ctx), stage);
 }
 
 test('C1K P2B trusted exact operator makes one bounded forensic call', async () => {
   const h = fixture(); const response = await h.send();
   assert.equal(response.status, 200); assert.deepEqual(await response.json(), snapshot);
   assert.equal(h.state.calls.forensicSnapshot, 1);
+  assert.equal(h.state.idCalls, 1);
+});
+test('C1K B failure envelopes have the exact schema, status map, and bounded UTF-8 size', async () => {
+  const scenarios = [
+    ['REQUEST_GATE', () => { const h = fixture(); return h.send({ path: '/wrong' }); }],
+    ['ACCESS_IDENTITY', () => { const h = fixture(); return h.send({}, {}); }],
+    ['AUTH_CLAIMS', () => { const h = fixture(); return h.send({}, context('wrong@example.invalid')); }],
+    ['BINDING', () => { const h = fixture({ envOverrides: { COACH_REAL_FORENSICS: undefined } }); return h.send(); }],
+    ['DOWNSTREAM', () => { const h = fixture({ methods: { forensicSnapshot: async () => { throw new Error('x'); } } }); return h.send(); }],
+    ['SNAPSHOT_SCHEMA', () => { const h = fixture({ value: 'not-json' }); return h.send(); }],
+    ['INTERNAL', () => { const h = fixture(); return h.handler({ get url() { throw new Error('x'); } }, h.env, context()); }],
+  ];
+  const sizes = [];
+  for (const [stage, send] of scenarios) sizes.push(Buffer.byteLength((await inspectFailure(await send(), stage)).text, 'utf8'));
+  assert.ok(Math.max(...sizes) <= FAILURE_RESPONSE_MAX_BYTES);
+  const nil = fixture({ idFactory: () => { throw new Error('id unavailable'); } });
+  const nilFailure = await expectFailure(nil, { path: '/wrong' });
+  assert.equal(nilFailure.body.correlationId, NIL_CORRELATION_ID);
+  assert.ok(Buffer.byteLength(nilFailure.text, 'utf8') <= FAILURE_RESPONSE_MAX_BYTES);
+});
+test('C1K B Access identity failures are coarse and never dispatch the binding', async () => {
+  const cases = [
+    {},
+    { access: { aud: AUDIENCE, getIdentity: 'invalid' } },
+    { access: { aud: AUDIENCE, getIdentity: () => { throw new Error('PRIVATE_ACCESS_THROW'); } } },
+    { access: { aud: AUDIENCE, getIdentity: async () => { throw new Error('PRIVATE_ACCESS_REJECT'); } } },
+  ];
+  for (const suppliedContext of cases) {
+    const h = fixture(); await expectFailure(h, {}, suppliedContext, 'ACCESS_IDENTITY');
+    assert.equal(h.state.calls.forensicSnapshot ?? 0, 0);
+  }
+});
+test('C1K B authentication claim failures are coarse and never dispatch the binding', async () => {
+  const cases = [
+    { ctx: { access: { aud: AUDIENCE, getIdentity: async () => null } } },
+    { ctx: context(), envOverrides: { COACH_FORENSIC_ACCESS_AUD: 'contains space' } },
+    { ctx: context(EMAIL, 'wrong-audience') },
+    { ctx: context('wrong@example.invalid') },
+  ];
+  for (const item of cases) {
+    const h = fixture(item); await expectFailure(h, {}, undefined, 'AUTH_CLAIMS');
+    assert.equal(h.state.calls.forensicSnapshot ?? 0, 0);
+  }
+});
+test('C1K B binding failures occur before RPC dispatch', async () => {
+  for (const binding of [undefined, {}, { forensicSnapshot: 'invalid' }]) {
+    const h = fixture({ envOverrides: { COACH_REAL_FORENSICS: binding } });
+    await expectFailure(h, {}, undefined, 'BINDING');
+    assert.equal(h.state.calls.forensicSnapshot ?? 0, 0);
+  }
+});
+test('C1K B downstream sync throw and rejection each make exactly one attempt', async () => {
+  for (const method of [
+    () => { throw new Error('PRIVATE_SYNC_THROW'); },
+    async () => { throw new Error('PRIVATE_PROMISE_REJECT'); },
+  ]) {
+    let attempts = 0;
+    const h = fixture({ methods: { forensicSnapshot: () => { attempts++; return method(); } } });
+    await expectFailure(h, {}, undefined, 'DOWNSTREAM');
+    assert.equal(attempts, 1);
+  }
+});
+test('C1K B snapshot schema rejects each returned-value failure class after one RPC return', async () => {
+  const schemaInvalid = structuredClone(snapshot); schemaInvalid.version = 2;
+  for (const value of [42, 'x'.repeat(8193), 'not-json', ` ${encodedSnapshot(snapshot)}`, encodedSnapshot(schemaInvalid)]) {
+    const h = fixture({ value }); await expectFailure(h, {}, undefined, 'SNAPSHOT_SCHEMA');
+    assert.equal(h.state.calls.forensicSnapshot, 1);
+  }
+});
+test('C1K B correlation IDs are generated once per request and never contaminate success', async () => {
+  const ids = [CORRELATION_ID, SECOND_CORRELATION_ID, CORRELATION_ID];
+  const h = fixture({ idFactory: () => ids.shift() });
+  const success = await h.send(); const successBody = await success.json();
+  assert.deepEqual(successBody, snapshot);
+  for (const key of ['failureVersion', 'stage', 'correlationId']) assert.equal(Object.hasOwn(successBody, key), false);
+  const failure = await expectFailure(h, { path: '/wrong' });
+  assert.equal(failure.body.correlationId, SECOND_CORRELATION_ID);
+  const page = await h.handler(new Request(`${ORIGIN}/`, { method: 'GET' }), h.env, context());
+  assert.equal(page.status, 200);
+  assert.equal(h.state.idCalls, 3);
+});
+test('C1K B default correlation IDs are lowercase RFC 4122 UUIDv4 values', async () => {
+  const handler = createForensicCaller({ clock: new FakeClock() });
+  const response = await handler(new Request(`${ORIGIN}/wrong`, { method: 'POST', headers: { Origin: ORIGIN } }), {}, {});
+  const body = JSON.parse(await response.text());
+  assert.match(body.correlationId, UUID_V4);
+  assert.equal(body.correlationId, body.correlationId.toLowerCase());
+});
+test('C1K B invalid correlation factories fail safe to the exact nil sentinel', async () => {
+  const factories = [
+    () => { throw new Error('PRIVATE_ID_THROW'); },
+    () => 'NOT-A-UUID',
+    () => CORRELATION_ID.toUpperCase(),
+    () => 7,
+    () => ({ toString: () => CORRELATION_ID }),
+  ];
+  for (const idFactory of factories) {
+    const h = fixture({ idFactory }); const failure = await expectFailure(h, { path: '/wrong' });
+    assert.equal(failure.body.correlationId, NIL_CORRELATION_ID);
+    assert.equal(h.state.idCalls, 1);
+  }
+});
+test('C1K B request data cannot control stage or correlation ID', async () => {
+  const supplied = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const cases = [
+    { headers: { 'X-Correlation-Id': supplied, 'X-Failure-Stage': 'DOWNSTREAM' }, path: '/wrong' },
+    { path: `/__operator/forensics?correlationId=${supplied}&stage=DOWNSTREAM` },
+    { body: `correlationId=${supplied}&stage=DOWNSTREAM` },
+  ];
+  for (const options of cases) {
+    const h = fixture(); const failure = await expectFailure(h, options);
+    assert.equal(failure.body.correlationId, CORRELATION_ID);
+    assert.equal(failure.body.stage, 'REQUEST_GATE');
+    assert.equal(failure.text.includes(supplied), false);
+  }
+});
+test('C1K B independent requests receive deterministic distinct injected IDs', async () => {
+  const ids = [CORRELATION_ID, SECOND_CORRELATION_ID];
+  const h = fixture({ idFactory: () => ids.shift() });
+  assert.equal((await expectFailure(h, { path: '/one' })).body.correlationId, CORRELATION_ID);
+  assert.equal((await expectFailure(h, { path: '/two' })).body.correlationId, SECOND_CORRELATION_ID);
+  assert.equal(h.state.idCalls, 2);
+});
+test('C1K B representative failure stages never expose request, auth, binding, snapshot, or exception data', async () => {
+  const secretValues = [EMAIL, AUDIENCE, ORIGIN, 'COACH_REAL_FORENSICS', 'chinese-chess-coach-openai-staging',
+    'CoachRealForensicReader', FIXED_IDENTITY, 'PRIVATE_EXCEPTION', 'PRIVATE_STACK', 'PRIVATE_SNAPSHOT',
+    'PRIVATE_SECRET_SENTINEL', 'PRIVATE_PROVIDER', 'PRIVATE_REQUEST'];
+  const scenarios = [
+    ['REQUEST_GATE', () => { const h = fixture(); return h.send({ path: '/PRIVATE_REQUEST' }); }],
+    ['ACCESS_IDENTITY', () => { const h = fixture(); return h.send({}, { access: { aud: AUDIENCE,
+      getIdentity: () => { throw new Error('PRIVATE_EXCEPTION PRIVATE_STACK'); } } }); }],
+    ['AUTH_CLAIMS', () => { const h = fixture(); return h.send({}, context('PRIVATE_PROVIDER')); }],
+    ['BINDING', () => { const h = fixture({ envOverrides: { COACH_REAL_FORENSICS: undefined } }); return h.send(); }],
+    ['DOWNSTREAM', () => { const h = fixture({ methods: { forensicSnapshot: async () => { throw new Error('PRIVATE_EXCEPTION'); } } }); return h.send(); }],
+    ['SNAPSHOT_SCHEMA', () => { const h = fixture({ value: 'PRIVATE_SNAPSHOT' }); return h.send(); }],
+    ['INTERNAL', () => { const h = fixture(); return h.handler({ get url() { throw new Error('PRIVATE_EXCEPTION'); } }, h.env, context()); }],
+  ];
+  for (const [stage, send] of scenarios) {
+    const { text } = await inspectFailure(await send(), stage);
+    for (const secret of secretValues) assert.equal(text.includes(secret), false, `${stage} leaked ${secret}`);
+  }
 });
 test('C1K B2 exact root GET returns one static form before Access or env lookup', async () => {
   let identityCalls = 0;
@@ -117,7 +278,8 @@ test('C1K B2 every non-exact root request fails before Access or env lookup', as
   }
   const h = fixture();
   const response = await h.handler(new Request('https://foreign.invalid/', { method: 'GET' }), h.env, context());
-  assert.equal(response.status, 403); assert.deepEqual(await response.json(), { status: 'failed' });
+  const text = await response.text(); const body = JSON.parse(text);
+  assert.equal(response.status, 403); assert.equal(body.stage, 'REQUEST_GATE'); assert.deepEqual(Object.keys(body), FAILURE_KEYS);
   assert.deepEqual(h.state.envReads, []); assert.deepEqual(Object.keys(h.state.calls), []);
 });
 test('C1K B2 browser-equivalent zero-control form POST preserves the exact forensic POST contract', async () => {
@@ -148,22 +310,22 @@ test('C1K B2 nonempty browser form payload remains rejected before the binding',
   assert.equal(h.state.calls.forensicSnapshot ?? 0, 0);
 });
 test('C1K P2B unauthenticated request makes zero DO calls', async () => {
-  const h = fixture(); await expectFailure(h, {}, {}); assert.equal(h.state.identities.length, 0);
+  const h = fixture(); await expectFailure(h, {}, {}, 'ACCESS_IDENTITY'); assert.equal(h.state.identities.length, 0);
 });
 test('C1K P2B wrong email makes zero DO calls', async () => {
-  const h = fixture(); await expectFailure(h, {}, context('other@example.invalid')); assert.equal(h.state.identities.length, 0);
+  const h = fixture(); await expectFailure(h, {}, context('other@example.invalid'), 'AUTH_CLAIMS'); assert.equal(h.state.identities.length, 0);
 });
 test('C1K P2B wrong audience makes zero DO calls', async () => {
-  const h = fixture(); await expectFailure(h, {}, context(EMAIL, 'wrong')); assert.equal(h.state.identities.length, 0);
+  const h = fixture(); await expectFailure(h, {}, context(EMAIL, 'wrong'), 'AUTH_CLAIMS'); assert.equal(h.state.identities.length, 0);
 });
 test('C1K P2B raw X-User-Email cannot authorize', async () => {
-  const h = fixture(); await expectFailure(h, { headers: { 'X-User-Email': EMAIL } }, {}); assert.equal(h.state.identities.length, 0);
+  const h = fixture(); await expectFailure(h, { headers: { 'X-User-Email': EMAIL } }, {}, 'ACCESS_IDENTITY'); assert.equal(h.state.identities.length, 0);
 });
 test('C1K P2B raw Cf-Access-Authenticated-User-Email cannot authorize', async () => {
-  const h = fixture(); await expectFailure(h, { headers: { 'Cf-Access-Authenticated-User-Email': EMAIL } }, {}); assert.equal(h.state.identities.length, 0);
+  const h = fixture(); await expectFailure(h, { headers: { 'Cf-Access-Authenticated-User-Email': EMAIL } }, {}, 'ACCESS_IDENTITY'); assert.equal(h.state.identities.length, 0);
 });
 test('C1K P2B plain Authorization text cannot authorize', async () => {
-  const h = fixture(); await expectFailure(h, { headers: { Authorization: `Bearer ${AUDIENCE}` } }, {}); assert.equal(h.state.identities.length, 0);
+  const h = fixture(); await expectFailure(h, { headers: { Authorization: `Bearer ${AUDIENCE}` } }, {}, 'ACCESS_IDENTITY'); assert.equal(h.state.identities.length, 0);
 });
 test('C1K P2B foreign origin makes zero DO calls', async () => {
   const h = fixture(); await expectFailure(h, { headers: { Origin: 'https://foreign.invalid' } }); assert.equal(h.state.identities.length, 0);
@@ -225,45 +387,45 @@ test('C1K P2B returns the exact reviewed snapshot allowlist', async () => {
 test('C1K P2B rejects a raw extra response field', async () => {
   const h = fixture({ value: encodedSnapshot({ ...snapshot, secret: 'PRIVATE_SECRET_SENTINEL' }) });
   const response = await h.send(); const text = await response.text();
-  assert.equal(response.status, 503); assert.deepEqual(JSON.parse(text), { status: 'failed' }); assert.equal(text.includes('PRIVATE'), false);
+  assert.equal(response.status, 503); assert.equal(JSON.parse(text).stage, 'SNAPSHOT_SCHEMA'); assert.equal(text.includes('PRIVATE'), false);
 });
 test('C1K P2B rejects a nested extra response field', async () => {
   const h = fixture({ value: encodedSnapshot({ ...snapshot, raw: { ...snapshot.raw, sql: 'SELECT private' } }) });
-  await expectFailure(h, {}, undefined, 503);
+  await expectFailure(h, {}, undefined, 'SNAPSHOT_SCHEMA');
 });
 test('C1K P2B never exposes a raw exception or stack', async () => {
   const h = fixture({ methods: { forensicSnapshot: async () => { h.state.calls.forensicSnapshot = 1; throw new Error('PRIVATE_STACK_SENTINEL'); } } });
   const response = await h.send(); const text = await response.text();
-  assert.equal(response.status, 503); assert.deepEqual(JSON.parse(text), { status: 'failed' }); assert.equal(text.includes('PRIVATE'), false);
+  assert.equal(response.status, 503); assert.equal(JSON.parse(text).stage, 'DOWNSTREAM'); assert.equal(text.includes('PRIVATE'), false);
 });
 test('C1K P2B timeout makes no retry and ignores a late result', async () => {
   const pending = deferred(); const h = fixture({ methods: { forensicSnapshot: (...args) => {
     h.state.calls.forensicSnapshot = (h.state.calls.forensicSnapshot ?? 0) + 1; h.state.args.push(args); return pending.promise;
   } } });
   const responsePromise = h.send(); await flush(); assert.equal(h.state.calls.forensicSnapshot, 1);
-  await h.clock.advance(3000); const response = await responsePromise; assert.equal(response.status, 503);
+  await h.clock.advance(3000); await inspectFailure(await responsePromise, 'DOWNSTREAM');
   pending.resolve(encodedSnapshot(snapshot)); await flush(); assert.equal(h.state.calls.forensicSnapshot, 1);
 });
 test('C1K P2B ambiguous downstream rejection makes no retry', async () => {
   const h = fixture({ methods: { forensicSnapshot: async () => {
     h.state.calls.forensicSnapshot = (h.state.calls.forensicSnapshot ?? 0) + 1; throw new Error('ambiguous');
   } } });
-  await expectFailure(h, {}, undefined, 503); assert.equal(h.state.calls.forensicSnapshot, 1);
+  await expectFailure(h, {}, undefined, 'DOWNSTREAM'); assert.equal(h.state.calls.forensicSnapshot, 1);
 });
 test('C1K P2B downstream 5xx-shaped value makes no retry', async () => {
   const h = fixture({ value: new Response('PRIVATE', { status: 500 }) });
-  await expectFailure(h, {}, undefined, 503); assert.equal(h.state.calls.forensicSnapshot, 1);
+  await expectFailure(h, {}, undefined, 'SNAPSHOT_SCHEMA'); assert.equal(h.state.calls.forensicSnapshot, 1);
 });
 test('C1K P2B malformed snapshot fails closed', async () => {
-  const h = fixture({ value: '{"version":1}' }); await expectFailure(h, {}, undefined, 503);
+  const h = fixture({ value: '{"version":1}' }); await expectFailure(h, {}, undefined, 'SNAPSHOT_SCHEMA');
 });
 test('C1K P2B noncanonical or duplicate-key snapshot fails closed', async () => {
   for (const value of [` ${encodedSnapshot(snapshot)}`, '{"version":1,"version":1}']) {
-    const h = fixture({ value }); await expectFailure(h, {}, undefined, 503);
+    const h = fixture({ value }); await expectFailure(h, {}, undefined, 'SNAPSHOT_SCHEMA');
   }
 });
 test('C1K P2B oversized snapshot fails closed', async () => {
-  const h = fixture({ value: 'x'.repeat(8193) }); await expectFailure(h, {}, undefined, 503);
+  const h = fixture({ value: 'x'.repeat(8193) }); await expectFailure(h, {}, undefined, 'SNAPSHOT_SCHEMA');
 });
 test('C1K P2B bounded truncated snapshot is accepted without a consistency claim', async () => {
   const truncated = structuredClone(snapshot);
@@ -292,17 +454,17 @@ test('C1K P2B accepts frozen C1J idle, invalid, truncated, and read-failure evid
 });
 test('C1K P2B incomplete snapshot cannot claim consistency', async () => {
   const incomplete = structuredClone(snapshot); incomplete.completeness.readComplete = false;
-  const h = fixture({ value: encodedSnapshot(incomplete) }); await expectFailure(h, {}, undefined, 503);
+  const h = fixture({ value: encodedSnapshot(incomplete) }); await expectFailure(h, {}, undefined, 'SNAPSHOT_SCHEMA');
 });
 test('C1K P2B Access identity lookup timeout fails before DO lookup', async () => {
   const clock = new FakeClock(); const pending = deferred(); const h = fixture({ clock,
     ctx: { access: { aud: AUDIENCE, getIdentity: () => pending.promise } } });
   const responsePromise = h.send(); await flush(); await clock.advance(1000);
-  assert.equal((await responsePromise).status, 403); assert.equal(h.state.identities.length, 0);
+  await inspectFailure(await responsePromise, 'ACCESS_IDENTITY'); assert.equal(h.state.identities.length, 0);
 });
 test('C1K P2B missing Access audience policy fails before DO lookup', async () => {
   const h = fixture({ envOverrides: { COACH_FORENSIC_ACCESS_AUD: undefined } });
-  await expectFailure(h); assert.equal(h.state.identities.length, 0);
+  await expectFailure(h, {}, undefined, 'AUTH_CLAIMS'); assert.equal(h.state.identities.length, 0);
 });
 test('C1K P2B caller config has one exact method-scoped coordinator service binding', async () => {
   const config = JSON.parse(await readFile(CONFIG_URL, 'utf8'));

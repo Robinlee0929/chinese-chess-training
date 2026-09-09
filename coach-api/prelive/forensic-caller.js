@@ -4,6 +4,18 @@ const EXPECTED_OPERATOR_EMAIL = 'robinlee700929@gmail.com';
 const IDENTITY_TIMEOUT_MS = 1000;
 const SNAPSHOT_TIMEOUT_MS = 3000;
 const MAX_SNAPSHOT_LENGTH = 8192;
+const FAILURE_VERSION = 1;
+const NIL_CORRELATION_ID = '00000000-0000-0000-0000-000000000000';
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const FAILURE_STATUS = Object.freeze({
+  REQUEST_GATE: 403,
+  ACCESS_IDENTITY: 403,
+  AUTH_CLAIMS: 403,
+  BINDING: 503,
+  DOWNSTREAM: 503,
+  SNAPSHOT_SCHEMA: 503,
+  INTERNAL: 503,
+});
 const FORENSIC_PAGE = `<!doctype html>
 <html lang="en">
 <head>
@@ -22,9 +34,23 @@ const SYSTEM_CLOCK = Object.freeze({
   setTimeout: (callback, delay) => setTimeout(callback, delay),
   clearTimeout: timer => clearTimeout(timer),
 });
+const SYSTEM_ID_FACTORY = () => crypto.randomUUID();
 const boundedPolicy = value => typeof value === 'string' && /^[\x21-\x7e]{1,254}$/u.test(value);
-const failure = (status = 403) => Response.json({ status: 'failed' }, { status,
-  headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
+function correlationId(idFactory) {
+  try {
+    const value = idFactory();
+    return typeof value === 'string' && UUID_V4.test(value) ? value : NIL_CORRELATION_ID;
+  } catch { return NIL_CORRELATION_ID; }
+}
+function failureResponse(stage, requestCorrelationId) {
+  const normalizedStage = Object.hasOwn(FAILURE_STATUS, stage) ? stage : 'INTERNAL';
+  const normalizedCorrelationId = typeof requestCorrelationId === 'string'
+    && (UUID_V4.test(requestCorrelationId) || requestCorrelationId === NIL_CORRELATION_ID)
+    ? requestCorrelationId : NIL_CORRELATION_ID;
+  return Response.json({ status: 'failed', failureVersion: FAILURE_VERSION, stage: normalizedStage,
+    correlationId: normalizedCorrelationId }, { status: FAILURE_STATUS[normalizedStage],
+    headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
+}
 const forensicPage = () => new Response(FORENSIC_PAGE, { status: 200, headers: {
   'Cache-Control': 'no-store',
   'Content-Security-Policy': "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
@@ -124,34 +150,41 @@ function decodeSnapshot(encoded) {
   } catch { return null; }
 }
 
-export function createForensicCaller({ clock = SYSTEM_CLOCK } = {}) {
+export function createForensicCaller({ clock = SYSTEM_CLOCK, idFactory = SYSTEM_ID_FACTORY } = {}) {
   return async function forensicCaller(request, env, ctx) {
+    const requestCorrelationId = correlationId(idFactory);
     try {
       const url = new URL(request.url);
       if (url.origin === FORENSIC_ORIGIN && request.method === 'GET' && url.pathname === '/' && !url.search) {
         return forensicPage();
       }
       if (url.pathname !== FORENSIC_PATH || request.method !== 'POST' || url.search
-        || !await emptyBody(request, clock)) return failure();
-      if (url.origin !== FORENSIC_ORIGIN || request.headers.get('Origin') !== FORENSIC_ORIGIN) return failure();
+        || !await emptyBody(request, clock)) return failureResponse('REQUEST_GATE', requestCorrelationId);
+      if (url.origin !== FORENSIC_ORIGIN || request.headers.get('Origin') !== FORENSIC_ORIGIN) {
+        return failureResponse('REQUEST_GATE', requestCorrelationId);
+      }
       const access = ctx?.access;
-      if (!access || typeof access.getIdentity !== 'function') return failure();
+      if (!access || typeof access.getIdentity !== 'function') {
+        return failureResponse('ACCESS_IDENTITY', requestCorrelationId);
+      }
       const identityResult = await singleAttempt(() => access.getIdentity(), clock, IDENTITY_TIMEOUT_MS);
-      if (identityResult.kind !== 'success') return failure();
+      if (identityResult.kind !== 'success') return failureResponse('ACCESS_IDENTITY', requestCorrelationId);
       const identity = identityResult.value;
       if (!identity || typeof identity !== 'object' || Array.isArray(identity)
         || !boundedPolicy(env?.COACH_FORENSIC_ACCESS_AUD)
         || access.aud !== env.COACH_FORENSIC_ACCESS_AUD
-        || identity.email !== EXPECTED_OPERATOR_EMAIL) return failure();
+        || identity.email !== EXPECTED_OPERATOR_EMAIL) return failureResponse('AUTH_CLAIMS', requestCorrelationId);
       const service = env?.COACH_REAL_FORENSICS;
-      if (!service || typeof service.forensicSnapshot !== 'function') return failure(503);
+      if (!service || typeof service.forensicSnapshot !== 'function') {
+        return failureResponse('BINDING', requestCorrelationId);
+      }
       const outcome = await singleAttempt(() => service.forensicSnapshot(), clock, SNAPSHOT_TIMEOUT_MS);
-      if (outcome.kind !== 'success') return failure(503);
+      if (outcome.kind !== 'success') return failureResponse('DOWNSTREAM', requestCorrelationId);
       const snapshot = decodeSnapshot(outcome.value);
-      if (!snapshot) return failure(503);
+      if (!snapshot) return failureResponse('SNAPSHOT_SCHEMA', requestCorrelationId);
       return Response.json(snapshot, { status: 200,
         headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
-    } catch { return failure(503); }
+    } catch { return failureResponse('INTERNAL', requestCorrelationId); }
   };
 }
 
