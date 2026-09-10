@@ -331,6 +331,7 @@ function harness({
       createdAt: '2026-08-31T03:00:00.000Z',
       initialPosition: Object.freeze({ board: structuredClone(liveBoard), sideToMove: turn }),
       mode,
+      humanSide: RED,
     }),
     lastCompletedGameRecord: records[0] || record('memory-only'),
     selected: { r: 0, c: 1 },
@@ -520,6 +521,8 @@ function harness({
     authoringActive: () => false,
     libraryActive: () => false,
     normalUndoAvailable: () => false,
+    syncHumanSideUI() {},
+    humanSide: RED,
     isAI: () => context.mode !== 'pvp',
     clearSelection: () => { context.selected = null; context.legal = []; },
     clearGameAnalysisSelection: () => {

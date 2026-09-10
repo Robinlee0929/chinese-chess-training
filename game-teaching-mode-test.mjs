@@ -256,7 +256,7 @@ test('canonical repetition prefix survives the live Teaching Mode path', () => {
 });
 
 test('production integration schedules after normal AI flow and has no coach or network transport', () => {
-  assert.match(mainSource, /maybeAIMove\(\);\s*if \(mover !== AI_SIDE\) requestGameTeachingModeAnalysis\(teachingSource\);/);
+  assert.match(mainSource, /maybeAIMove\(\);\s*if \(mover === humanSide\) requestGameTeachingModeAnalysis\(teachingSource\);/);
   assert.match(mainSource, /const teachingSource = captureTeachingModeSource\(from, to\);/);
   assert.match(mainSource, /invalidateTeachingModeFeedback\(\);\s*undoCount\+\+/);
   assert.doesNotMatch(moduleSource, /fetch\s*\(|XMLHttpRequest|WebSocket|review-coach|OpenAI|capabilities/i);

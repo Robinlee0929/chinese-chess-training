@@ -1,7 +1,7 @@
-import { RED, hashBoard } from './game.js?v=406217217c';
-import { createGameTimeline, replayGameTimeline } from './game-record.js?v=406217217c';
-import { createLiveGameReview } from './game-review.js?v=406217217c';
-import { createGameAnalysisFromPosition } from './game-analysis.js?v=406217217c';
+import { RED, BLACK, hashBoard } from './game.js?v=6579916556';
+import { createGameTimeline, replayGameTimeline } from './game-record.js?v=6579916556';
+import { createLiveGameReview } from './game-review.js?v=6579916556';
+import { createGameAnalysisFromPosition } from './game-analysis.js?v=6579916556';
 
 export const GAME_LIVE_REVIEW_HANDOFF_KIND = 'live-teaching-review-handoff';
 export const GAME_LIVE_REVIEW_HANDOFF_VERSION = 1;
@@ -11,6 +11,7 @@ const HANDOFF_FIELDS = Object.freeze([
   'teachingRevision', 'historyIdentity', 'timeline', 'r3aState', 'evidence', 'message',
 ]);
 const COMPUTER_GAME_MODES = new Set(['easy', 'medium', 'hard']);
+const SIDES = new Set([RED, BLACK]);
 
 export class GameLiveReviewHandoffError extends Error {
   constructor(code, message) {
@@ -63,7 +64,7 @@ export function consumeGameLiveReviewHandoff(handoff, { teachingState, session, 
       || handoff.teachingRevision !== teachingState.revision) {
       fail('STALE_AUTHORITY', 'The live Teaching authority changed before Review opened.');
     }
-    // One appended black computer reply is allowed; a later red human move is not.
+    // One appended computer reply is allowed; a later human move is not.
     if (history.length < handoff.movePly || history.length > handoff.movePly + 1) {
       fail('STALE_HISTORY', 'The live move history is no longer at the taught turn.');
     }
@@ -152,11 +153,12 @@ function validateCurrentAuthority(teachingState, session, history) {
   }
   if (!session || typeof session !== 'object' || typeof session.id !== 'string'
     || typeof session.createdAt !== 'string' || !session.initialPosition
-    || !COMPUTER_GAME_MODES.has(session.mode) || !Array.isArray(history)) {
+    || !COMPUTER_GAME_MODES.has(session.mode) || !SIDES.has(session.humanSide)
+    || !Array.isArray(history)) {
     fail('INVALID_LIVE_SESSION', 'A current computer-game session is required.');
   }
   const source = teachingState.active;
-  if (source.recordId !== session.id || source.sideToMove !== RED
+  if (source.recordId !== session.id || source.sideToMove !== session.humanSide
     || !Number.isInteger(source.ply) || source.ply < 0
     || source.movePly !== source.ply + 1 || history.length < source.movePly
     || !sameMove(history[source.movePly - 1], source.playedMove)) {

@@ -146,6 +146,7 @@ function harness(record, ply, {
     winner: null,
     normalGameRecordSession: { id: 'live-session-b' },
     mode: 'medium',
+    humanSide: RED,
     aiToken: 17,
     aiThinking: true,
     AI_SIDE: BLACK,
@@ -209,6 +210,8 @@ function harness(record, ply, {
     libraryActive: () => false,
     authoringActive: () => false,
     isAI: () => false,
+    canHumanMove: () => context.appState === 'NORMAL_GAME'
+      && !context.over && !context.busy && !context.aiThinking,
     practiceState: null,
     handlePracticeBoardClick() {},
     handleRecorderBoardClick() {},

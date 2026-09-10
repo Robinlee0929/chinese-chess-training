@@ -149,10 +149,11 @@ function harness(options = {}) {
     posHistory: [game.hashBoard(game.initialBoard())], capturedBy: { red: [], black: [] },
     repHistory: [{ key: game.hashBoard(game.initialBoard()) + '|red', mover: null, check: false }],
     busy: false, over: false, winner: null, aiToken: 0, aiThinking: false, undoCount: 0,
-    mode: options.mode ?? 'pvp', normalGameRecordSession: null,
+    mode: options.mode ?? 'pvp', humanSide: game.RED, normalGameRecordSession: null,
     completedGameRecordSessionId: null, lastCompletedGameRecord: null,
     gameRecordStore, gameRecordStorage, gameRecordNow, gameRecordIdFactory,
-    AI_SIDE: game.BLACK, aiMoveStart: 0, aiRequestCount: 0, aiMaybeMoveCalls: 0,
+    aiSide: () => context.humanSide === game.RED ? game.BLACK : game.RED,
+    aiMoveStart: 0, aiRequestCount: 0, aiMaybeMoveCalls: 0,
     aiWorker: { postMessage: () => { context.aiRequestCount++; } }, aiModule: null,
     practiceToken: 0, appState: 'NORMAL_GAME', editorState: null, recorderState: null,
     gameReviewSession: null, gameReviewPuzzleReturnContext: null, reviewAiInvalidations: 0,
@@ -187,6 +188,7 @@ function harness(options = {}) {
       context.hintMarkerRoles = [context.practiceHint?.from && 'source', context.practiceHint?.to && 'target'].filter(Boolean);
     },
     showBanner: noop, stopConfetti: noop, toast: noop,
+    syncHumanSideUI: noop, showPlayerPerspective: noop,
     invalidateTeachingModeFeedback: noop,
     captureTeachingModeSource: () => null,
     requestGameTeachingModeAnalysis: () => false,
@@ -1106,8 +1108,8 @@ test('negative control: removing stale session identity guard contaminates Game 
 });
 
 test('negative control: removing terminal availability guard makes direct Undo mutate terminal state', () => {
-  const ctx = harness({ mode: 'medium' });
-  ctx.isAI = () => true;
+  const ctx = harness({ mode: 'pvp' });
+  ctx.isAI = () => false;
   const setup = normalCheckmateFixture();
   ctx.resetTo(setup.board, setup.turn);
   playNormal(ctx, ...setup.move);

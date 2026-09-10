@@ -180,6 +180,11 @@ test('rejects null, arrays, missing fields and unsupported schema versions', () 
   assertValidationError(checkmateRecord({ schemaVersion: 2 }), 'UNSUPPORTED_SCHEMA_VERSION');
 });
 
+test('rejects ephemeral player-side ownership fields from GameRecord v1', () => {
+  assertValidationError(checkmateRecord({ humanSide: BLACK }), 'UNEXPECTED_FIELDS');
+  assertValidationError(checkmateRecord({ aiSide: BLACK }), 'UNEXPECTED_FIELDS');
+});
+
 test('rejects unexpected fields at every persisted object boundary', () => {
   assertValidationError({ ...checkmateRecord(), title: 'not allowed' }, 'UNEXPECTED_FIELDS');
   const initial = checkmateRecord();

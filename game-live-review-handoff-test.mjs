@@ -69,6 +69,7 @@ function fixture() {
     createdAt: '2026-09-08T01:02:03.000Z',
     initialPosition: { board, sideToMove: RED },
     mode: 'medium',
+    humanSide: RED,
   };
   const source = {
     recordId: session.id,
@@ -110,6 +111,7 @@ function multiPlyFixture() {
     createdAt: '2026-09-10T00:00:00.000Z',
     initialPosition: { board, sideToMove: RED },
     mode: 'medium',
+    humanSide: RED,
   };
   const prefix = createGameTimeline({
     id: session.id,
@@ -143,7 +145,7 @@ function multiPlyFixture() {
   return { teachingState: settled.state, session, history: [...prefixMoves, PLAYED] };
 }
 
-function computerFixture() {
+function computerFixture({ humanSide = RED } = {}) {
   const board = teachingBoard();
   board[2][2] = { type: 'P', side: RED };
   const playedMove = { from: { r: 4, c: 1 }, to: { r: 2, c: 2 } };
@@ -153,6 +155,7 @@ function computerFixture() {
     createdAt: '2026-09-08T02:03:04.000Z',
     initialPosition: { board, sideToMove: BLACK },
     mode: 'medium',
+    humanSide,
   };
   const source = {
     recordId: session.id,
@@ -258,6 +261,14 @@ test('consume opens Review at anchorPly and retains the taught movePly identity'
   assert.equal(result.review.teachingTarget.movePly, values.handoff.movePly);
   assert.deepEqual(result.review.teachingTarget.move, PLAYED);
   assert.equal(result.review.teachingTarget.ruleId, values.teachingState.message.ruleId);
+});
+
+test('black-side human Teaching handoff is accepted from the exact black actor session', () => {
+  const values = makeHandoff(computerFixture({ humanSide: BLACK }));
+  const result = consume(values);
+  assert.equal(result.accepted, true);
+  assert.equal(result.review.snapshot.sideToMove, BLACK);
+  assert.deepEqual(result.review.teachingTarget.move, values.teachingState.active.playedMove);
 });
 
 test('consume reuses the exact accepted R3A, R3B and R3C1 artifacts without reselection', () => {
@@ -643,7 +654,7 @@ const MUTATIONS = [
     async (api, values) => { const timeline = createGameTimeline({ ...values.handoff.timeline, moves: [PLAYED, COMPUTER_REPLY] }); assert.throws(() => api.createLiveGameReview(timeline, { anchorPly: 0, movePly: 2, teachingTarget: { ...consume(values).review.teachingTarget, movePly: 2, move: COMPUTER_REPLY } })); }],
   ['skip-session-id',
     (s) => replaceOnce(
-      replaceOnce(s, "if (source.recordId !== session.id || source.sideToMove !== RED", "if (false || source.sideToMove !== RED"),
+      replaceOnce(s, "if (source.recordId !== session.id || source.sideToMove !== session.humanSide", "if (false || source.sideToMove !== session.humanSide"),
       "if (timeline.id !== session.id || timeline.mode !== session.mode",
       "if (false || timeline.mode !== session.mode",
     ),
@@ -662,7 +673,7 @@ const MUTATIONS = [
     (s) => replaceOnce(s, "review,\n      r3aState: structuredClone(handoff.r3aState),", "review: globalThis.__t2aLatestBoard ? Object.freeze({ ...review, snapshot: Object.freeze({ ...review.snapshot, board: structuredClone(globalThis.__t2aLatestBoard) }) }) : review,\n      r3aState: structuredClone(handoff.r3aState),"),
     async (api, values) => { const latest = clone(values.teachingState.active.board); applyMove(latest, PLAYED.from, PLAYED.to); applyMove(latest, COMPUTER_REPLY.from, COMPUTER_REPLY.to); values.history.push(COMPUTER_REPLY); globalThis.__t2aLatestBoard = latest; try { const result = api.consumeGameLiveReviewHandoff(values.handoff, values); assert.deepEqual(result.review.snapshot.board, values.teachingState.active.board); } finally { delete globalThis.__t2aLatestBoard; } }],
   ['allow-computer-source',
-    (s) => replaceOnce(s, "|| source.sideToMove !== RED", "|| false"),
+    (s) => replaceOnce(s, "|| source.sideToMove !== session.humanSide", "|| false"),
     async (api) => assert.throws(() => api.createGameLiveReviewHandoff(computerFixture()), /committed human move/)],
   ['allow-off-state',
     (s) => replaceOnce(

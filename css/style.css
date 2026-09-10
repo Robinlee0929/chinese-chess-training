@@ -166,6 +166,60 @@ button:disabled { opacity: 0.45; cursor: default; }
 }
 #modeSel:hover { background: #33281d; border-color: #4d3c2a; }
 
+.side-chooser {
+  display: inline-flex;
+  align-items: stretch;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--panel2);
+}
+.side-chooser[hidden] { display: none; }
+.side-chooser legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.side-chooser input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+.side-chooser label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 0 9px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+.side-chooser label + input + label { border-left: 1px solid var(--line); }
+.side-chooser input:checked + label {
+  color: #241a0c;
+  background: linear-gradient(180deg, #f0c463, #d9a441);
+  font-weight: 700;
+}
+.side-chooser input:focus-visible + label {
+  outline: 2px solid #f3ca70;
+  outline-offset: -3px;
+}
+.side-chooser input:disabled + label { opacity: 0.45; cursor: default; }
+
 /* AI 思考中：回合指示燈呼吸閃爍 */
 #turn.thinking #turnDot { animation: thinkpulse 1.1s ease-in-out infinite; }
 @keyframes thinkpulse {
@@ -1683,6 +1737,7 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
   #turn { min-width: 0; padding: 6px 10px; font-size: 12.5px; gap: 6px; }
   #turnDot { width: 9px; height: 9px; }
   button, #modeSel { padding: 6px 10px; font-size: 12.5px; }
+  .side-chooser label { min-height: 42px; padding: 0 10px; }
   #btnMore { display: inline-flex; align-items: center; justify-content: center; }
   .t-short { display: inline; }
   .t-full { display: none; }
@@ -1773,6 +1828,11 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
   #hud { gap: 5px; }
   h1 { font-size: 13px; letter-spacing: 1px; }
   button, #modeSel { padding: 5px 8px; font-size: 11.5px; letter-spacing: 0.5px; }
+  #hud { flex: 1; }
+  .side-chooser { flex-basis: 100%; justify-content: flex-end; border: 0; background: transparent; }
+  .side-chooser label { min-height: 44px; border: 1px solid var(--line); background: var(--panel2); }
+  .side-chooser input + label { border-radius: 8px 0 0 8px; }
+  .side-chooser label + input + label { border-left: 0; border-radius: 0 8px 8px 0; }
   #turn { top: 9px; right: 9px; padding: 4px 10px; font-size: 11.5px; gap: 5px; }
   #turnDot { width: 8px; height: 8px; }
   #btnMore { padding: 5px 9px; font-size: 15px; }
