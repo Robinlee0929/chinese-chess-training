@@ -25,8 +25,15 @@ import {
   lastGameReviewPly,
   nextGameReviewPly,
   previousGameReviewPly,
+  selectGameReviewPly,
 } from './game-review.js';
-import { createGameAnalysisFromPosition } from './game-analysis.js';
+import {
+  createGameAnalysisFromPosition,
+  gameAnalysisLegalMoves,
+  applyGameAnalysisMove,
+  undoGameAnalysisMove,
+  resetGameAnalysis,
+} from './game-analysis.js';
 import { createGameReviewPuzzleHandoff } from './game-review-puzzle-handoff.js';
 
 const moduleSource = readFileSync(new URL('./game-live-review-handoff.js', import.meta.url), 'utf8');
@@ -87,6 +94,55 @@ function fixture() {
   return { teachingState: settled.state, session, history: [{ ...PLAYED, notation: '俥六平五' }] };
 }
 
+function multiPlyFixture() {
+  const board = teachingBoard();
+  board[3][0] = { type: 'P', side: RED };
+  const prefixMoves = [
+    { from: { r: 5, c: 4 }, to: { r: 6, c: 4 } },
+    { from: { r: 4, c: 1 }, to: { r: 2, c: 2 } },
+    { from: { r: 3, c: 0 }, to: { r: 4, c: 0 } },
+    { from: { r: 2, c: 2 }, to: { r: 4, c: 3 } },
+    { from: { r: 4, c: 0 }, to: { r: 5, c: 0 } },
+    { from: { r: 4, c: 3 }, to: { r: 3, c: 5 } },
+  ];
+  const session = {
+    id: 'live-teaching-multi-ply-session',
+    createdAt: '2026-09-10T00:00:00.000Z',
+    initialPosition: { board, sideToMove: RED },
+    mode: 'medium',
+  };
+  const prefix = createGameTimeline({
+    id: session.id,
+    createdAt: session.createdAt,
+    initialPosition: session.initialPosition,
+    moves: prefixMoves,
+    mode: session.mode,
+  });
+  const snapshot = replayGameTimeline(prefix, prefixMoves.length);
+  const source = {
+    recordId: session.id,
+    movePly: prefixMoves.length + 1,
+    ply: prefixMoves.length,
+    board: snapshot.board,
+    sideToMove: snapshot.sideToMove,
+    repetitionHistory: snapshot.repetitionHistory,
+    playedMove: PLAYED,
+  };
+  const enabled = setGameTeachingModeEnabled(createGameTeachingModeState(), true);
+  const started = beginGameTeachingModeAnalysis(enabled, source);
+  const settled = settleGameTeachingModeAnalysis(started.state, {
+    kind: 'review-candidate',
+    recordId: started.request.recordId,
+    ply: started.request.ply,
+    revision: started.request.revision,
+    result: { ...CANDIDATE, depth: 2 },
+  });
+  assert.equal(settled.accepted, true);
+  assert.equal(settled.state.status, 'ready');
+  assert.ok(settled.state.message);
+  return { teachingState: settled.state, session, history: [...prefixMoves, PLAYED] };
+}
+
 function computerFixture() {
   const board = teachingBoard();
   board[2][2] = { type: 'P', side: RED };
@@ -133,6 +189,31 @@ function makeHandoff(values = fixture()) {
 
 function consume(values) {
   return consumeGameLiveReviewHandoff(values.handoff, values);
+}
+
+function assertAnalysisEdgePlyMatrix(review, cases, { minimumTimelineDepth, expectedPlies }) {
+  assert.ok(
+    review.record.moves.length >= minimumTimelineDepth,
+    `edge-ply source timeline must contain at least ${minimumTimelineDepth} canonical moves`,
+  );
+  const selectedPlies = cases.map(([, selected]) => selected.selectedPly);
+  assert.deepEqual(selectedPlies, expectedPlies, 'edge-ply matrix uses the intended exact plies');
+  assert.equal(
+    new Set(selectedPlies).size,
+    cases.length,
+    'every edge-ply matrix case must select a distinct Review ply',
+  );
+}
+
+function firstLegalAnalysisMove(analysis) {
+  for (let r = 0; r < analysis.currentBoard.length; r++) {
+    for (let c = 0; c < analysis.currentBoard[r].length; c++) {
+      const from = { r, c };
+      const [to] = gameAnalysisLegalMoves(analysis, from);
+      if (to) return [from, to];
+    }
+  }
+  assert.fail('representative Analysis position must have a legal move');
 }
 
 test('creates a minimal immutable non-GameRecord timeline with exact anchor and move identities', () => {
@@ -315,28 +396,39 @@ test('Analysis starts from the Review anchor snapshot, never a later live board'
 });
 
 test('P1-01 live Teaching Review Analysis preserves the canonical incomplete timeline at every edge ply', () => {
-  const values = makeHandoff();
+  const values = makeHandoff(multiPlyFixture());
   const before = clone(values);
   const review = consume(values).review;
-  const first = firstGameReviewPly(review);
-  const last = lastGameReviewPly(review);
+  assert.equal(review.totalPlies, 7, 'fixture contains a genuine multi-ply incomplete timeline');
+  assert.equal(Object.hasOwn(review.record, 'result'), false, 'live timeline has no completed result');
   const cases = [
-    ['anchor/start', first, values.handoff.anchorPly],
-    ['ply 1', last, 1],
-    ['taught move', last, values.handoff.movePly],
-    ['last available', last, review.totalPlies],
-    ['incomplete-game last', last, review.totalPlies],
+    ['opening', selectGameReviewPly(review, 0)],
+    ['ply 1', selectGameReviewPly(review, 1)],
+    ['intermediate', selectGameReviewPly(review, 3)],
+    ['later', selectGameReviewPly(review, 5)],
+    ['anchor', selectGameReviewPly(review, values.handoff.anchorPly)],
+    ['taught move / incomplete last', selectGameReviewPly(review, values.handoff.movePly)],
   ];
+  assertAnalysisEdgePlyMatrix(review, cases, {
+    minimumTimelineDepth: 6,
+    expectedPlies: [0, 1, 3, 5, 6, 7],
+  });
 
-  for (const [label, selected, expectedPly] of cases) {
+  for (const [label, selected] of cases) {
     const analysis = createGameLiveReviewAnalysis(selected);
-    assert.equal(selected.selectedPly, expectedPly, `${label}: selected Review ply`);
-    assert.equal(analysis.sourcePly, expectedPly, `${label}: Analysis source ply`);
+    assert.equal(selected.snapshot.terminal, null, `${label}: selected live position is incomplete`);
+    assert.equal(analysis.sourcePly, selected.selectedPly, `${label}: Analysis source ply`);
     assert.equal(
       analysis.sourceRecord.moves.length,
       review.totalPlies,
       `${label}: renderable source progress uses the canonical timeline`,
     );
+    assert.deepEqual(
+      analysis.sourceRecord.moves,
+      review.record.moves,
+      `${label}: source moves are exactly the real live timeline`,
+    );
+    assert.deepEqual(analysis.moves, [], `${label}: no future Analysis moves fabricated`);
     assert.deepEqual(analysis.anchorBoard, selected.snapshot.board, `${label}: exact board`);
     assert.equal(analysis.anchorSideToMove, selected.snapshot.sideToMove, `${label}: exact side`);
     assert.deepEqual(
@@ -345,9 +437,45 @@ test('P1-01 live Teaching Review Analysis preserves the canonical incomplete tim
       `${label}: exact repetition prefix`,
     );
     assert.equal(Object.hasOwn(analysis.sourceRecord, 'result'), false, `${label}: no result fabricated`);
+
+    if (label === 'intermediate' || label === 'taught move / incomplete last') {
+      const [from, to] = firstLegalAnalysisMove(analysis);
+      const moved = applyGameAnalysisMove(analysis, from, to);
+      assert.equal(moved.moves.length, 1, `${label}: representative Analysis move applies`);
+      const undone = undoGameAnalysisMove(moved);
+      assert.deepEqual(undone.currentBoard, analysis.currentBoard, `${label}: undo restores exact board`);
+      const reset = resetGameAnalysis(applyGameAnalysisMove(undone, from, to));
+      assert.deepEqual(reset.currentBoard, analysis.anchorBoard, `${label}: reset restores exact anchor`);
+      assert.equal(selected.selectedPly, analysis.sourcePly, `${label}: Review return ply remains exact`);
+    }
   }
 
-  assert.deepEqual(values, before, 'Analysis initialization leaves the live game inputs unchanged');
+  assert.deepEqual(
+    values.session.initialPosition.board,
+    before.session.initialPosition.board,
+    'Analysis operations leave the live board unchanged',
+  );
+  assert.deepEqual(values.history, before.history, 'Analysis operations leave live history unchanged');
+  assert.equal(values.session.id, before.session.id, 'Analysis operations preserve live record identity');
+  assert.deepEqual(values, before, 'Analysis move, undo and reset leave all live game inputs unchanged');
+});
+
+test('P1-01 edge-ply guard rejects the former collapsed one-ply matrix', () => {
+  const review = consume(makeHandoff()).review;
+  const collapsed = [
+    ['opening', firstGameReviewPly(review)],
+    ['ply 1', lastGameReviewPly(review)],
+    ['intermediate', lastGameReviewPly(review)],
+    ['last', lastGameReviewPly(review)],
+  ];
+  assert.throws(() => assertAnalysisEdgePlyMatrix(review, collapsed, {
+    minimumTimelineDepth: 6,
+    expectedPlies: [0, 1, 1, 1],
+  }), /at least 6 canonical moves/);
+  assert.throws(() => assertAnalysisEdgePlyMatrix(review, collapsed, {
+    minimumTimelineDepth: 1,
+    expectedPlies: [0, 1, 1, 1],
+  }), /must select a distinct Review ply/);
 });
 
 test('Puzzle handoff starts from the same Review anchor snapshot', () => {
