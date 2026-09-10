@@ -1,4 +1,4 @@
-import { ROWS, COLS, RED, BLACK } from './game.js?v=6579916556';
+import { ROWS, COLS, RED, BLACK } from './game.js?v=a0cadeb326';
 
 export const RECOGNITION_OCCUPANCY_EMPTY = 'empty';
 export const RECOGNITION_OCCUPANCY_OCCUPIED = 'occupied';

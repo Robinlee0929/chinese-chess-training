@@ -13,7 +13,7 @@ import {
 import {
   readInstalledReviewCoachStagingCapability,
   B2A_BROWSER_TIMEOUT_MS,
-} from './review-coach-connectivity.js?v=6579916556';
+} from './review-coach-connectivity.js?v=a0cadeb326';
 
 const indexSource = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
 const entryHtml = readFileSync(new URL('./staging/review-coach.html', import.meta.url), 'utf8');
@@ -40,7 +40,7 @@ function exactKeys(value, keys) {
   assert.deepEqual(Object.keys(value).sort(), [...keys].sort());
 }
 
-function fakeDocument(mainSource = './main.js?v=6579916556') {
+function fakeDocument(mainSource = './main.js?v=a0cadeb326') {
   return {
     baseURI: 'https://robinlee0929.github.io/chinese-chess-training/',
     querySelector(selector) {
@@ -412,7 +412,7 @@ test('staging capability is branded and installed before main initialization', a
   });
   assert.equal(installedAtMain, capability);
   assert.equal(readInstalledReviewCoachStagingCapability(target), capability);
-  assert.equal(mainUrl, 'https://robinlee0929.github.io/chinese-chess-training/main.js?v=6579916556');
+  assert.equal(mainUrl, 'https://robinlee0929.github.io/chinese-chess-training/main.js?v=a0cadeb326');
   assert.equal(calls.length, 0, 'bootstrap and main initialization do not fetch Worker capabilities');
 });
 

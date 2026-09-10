@@ -6,12 +6,12 @@ import {
   legalMoves,
   applyMove,
   notation,
-} from './game.js?v=6579916556';
+} from './game.js?v=a0cadeb326';
 import {
   validatePuzzle,
   replayPuzzle,
   isCheckmateAfterSolution,
-} from './puzzle-domain.js?v=6579916556';
+} from './puzzle-domain.js?v=a0cadeb326';
 
 const SIDES = new Set([RED, BLACK]);
 const STATUSES = new Set(['recording', 'recorded']);

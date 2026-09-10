@@ -6,12 +6,12 @@ import {
   inCheck,
   name,
   repetitionVerdict,
-} from './game.js?v=6579916556';
+} from './game.js?v=a0cadeb326';
 import {
   createGameAnalysis,
   createGameAnalysisFromPosition,
   applyGameAnalysisMove,
-} from './game-analysis.js?v=6579916556';
+} from './game-analysis.js?v=a0cadeb326';
 
 export const GAME_REVIEW_EVIDENCE_KIND = 'review-move-comparison';
 export const GAME_REVIEW_EVIDENCE_CANONICAL = 'CANONICAL_FACT';

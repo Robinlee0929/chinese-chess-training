@@ -20,6 +20,12 @@ function install(name, values) {
   return context;
 }
 
+function installMany(names, values) {
+  const context = vm.createContext({ RED, BLACK, ...values });
+  vm.runInContext(names.map(functionSource).join('\n'), context);
+  return context;
+}
+
 test('renders one native AI-only player-side selector with the approved labels', () => {
   assert.equal((html.match(/id="sideChooser"/gu) || []).length, 1);
   assert.match(html, /<fieldset id="sideChooser"[^>]*>[\s\S]*<legend>選擇你的棋色<\/legend>/u);
@@ -149,20 +155,71 @@ test('black-side opening cannot be undone until the human has moved', () => {
   assert.match(functionSource('undo'), /turn === aiSide\(\)/u);
 });
 
-test('side changes restart cleanly, orient the camera, and generic resets return to Red', () => {
+test('side changes restart cleanly while new games reconcile the current-side camera', () => {
   const calls = [];
   const context = install('changeHumanSide', {
     normalGameActive: () => true,
     isAI: () => true,
     humanSide: RED,
     newGame(options) { calls.push(['new', options.resetHumanSide]); },
-    showPlayerPerspective(side) { calls.push(['camera', side]); },
   });
   assert.equal(context.changeHumanSide(BLACK), true);
   assert.equal(context.humanSide, BLACK);
-  assert.deepEqual(calls, [['new', false], ['camera', BLACK]]);
+  assert.deepEqual(calls, [['new', false]]);
   assert.match(functionSource('newGame'), /if \(resetHumanSide\) humanSide = RED;/u);
+  assert.match(functionSource('newGame'), /if \(reconcileHumanSideCamera\) showPlayerPerspective\(humanSide\);/u);
   assert.match(functionSource('showPlayerPerspective'), /side === BLACK \? 1 : 0/u);
+  assert.match(source, /newGame\(\{ reconcileHumanSideCamera: false \}\);/u);
+});
+
+test('PSS-REV-01: the latest authoritative side owns the camera after rapid game resets', () => {
+  const context = installMany(['changeHumanSide', 'newGame'], {
+    normalGameActive: () => true,
+    isAI: () => true,
+    humanSide: BLACK,
+    tweens: [{ tag: 'camera', target: BLACK }],
+    aiToken: 0,
+    aiThinking: false,
+    history: [{}],
+    capturedBy: { [RED]: [], [BLACK]: [] },
+    over: false,
+    winner: null,
+    busy: false,
+    board: null,
+    turn: BLACK,
+    posHistory: [],
+    repHistory: [],
+    gameStartTime: 0,
+    undoCount: 1,
+    initialBoard: () => [['fresh']],
+    hashBoard: () => 'fresh-position',
+    invalidateTeachingModeFeedback() {},
+    beginNormalGameRecordSession() {},
+    stopConfetti() {},
+    overlay: { classList: { add() {} } },
+    banner: { classList: { add() {} } },
+    logEl: { innerHTML: 'old' },
+    logEmpty: { style: { display: 'none' } },
+    syncLastMoveMark() {},
+    buildScene() {},
+    refreshHUD() {},
+    showPlayerPerspective(side) {
+      context.tweens.push({ tag: 'camera', target: side });
+    },
+    maybeAIMove() {},
+  });
+
+  context.changeHumanSide(RED);
+  context.newGame();
+  assert.equal(context.humanSide, RED);
+  assert.equal(context.turn, RED);
+  assert.equal(context.history.length, 0);
+  assert.deepEqual(context.tweens.map(({ target }) => target), [RED]);
+
+  context.changeHumanSide(BLACK);
+  context.changeHumanSide(RED);
+  context.changeHumanSide(BLACK);
+  assert.deepEqual(context.tweens.map(({ target }) => target), [BLACK]);
 });
 
 test('teaching, result and capture attribution follow the selected human actor', () => {

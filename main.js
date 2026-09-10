@@ -7,9 +7,9 @@ import {
   ROWS, COLS, RED, BLACK,
   initialBoard, legalMoves, applyMove, inCheck,
   hasAnyLegalMove, name, notation, hashBoard, repetitionVerdict,
-} from './game.js?v=6579916556';
-import { createGameRecord } from './game-record.js?v=6579916556';
-import { createGameRecordStore } from './game-record-store.js?v=6579916556';
+} from './game.js?v=a0cadeb326';
+import { createGameRecord } from './game-record.js?v=a0cadeb326';
+import { createGameRecordStore } from './game-record-store.js?v=a0cadeb326';
 import {
   createGameReview,
   createGameRecordLibraryView,
@@ -18,15 +18,15 @@ import {
   nextGameReviewPly,
   lastGameReviewPly,
   selectGameReviewPly,
-} from './game-review.js?v=6579916556';
+} from './game-review.js?v=a0cadeb326';
 import {
   createGameReviewAiState,
   invalidateGameReviewAiState,
   beginGameReviewAiRequest,
   settleGameReviewAiResponse,
-} from './game-review-ai.js?v=6579916556';
-import { createGameReviewEvidence } from './game-review-evidence.js?v=6579916556';
-import { deriveGameReviewTeaching } from './game-review-teaching.js?v=6579916556';
+} from './game-review-ai.js?v=a0cadeb326';
+import { createGameReviewEvidence } from './game-review-evidence.js?v=a0cadeb326';
+import { deriveGameReviewTeaching } from './game-review-teaching.js?v=a0cadeb326';
 import {
   createGameTeachingModeState,
   setGameTeachingModeEnabled,
@@ -35,7 +35,7 @@ import {
   settleGameTeachingModeAnalysis,
   gameTeachingModeMatchesHistory,
   shouldScheduleGameTeachingMode,
-} from './game-teaching-mode.js?v=6579916556';
+} from './game-teaching-mode.js?v=a0cadeb326';
 import {
   createDisabledCoachState,
   createIdleCoachState,
@@ -44,28 +44,28 @@ import {
   settleCoachResponse,
   invalidateCoachState,
   selectCoachModelProfile,
-} from './game-review-coach.js?v=6579916556';
+} from './game-review-coach.js?v=a0cadeb326';
 import {
   readCoachModelProfilePreference,
   writeCoachModelProfilePreference,
-} from './coach-model-profile-preference.js?v=6579916556';
+} from './coach-model-profile-preference.js?v=a0cadeb326';
 import {
   readInstalledReviewCoachStagingCapability,
   isReviewCoachProfileAvailable,
-} from './review-coach-connectivity.js?v=6579916556';
+} from './review-coach-connectivity.js?v=a0cadeb326';
 import {
   createGameAnalysis,
   gameAnalysisLegalMoves,
   applyGameAnalysisMove,
   undoGameAnalysisMove,
   resetGameAnalysis,
-} from './game-analysis.js?v=6579916556';
-import { createGameReviewPuzzleHandoff } from './game-review-puzzle-handoff.js?v=6579916556';
+} from './game-analysis.js?v=a0cadeb326';
+import { createGameReviewPuzzleHandoff } from './game-review-puzzle-handoff.js?v=a0cadeb326';
 import {
   createGameLiveReviewHandoff,
   consumeGameLiveReviewHandoff,
   createGameLiveReviewAnalysis,
-} from './game-live-review-handoff.js?v=6579916556';
+} from './game-live-review-handoff.js?v=a0cadeb326';
 import {
   PuzzleEditorError,
   createEditorState,
@@ -75,7 +75,7 @@ import {
   setEditorSideToMove,
   confirmAuthoredPosition,
   exportAuthoredPosition,
-} from './puzzle-editor.js?v=6579916556';
+} from './puzzle-editor.js?v=a0cadeb326';
 import {
   PuzzleRecorderError,
   createRecorder,
@@ -85,7 +85,7 @@ import {
   finishRecording,
   exportRecorderBoard,
   exportRecordedResult,
-} from './puzzle-recorder.js?v=6579916556';
+} from './puzzle-recorder.js?v=a0cadeb326';
 import {
   PuzzlePracticeError,
   PRACTICE_HINT_MAX_LEVEL,
@@ -95,12 +95,12 @@ import {
   derivePracticeHint,
   restartPractice,
   exportPracticeSnapshot,
-} from './puzzle-practice.js?v=6579916556';
-import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=6579916556';
+} from './puzzle-practice.js?v=a0cadeb326';
+import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=a0cadeb326';
 import {
   PracticeAnalyticsError,
   createPracticeAnalyticsStore,
-} from './puzzle-analytics.js?v=6579916556';
+} from './puzzle-analytics.js?v=a0cadeb326';
 import {
   PUZZLE_TRANSFER_FORMAT,
   PUZZLE_TRANSFER_SCHEMA_VERSION,
@@ -108,7 +108,7 @@ import {
   PuzzleTransferError,
   serializePuzzleExport,
   parsePuzzleImport,
-} from './puzzle-transfer.js?v=6579916556';
+} from './puzzle-transfer.js?v=a0cadeb326';
 import {
   PHOTO_MAX_ZOOM,
   PHOTO_MIN_ZOOM,
@@ -122,7 +122,7 @@ import {
   validatePhotoMetadata,
   zoomPhotoIn,
   zoomPhotoOut,
-} from './puzzle-photo.js?v=6579916556';
+} from './puzzle-photo.js?v=a0cadeb326';
 import {
   CALIBRATION_CANONICAL_HEIGHT,
   CALIBRATION_CANONICAL_WIDTH,
@@ -138,7 +138,7 @@ import {
   setCorner,
   transformPoint,
   validateQuadrilateral,
-} from './puzzle-photo-calibration.js?v=6579916556';
+} from './puzzle-photo-calibration.js?v=a0cadeb326';
 import {
   PuzzlePhotoRecognitionError,
   RECOGNITION_OCCUPANCY_EMPTY,
@@ -150,7 +150,7 @@ import {
   isRecognitionTokenCurrent,
   recognizeIntersections,
   selectionKey,
-} from './puzzle-photo-recognition.js?v=6579916556';
+} from './puzzle-photo-recognition.js?v=a0cadeb326';
 import {
   addTemplate,
   createPieceTypeSessionToken,
@@ -160,13 +160,13 @@ import {
   normalizePiecePatch,
   removeTemplatesForSource,
   suggestUnresolvedPieceTypes,
-} from './puzzle-photo-piece-types.js?v=6579916556';
+} from './puzzle-photo-piece-types.js?v=a0cadeb326';
 import {
   UNREVIEWED, PuzzlePhotoReviewError,
   createReviewState, buildReviewQueue, selectReviewCandidate, confirmEmpty, confirmPiece,
   nextCandidate, previousCandidate, nextUnresolved, acceptHighConfidenceEmpty,
   undoBulkEmpty, resetReview, rescanReview, reviewProgress, confirmedSelections, buildReviewedBoard,
-} from './puzzle-photo-review.js?v=6579916556';
+} from './puzzle-photo-review.js?v=a0cadeb326';
 
 // ---------------- 常數 ----------------
 const CELL = 1;
@@ -769,7 +769,7 @@ const gameReviewCoachUnavailableProfiles = new Set();
 let aiWorker = null;
 let aiModule = null;   // Worker 不可用時的主執行緒後備
 try {
-  aiWorker = new Worker(new URL('./ai-worker.js?v=6579916556', import.meta.url), { type: 'module' });
+  aiWorker = new Worker(new URL('./ai-worker.js?v=a0cadeb326', import.meta.url), { type: 'module' });
   aiWorker.onmessage = (e) => onAIResult(e.data);
   aiWorker.onerror = () => {
     aiWorker = null;
@@ -792,7 +792,7 @@ function requestAIMove() {
   if (aiWorker) {
     aiWorker.postMessage(payload);
   } else {
-    (aiModule ??= import('./ai.js?v=6579916556')).then(({ findBestMove }) => {
+    (aiModule ??= import('./ai.js?v=a0cadeb326')).then(({ findBestMove }) => {
       setTimeout(() => {
         if (token !== aiToken) return;
         try {
@@ -952,7 +952,7 @@ function requestGameTeachingModeAnalysis(source) {
   renderGameTeachingMode();
   let worker;
   try {
-    worker = new Worker(new URL('./ai-worker.js?v=6579916556', import.meta.url), { type: 'module' });
+    worker = new Worker(new URL('./ai-worker.js?v=a0cadeb326', import.meta.url), { type: 'module' });
     gameTeachingModeWorker = worker;
     worker.onmessage = (event) => handleGameTeachingModeResponse(worker, event.data);
     worker.onerror = (event) => {
@@ -3079,7 +3079,7 @@ function handleGameReviewAiResponse(worker, response) {
 }
 
 function createGameReviewAiWorker() {
-  return new Worker(new URL('./ai-worker.js?v=6579916556', import.meta.url), { type: 'module' });
+  return new Worker(new URL('./ai-worker.js?v=a0cadeb326', import.meta.url), { type: 'module' });
 }
 
 function requestGameReviewAiCandidate() {
@@ -4758,7 +4758,6 @@ function changeHumanSide(nextSide) {
     || nextSide === humanSide) return false;
   humanSide = nextSide;
   newGame({ resetHumanSide: false });
-  showPlayerPerspective(humanSide);
   return true;
 }
 
@@ -4767,9 +4766,8 @@ function canHumanMove() {
     && (!isAI() || turn === humanSide);
 }
 
-function newGame({ resetHumanSide = true } = {}) {
+function newGame({ resetHumanSide = true, reconcileHumanSideCamera = true } = {}) {
   if (!normalGameActive()) return;
-  const previousHumanSide = humanSide;
   if (resetHumanSide) humanSide = RED;
   invalidateTeachingModeFeedback();
   tweens.length = 0;
@@ -4795,7 +4793,7 @@ function newGame({ resetHumanSide = true } = {}) {
   syncLastMoveMark();
   buildScene();
   refreshHUD();
-  if (resetHumanSide && previousHumanSide !== humanSide) showPlayerPerspective(humanSide);
+  if (reconcileHumanSideCamera) showPlayerPerspective(humanSide);
   maybeAIMove();
 }
 
@@ -5960,4 +5958,4 @@ function tick(now) {
 }
 renderer.setAnimationLoop(tick);
 
-newGame();
+newGame({ reconcileHumanSideCamera: false });
