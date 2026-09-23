@@ -5,7 +5,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
   normalizePieceGlyphOrientationMode,
-  getBoardViewRotationDeg, getPieceGlyphRotation, getPieceTextureRotation,
+  ORIENTATION_HYSTERESIS_DEG, getLiveBoardAzimuthDeg,
+  updateSnappedBoardOrientation, getPieceGlyphRotation, getPieceTextureRotation,
   readPieceGlyphOrientationMode, writePieceGlyphOrientationMode,
 } from './piece-glyph-orientation.js?v=piece-glyph-orientation-v1';
 import {
@@ -185,6 +186,7 @@ const to3D = (r, c) =>
   new THREE.Vector3((c - (COLS - 1) / 2) * CELL, 0, ((ROWS - 1) / 2 - r) * CELL);
 
 let pieceGlyphOrientationMode = readPieceGlyphOrientationMode(() => window.localStorage);
+let snappedBoardOrientationDeg = null;
 
 // ---------------- 场景 / 相机 / 渲染 ----------------
 const container = document.getElementById('stage');
@@ -387,7 +389,14 @@ sharedPieceMats();
 
 const PIECE_GEO = new THREE.CylinderGeometry(0.4, 0.46, PIECE_H, 48);
 
-function makeTopTexture(side, type, ringOffsets = Array.from({ length: 6 }, () => Math.random() * 5)) {
+function makeRingStyle() {
+  return {
+    offsets: Array.from({ length: 6 }, () => Math.random() * 5),
+    widths: Array.from({ length: 6 }, () => 0.8 + Math.random() * 1.4),
+  };
+}
+
+function makeTopTexture(side, type, ringStyle) {
   const s = 256;
   const cv = document.createElement('canvas');
   cv.width = s; cv.height = s;
@@ -400,9 +409,9 @@ function makeTopTexture(side, type, ringOffsets = Array.from({ length: 6 }, () =
   g.fillRect(0, 0, s, s);
   g.strokeStyle = 'rgba(118,78,38,0.16)';
   for (let i = 0; i < 6; i++) {
-    g.lineWidth = 0.8 + Math.random() * 1.4;
+    g.lineWidth = ringStyle.widths[i];
     g.beginPath();
-    g.arc(s / 2, s / 2, 26 + i * 13 + ringOffsets[i], 0, Math.PI * 2);
+    g.arc(s / 2, s / 2, 26 + i * 13 + ringStyle.offsets[i], 0, Math.PI * 2);
     g.stroke();
   }
   const col = side === RED ? 'rgba(173,42,32,0.96)' : 'rgba(36,33,29,0.96)';
@@ -414,7 +423,7 @@ function makeTopTexture(side, type, ringOffsets = Array.from({ length: 6 }, () =
   g.textAlign = 'center';
   g.textBaseline = 'middle';
   // The top face and its ring stay fixed; only the glyph rotates in texture space.
-  const boardViewRotationDeg = currentBoardViewRotationDeg();
+  const boardViewRotationDeg = snappedBoardOrientationDeg;
   const screenRotation = getPieceGlyphRotation({
     mode: pieceGlyphOrientationMode, pieceSide: side, boardViewRotationDeg,
   });
@@ -431,7 +440,7 @@ function makeTopTexture(side, type, ringOffsets = Array.from({ length: 6 }, () =
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-  tex.userData.ringOffsets = ringOffsets;
+  tex.userData.ringStyle = ringStyle;
   tex.userData.boardViewRotationDeg = boardViewRotationDeg;
   tex.userData.glyphScreenRotation = screenRotation;
   tex.userData.glyphTextureRotation = textureRotation;
@@ -442,24 +451,25 @@ function refreshPieceGlyphTextures() {
   for (const mesh of pieces) {
     const old = mesh.material[1].map;
     const { side, type } = mesh.userData.piece;
-    mesh.material[1].map = makeTopTexture(side, type, old.userData.ringOffsets);
+    mesh.material[1].map = makeTopTexture(side, type, mesh.userData.ringStyle);
     mesh.material[1].needsUpdate = true;
     old.dispose();
   }
 }
 
 function makePiece(piece, r, c) {
+  const ringStyle = makeRingStyle();
   const m = new THREE.Mesh(
     PIECE_GEO,
     [
       sideMat,
-      new THREE.MeshStandardMaterial({ map: makeTopTexture(piece.side, piece.type), roughness: 0.5, metalness: 0.05 }),
+      new THREE.MeshStandardMaterial({ map: makeTopTexture(piece.side, piece.type, ringStyle), roughness: 0.5, metalness: 0.05 }),
       botMat,
     ]
   );
   m.castShadow = true;
   m.receiveShadow = true;
-  m.userData = { piece, r, c };
+  m.userData = { piece, r, c, ringStyle };
   const p = to3D(r, c);
   m.position.set(p.x, Y0, p.z);
   return m;
@@ -1018,7 +1028,8 @@ window.__chess = {
   get humanSide() { return humanSide; },
   get pieceGlyphOrientationMode() { return pieceGlyphOrientationMode; },
   get viewerSide() { return cameraViewerSide(); },
-  get boardViewRotationDeg() { return currentBoardViewRotationDeg(); },
+  get liveBoardAzimuthDeg() { return getLiveBoardAzimuthDeg(camera.position, controls.target); },
+  get boardViewRotationDeg() { return snappedBoardOrientationDeg; },
   get viewIdx() { return viewIdx; },
   get aiSide() { return aiSide(); },
   get aiThinking() { return aiThinking; },
@@ -5846,10 +5857,12 @@ function flyTo(pos, tgt, done) {
       sphFrom.phi + (sphTo.phi - sphFrom.phi) * k,
       sphFrom.theta + dTheta * k,
     );
+    controls.target.copy(tgtNow);
     camera.position.setFromSpherical(sph).add(tgtNow);
     // 補間途中需自行更新相機朝向（tick 可能正跳過 controls.update()），
     // 否則抵達後視線方向是舊的
     camera.lookAt(tgtNow);
+    syncSnappedBoardOrientation();
   }, () => { saveViewPrefs(); if (done) done(); }, 0, 'camera');
 }
 function cancelCameraTween() {
@@ -5865,15 +5878,21 @@ const CAMERA_VIEWS = [
   { label: '黑方在下', dist: 14.8, polar: 55, azimuth: 180, tgt: new THREE.Vector3(0, -0.1, -0.2) },
 ];
 let viewIdx = 0;
-function currentBoardViewRotationDeg() {
-  return getBoardViewRotationDeg(CAMERA_VIEWS[viewIdx]);
+function syncSnappedBoardOrientation() {
+  const next = updateSnappedBoardOrientation({
+    liveAngleDeg: getLiveBoardAzimuthDeg(camera.position, controls.target),
+    currentSnapDeg: snappedBoardOrientationDeg,
+    hysteresisDeg: ORIENTATION_HYSTERESIS_DEG,
+  });
+  if (next === null || next === snappedBoardOrientationDeg) return;
+  snappedBoardOrientationDeg = next;
+  refreshPieceGlyphTextures();
 }
 function cameraViewerSide() {
   return viewIdx === 0 ? RED : viewIdx === 1 ? BLACK : null;
 }
 function activateCameraView(index, { announce = true } = {}) {
   viewIdx = ((index % CAMERA_VIEWS.length) + CAMERA_VIEWS.length) % CAMERA_VIEWS.length;
-  refreshPieceGlyphTextures();
   const v = CAMERA_VIEWS[viewIdx];
   const pos = new THREE.Vector3()
     .setFromSphericalCoords(v.dist, THREE.MathUtils.degToRad(v.polar), THREE.MathUtils.degToRad(v.azimuth))
@@ -5955,6 +5974,9 @@ if (savedPrefs) {
     viewIdx = ((savedPrefs.viewIdx % CAMERA_VIEWS.length) + CAMERA_VIEWS.length) % CAMERA_VIEWS.length;
   }
 }
+// Restore the camera first, then choose its nearest physical-board direction.
+syncSnappedBoardOrientation();
+controls.addEventListener('change', syncSnappedBoardOrientation);
 window.addEventListener('pagehide', () => {
   invalidateTeachingModeFeedback();
   invalidateGameReviewCoach();
