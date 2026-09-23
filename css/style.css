@@ -166,6 +166,26 @@ button:disabled { opacity: 0.45; cursor: default; }
 }
 #modeSel:hover { background: #33281d; border-color: #4d3c2a; }
 
+.glyph-orientation-setting {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.glyph-orientation-setting select {
+  max-width: 165px;
+  padding: 7px 8px;
+  color: var(--text);
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font: inherit;
+  cursor: pointer;
+}
+.glyph-orientation-setting select:focus-visible { outline: 2px solid #f3ca70; outline-offset: 2px; }
+
 .side-chooser {
   display: inline-flex;
   align-items: stretch;
@@ -1766,6 +1786,8 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
     text-align: left;
     border-radius: 8px;
   }
+  #hudMore > .glyph-orientation-setting { flex-direction: column; align-items: stretch; padding: 5px 4px; }
+  #hudMore > .glyph-orientation-setting select { max-width: none; min-height: 38px; }
   #btnHelp { display: inline-flex; }
 
   /* 吃子托盤：浮動貼在棋盤底部黑邊上，指標事件穿透可繼續轉視角 */

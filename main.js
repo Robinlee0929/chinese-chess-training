@@ -4,6 +4,10 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
+  ALL_UPRIGHT, FACE_OPPONENT,
+  getPieceGlyphRotation, readPieceGlyphOrientationMode, writePieceGlyphOrientationMode,
+} from './piece-glyph-orientation.js?v=piece-glyph-orientation-v1';
+import {
   ROWS, COLS, RED, BLACK,
   initialBoard, legalMoves, applyMove, inCheck,
   hasAnyLegalMove, name, notation, hashBoard, repetitionVerdict,
@@ -178,6 +182,8 @@ const Y0 = PIECE_H / 2; // 棋子中心高度（貼著盤面）
 
 const to3D = (r, c) =>
   new THREE.Vector3((c - (COLS - 1) / 2) * CELL, 0, ((ROWS - 1) / 2 - r) * CELL);
+
+let pieceGlyphOrientationMode = readPieceGlyphOrientationMode(() => window.localStorage);
 
 // ---------------- 场景 / 相机 / 渲染 ----------------
 const container = document.getElementById('stage');
@@ -380,7 +386,7 @@ sharedPieceMats();
 
 const PIECE_GEO = new THREE.CylinderGeometry(0.4, 0.46, PIECE_H, 48);
 
-function makeTopTexture(side, type) {
+function makeTopTexture(side, type, ringOffsets = Array.from({ length: 6 }, () => Math.random() * 5)) {
   const s = 256;
   const cv = document.createElement('canvas');
   cv.width = s; cv.height = s;
@@ -395,7 +401,7 @@ function makeTopTexture(side, type) {
   for (let i = 0; i < 6; i++) {
     g.lineWidth = 0.8 + Math.random() * 1.4;
     g.beginPath();
-    g.arc(s / 2, s / 2, 26 + i * 13 + Math.random() * 5, 0, Math.PI * 2);
+    g.arc(s / 2, s / 2, 26 + i * 13 + ringOffsets[i], 0, Math.PI * 2);
     g.stroke();
   }
   const col = side === RED ? 'rgba(173,42,32,0.96)' : 'rgba(36,33,29,0.96)';
@@ -406,18 +412,37 @@ function makeTopTexture(side, type) {
   g.font = '900 118px "Kaiti SC","STKaiti","KaiTi","Noto Serif TC",serif';
   g.textAlign = 'center';
   g.textBaseline = 'middle';
-  // 棋子文字朝向持有者：紅方在原點側（畫面下方），黑方在遠端（畫面上方）
-  if (side === BLACK) {
-    g.translate(s / 2, s / 2);
-    g.rotate(Math.PI);
-    g.translate(-s / 2, -s / 2);
-  }
+  // The top face and its ring stay fixed; only the glyph rotates in texture space.
+  // The black camera sees the same texture from the opposite direction.
+  const viewerSide = cameraViewerSide();
+  const screenRotation = getPieceGlyphRotation({
+    mode: pieceGlyphOrientationMode, pieceSide: side, viewerSide,
+  });
+  const textureRotation = ((viewerSide === BLACK ? 180 : 0) + screenRotation) % 360;
+  g.save();
+  g.translate(s / 2, s / 2);
+  g.rotate(THREE.MathUtils.degToRad(textureRotation));
+  g.translate(-s / 2, -s / 2);
   g.fillText(name(side, type), s / 2, s / 2 + 8);
+  g.restore();
 
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  tex.userData.ringOffsets = ringOffsets;
+  tex.userData.glyphScreenRotation = screenRotation;
+  tex.userData.glyphTextureRotation = textureRotation;
   return tex;
+}
+
+function refreshPieceGlyphTextures() {
+  for (const mesh of pieces) {
+    const old = mesh.material[1].map;
+    const { side, type } = mesh.userData.piece;
+    mesh.material[1].map = makeTopTexture(side, type, old.userData.ringOffsets);
+    mesh.material[1].needsUpdate = true;
+    old.dispose();
+  }
 }
 
 function makePiece(piece, r, c) {
@@ -988,6 +1013,9 @@ window.__chess = {
   get busy() { return busy; },
   get mode() { return mode; },
   get humanSide() { return humanSide; },
+  get pieceGlyphOrientationMode() { return pieceGlyphOrientationMode; },
+  get viewerSide() { return cameraViewerSide(); },
+  get viewIdx() { return viewIdx; },
   get aiSide() { return aiSide(); },
   get aiThinking() { return aiThinking; },
   get normalGameRecordSession() {
@@ -5832,8 +5860,12 @@ const CAMERA_VIEWS = [
   { label: '俯視', dist: 14.2, polar: 8, azimuth: -90, tgt: new THREE.Vector3(0, 0, 0.2) },
 ];
 let viewIdx = 0;
+function cameraViewerSide() {
+  return viewIdx === 0 ? RED : viewIdx === 1 ? BLACK : null;
+}
 function activateCameraView(index, { announce = true } = {}) {
   viewIdx = ((index % CAMERA_VIEWS.length) + CAMERA_VIEWS.length) % CAMERA_VIEWS.length;
+  refreshPieceGlyphTextures();
   const v = CAMERA_VIEWS[viewIdx];
   const pos = new THREE.Vector3()
     .setFromSphericalCoords(v.dist, THREE.MathUtils.degToRad(v.polar), THREE.MathUtils.degToRad(v.azimuth))
@@ -5846,6 +5878,16 @@ function showPlayerPerspective(side) {
 }
 document.getElementById('btnView').addEventListener('click', () => {
   activateCameraView(viewIdx + 1);
+});
+
+const pieceGlyphOrientationSelect = document.getElementById('pieceGlyphOrientationMode');
+pieceGlyphOrientationSelect.value = pieceGlyphOrientationMode;
+pieceGlyphOrientationSelect.addEventListener('change', () => {
+  const next = pieceGlyphOrientationSelect.value;
+  pieceGlyphOrientationMode = next === FACE_OPPONENT ? FACE_OPPONENT : ALL_UPRIGHT;
+  pieceGlyphOrientationSelect.value = pieceGlyphOrientationMode;
+  writePieceGlyphOrientationMode(() => window.localStorage, pieceGlyphOrientationMode);
+  refreshPieceGlyphTextures();
 });
 
 // 固定視角：鎖定鏡頭後拖曳／滾輪都不再改變視角（Issue #2）
