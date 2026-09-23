@@ -5,7 +5,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
   normalizePieceGlyphOrientationMode,
-  getPieceGlyphRotation, readPieceGlyphOrientationMode, writePieceGlyphOrientationMode,
+  getBoardViewRotationDeg, getPieceGlyphRotation, getPieceTextureRotation,
+  readPieceGlyphOrientationMode, writePieceGlyphOrientationMode,
 } from './piece-glyph-orientation.js?v=piece-glyph-orientation-v1';
 import {
   ROWS, COLS, RED, BLACK,
@@ -413,12 +414,13 @@ function makeTopTexture(side, type, ringOffsets = Array.from({ length: 6 }, () =
   g.textAlign = 'center';
   g.textBaseline = 'middle';
   // The top face and its ring stay fixed; only the glyph rotates in texture space.
-  // The black camera sees the same texture from the opposite direction.
-  const viewerSide = cameraViewerSide();
+  const boardViewRotationDeg = currentBoardViewRotationDeg();
   const screenRotation = getPieceGlyphRotation({
-    mode: pieceGlyphOrientationMode, pieceSide: side, viewerSide,
+    mode: pieceGlyphOrientationMode, pieceSide: side, boardViewRotationDeg,
   });
-  const textureRotation = ((viewerSide === BLACK ? 180 : 0) + screenRotation) % 360;
+  const textureRotation = getPieceTextureRotation({
+    mode: pieceGlyphOrientationMode, pieceSide: side, boardViewRotationDeg,
+  });
   g.save();
   g.translate(s / 2, s / 2);
   g.rotate(THREE.MathUtils.degToRad(textureRotation));
@@ -430,6 +432,7 @@ function makeTopTexture(side, type, ringOffsets = Array.from({ length: 6 }, () =
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
   tex.userData.ringOffsets = ringOffsets;
+  tex.userData.boardViewRotationDeg = boardViewRotationDeg;
   tex.userData.glyphScreenRotation = screenRotation;
   tex.userData.glyphTextureRotation = textureRotation;
   return tex;
@@ -1015,6 +1018,7 @@ window.__chess = {
   get humanSide() { return humanSide; },
   get pieceGlyphOrientationMode() { return pieceGlyphOrientationMode; },
   get viewerSide() { return cameraViewerSide(); },
+  get boardViewRotationDeg() { return currentBoardViewRotationDeg(); },
   get viewIdx() { return viewIdx; },
   get aiSide() { return aiSide(); },
   get aiThinking() { return aiThinking; },
@@ -5854,12 +5858,16 @@ function cancelCameraTween() {
 
 // 「視角」按鈕：在多個預設機位之間循環切換
 const CAMERA_VIEWS = [
-  { label: '紅方', dist: 14.8, polar: 45, azimuth: -90, tgt: HOME_TGT },
-  { label: '黑方', dist: 14.8, polar: 45, azimuth: 90, tgt: new THREE.Vector3(0, -0.1, -0.2) },
-  { label: '側面', dist: 14.8, polar: 55, azimuth: 0, tgt: new THREE.Vector3(0, -0.1, 0.2) },
+  { label: '紅右黑左', dist: 14.8, polar: 45, azimuth: -90, tgt: HOME_TGT },
+  { label: '紅左黑右', dist: 14.8, polar: 45, azimuth: 90, tgt: new THREE.Vector3(0, -0.1, -0.2) },
+  { label: '紅方在下', dist: 14.8, polar: 55, azimuth: 0, tgt: new THREE.Vector3(0, -0.1, 0.2) },
   { label: '俯視', dist: 14.2, polar: 8, azimuth: -90, tgt: new THREE.Vector3(0, 0, 0.2) },
+  { label: '黑方在下', dist: 14.8, polar: 55, azimuth: 180, tgt: new THREE.Vector3(0, -0.1, -0.2) },
 ];
 let viewIdx = 0;
+function currentBoardViewRotationDeg() {
+  return getBoardViewRotationDeg(CAMERA_VIEWS[viewIdx]);
+}
 function cameraViewerSide() {
   return viewIdx === 0 ? RED : viewIdx === 1 ? BLACK : null;
 }

@@ -27,10 +27,29 @@ export function writePieceGlyphOrientationMode(getStorage, value) {
   }
 }
 
-// Screen-relative degrees. An unknown camera side has no opponent-facing rule.
-export function getPieceGlyphRotation({ mode, pieceSide, viewerSide }) {
-  if (normalizePieceGlyphOrientationMode(mode) !== FACE_OPPONENT
-    || !['red', 'black'].includes(viewerSide)
+const normalizeAngle = (degrees) => ((degrees % 360) + 360) % 360;
+const isQuarterTurn = (degrees) => Number.isInteger(degrees) && degrees >= 0
+  && degrees < 360 && degrees % 90 === 0;
+
+// The existing preset azimuth is the board's screen rotation from Red-bottom.
+export function getBoardViewRotationDeg(cameraView) {
+  const azimuth = cameraView?.azimuth;
+  return Number.isFinite(azimuth) && azimuth % 90 === 0
+    ? normalizeAngle(azimuth) : null;
+}
+
+// Screen-relative clockwise degrees. Unknown views keep the safe upright fallback.
+export function getPieceGlyphRotation({ mode, pieceSide, boardViewRotationDeg }) {
+  if (normalizePieceGlyphOrientationMode(mode) === ALL_UPRIGHT
+    || !isQuarterTurn(boardViewRotationDeg)
     || !['red', 'black'].includes(pieceSide)) return 0;
-  return pieceSide === viewerSide ? 0 : 180;
+  return normalizeAngle((pieceSide === 'red' ? 0 : 180) - boardViewRotationDeg);
+}
+
+// At azimuth -90°, unrotated top-face canvas text appears screen upright.
+// Account for the camera/UV basis only when drawing the glyph into its texture.
+export function getPieceTextureRotation({ mode, pieceSide, boardViewRotationDeg }) {
+  if (!isQuarterTurn(boardViewRotationDeg)) return 0;
+  const screenRotation = getPieceGlyphRotation({ mode, pieceSide, boardViewRotationDeg });
+  return normalizeAngle(screenRotation - boardViewRotationDeg - 90);
 }
