@@ -1,16 +1,17 @@
 export const PIECE_GLYPH_ORIENTATION_KEY = 'xiangqi.pieceGlyphOrientationMode.v1';
 export const ALL_UPRIGHT = 'all-upright';
 export const FACE_OPPONENT = 'face-opponent';
+export const DEFAULT_PIECE_GLYPH_ORIENTATION_MODE = FACE_OPPONENT;
 
 export function normalizePieceGlyphOrientationMode(value) {
-  return value === FACE_OPPONENT ? FACE_OPPONENT : ALL_UPRIGHT;
+  return value === ALL_UPRIGHT ? ALL_UPRIGHT : DEFAULT_PIECE_GLYPH_ORIENTATION_MODE;
 }
 
 export function readPieceGlyphOrientationMode(getStorage) {
   try {
     return normalizePieceGlyphOrientationMode(getStorage()?.getItem(PIECE_GLYPH_ORIENTATION_KEY));
   } catch {
-    return ALL_UPRIGHT;
+    return DEFAULT_PIECE_GLYPH_ORIENTATION_MODE;
   }
 }
 

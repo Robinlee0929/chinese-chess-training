@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
-  ALL_UPRIGHT, FACE_OPPONENT,
+  normalizePieceGlyphOrientationMode,
   getPieceGlyphRotation, readPieceGlyphOrientationMode, writePieceGlyphOrientationMode,
 } from './piece-glyph-orientation.js?v=piece-glyph-orientation-v1';
 import {
@@ -5884,7 +5884,7 @@ const pieceGlyphOrientationSelect = document.getElementById('pieceGlyphOrientati
 pieceGlyphOrientationSelect.value = pieceGlyphOrientationMode;
 pieceGlyphOrientationSelect.addEventListener('change', () => {
   const next = pieceGlyphOrientationSelect.value;
-  pieceGlyphOrientationMode = next === FACE_OPPONENT ? FACE_OPPONENT : ALL_UPRIGHT;
+  pieceGlyphOrientationMode = normalizePieceGlyphOrientationMode(next);
   pieceGlyphOrientationSelect.value = pieceGlyphOrientationMode;
   writePieceGlyphOrientationMode(() => window.localStorage, pieceGlyphOrientationMode);
   refreshPieceGlyphTextures();
