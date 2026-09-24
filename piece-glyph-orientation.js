@@ -3,6 +3,9 @@ export const ALL_UPRIGHT = 'all-upright';
 export const FACE_OPPONENT = 'face-opponent';
 export const DEFAULT_PIECE_GLYPH_ORIENTATION_MODE = FACE_OPPONENT;
 export const ORIENTATION_HYSTERESIS_DEG = 10;
+// A narrow cone filters noisy horizontal offsets at vertical angles without
+// affecting the 8° top preset or ordinary camera rotation.
+export const VERTICAL_DEADZONE_DEG = 1;
 
 export function normalizePieceGlyphOrientationMode(value) {
   return value === ALL_UPRIGHT ? ALL_UPRIGHT : DEFAULT_PIECE_GLYPH_ORIENTATION_MODE;
@@ -36,14 +39,25 @@ const isQuarterTurn = (degrees) => Number.isInteger(degrees) && degrees >= 0
 // The Red player's side of this board is +Z, matching the existing preset azimuths.
 export function getLiveBoardAzimuthDeg(cameraPosition, target) {
   const dx = cameraPosition?.x - target?.x;
+  const dy = cameraPosition?.y - target?.y;
   const dz = cameraPosition?.z - target?.z;
-  if (!Number.isFinite(dx) || !Number.isFinite(dz) || (dx === 0 && dz === 0)) return null;
+  if (![dx, dy, dz].every(Number.isFinite)) return null;
+  const distance = Math.hypot(dx, dy, dz);
+  if (!Number.isFinite(distance) || distance === 0) return null;
+  if (Math.hypot(dx, dz) / distance < Math.sin(VERTICAL_DEADZONE_DEG * Math.PI / 180)) return null;
   return normalizeAngle(Math.atan2(dx, dz) * 180 / Math.PI);
 }
 
 export function quantizeBoardOrientation(liveAngleDeg) {
   if (!Number.isFinite(liveAngleDeg)) return null;
   return normalizeAngle(Math.round(normalizeAngle(liveAngleDeg) / 90) * 90);
+}
+
+// A valid restored camera always wins. Its saved snap is used only inside the
+// vertical dead cone; older/invalid preferences migrate to a stable 0° snap.
+export function initializeSnappedBoardOrientation({ liveAngleDeg, persistedSnapDeg }) {
+  const liveSnap = quantizeBoardOrientation(liveAngleDeg);
+  return liveSnap ?? (isQuarterTurn(persistedSnapDeg) ? persistedSnapDeg : 0);
 }
 
 export function updateSnappedBoardOrientation({

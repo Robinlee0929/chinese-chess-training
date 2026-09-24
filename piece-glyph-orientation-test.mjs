@@ -4,8 +4,9 @@ import test from 'node:test';
 import vm from 'node:vm';
 import {
   ALL_UPRIGHT, FACE_OPPONENT, DEFAULT_PIECE_GLYPH_ORIENTATION_MODE,
-  PIECE_GLYPH_ORIENTATION_KEY, ORIENTATION_HYSTERESIS_DEG,
-  getLiveBoardAzimuthDeg, quantizeBoardOrientation, updateSnappedBoardOrientation,
+  PIECE_GLYPH_ORIENTATION_KEY, ORIENTATION_HYSTERESIS_DEG, VERTICAL_DEADZONE_DEG,
+  getLiveBoardAzimuthDeg, quantizeBoardOrientation,
+  initializeSnappedBoardOrientation, updateSnappedBoardOrientation,
   getBoardViewRotationDeg, getPieceGlyphRotation, getPieceTextureRotation,
   readPieceGlyphOrientationMode, writePieceGlyphOrientationMode,
 } from './piece-glyph-orientation.js';
@@ -52,14 +53,63 @@ test('camera presets supply the four physical layout rotations without shifting 
 });
 
 test('live camera azimuth matches the board axes and OrbitControls spherical convention', () => {
-  const target = { x: 2, z: -3 };
+  const target = { x: 2, y: 0, z: -3 };
   for (const azimuth of [0, 90, 180, 270]) {
     const radians = azimuth * Math.PI / 180;
-    const camera = { x: target.x + 10 * Math.sin(radians), z: target.z + 10 * Math.cos(radians) };
+    const camera = { x: target.x + 10 * Math.sin(radians), y: 10, z: target.z + 10 * Math.cos(radians) };
     assert.ok(Math.abs(getLiveBoardAzimuthDeg(camera, target) - azimuth) < 1e-10);
   }
   assert.equal(getLiveBoardAzimuthDeg(target, target), null);
-  assert.equal(getLiveBoardAzimuthDeg({ x: NaN, z: 1 }, target), null);
+  assert.equal(getLiveBoardAzimuthDeg({ x: NaN, y: 10, z: 1 }, target), null);
+});
+
+test('exact vertical and microscopic horizontal noise have no azimuth', () => {
+  const target = { x: 0, y: 0, z: 0.2 };
+  assert.equal(VERTICAL_DEADZONE_DEG, 1);
+  for (const x of [0, 1e-12, -1e-12]) {
+    assert.equal(getLiveBoardAzimuthDeg({ x, y: 14.2, z: 0.2 }, target), null);
+  }
+});
+
+test('vertical dead cone is relative to camera distance, with a clear boundary', () => {
+  const target = { x: 0, y: 0, z: 0 };
+  for (const distance of [1, 14.2, 1000]) {
+    const atPolar = degrees => ({
+      x: distance * Math.sin(degrees * Math.PI / 180),
+      y: distance * Math.cos(degrees * Math.PI / 180), z: 0,
+    });
+    assert.equal(getLiveBoardAzimuthDeg(atPolar(0.9), target), null);
+    assert.equal(getLiveBoardAzimuthDeg(atPolar(1.1), target), 90);
+    assert.equal(getLiveBoardAzimuthDeg(atPolar(8), target), 90);
+  }
+});
+
+for (const prior of [0, 90, 180, 270]) {
+  test(`vertical azimuth preserves the last ${prior}° snap`, () => {
+    assert.equal(updateSnappedBoardOrientation({ liveAngleDeg: null, currentSnapDeg: prior }), prior);
+    assert.equal(initializeSnappedBoardOrientation({ liveAngleDeg: null, persistedSnapDeg: prior }), prior);
+  });
+}
+
+test('valid restored camera overrides stale saved snap; old and invalid values migrate safely', () => {
+  assert.equal(initializeSnappedBoardOrientation({ liveAngleDeg: 162, persistedSnapDeg: 90 }), 180);
+  for (const invalid of [undefined, null, 'garbage', 45, 91, -90, NaN]) {
+    assert.equal(initializeSnappedBoardOrientation({ liveAngleDeg: null, persistedSnapDeg: invalid }), 0);
+  }
+});
+
+test('exiting the vertical dead cone resumes the existing 10° hysteresis', () => {
+  const update = (liveAngleDeg, currentSnapDeg) => updateSnappedBoardOrientation({ liveAngleDeg, currentSnapDeg });
+  let snap = 0;
+  for (const live of [null, null, 54]) snap = update(live, snap);
+  assert.equal(snap, 0);
+  snap = update(56, snap);
+  assert.equal(snap, 90);
+  snap = update(null, snap);
+  assert.equal(snap, 90);
+  snap = update(36, snap);
+  assert.equal(snap, 90);
+  assert.equal(update(34, snap), 0);
 });
 
 test('initial snap chooses the nearest cardinal direction, including wraparound', () => {

@@ -6,7 +6,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
   normalizePieceGlyphOrientationMode,
   ORIENTATION_HYSTERESIS_DEG, getLiveBoardAzimuthDeg,
-  updateSnappedBoardOrientation, getPieceGlyphRotation, getPieceTextureRotation,
+  initializeSnappedBoardOrientation, updateSnappedBoardOrientation,
+  getPieceGlyphRotation, getPieceTextureRotation,
   readPieceGlyphOrientationMode, writePieceGlyphOrientationMode,
 } from './piece-glyph-orientation.js?v=piece-glyph-orientation-v1';
 import {
@@ -228,7 +229,7 @@ controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 controls.minDistance = 5;
 controls.maxDistance = 22;
-controls.minPolarAngle = 0.25;
+controls.minPolarAngle = 0; // Allow the vertical dead cone without clamping toward noisy X/Z offsets.
 controls.maxPolarAngle = 1.38;
 controls.enablePan = false;
 controls.update();
@@ -5887,6 +5888,7 @@ function syncSnappedBoardOrientation() {
   if (next === null || next === snappedBoardOrientationDeg) return;
   snappedBoardOrientationDeg = next;
   refreshPieceGlyphTextures();
+  saveViewPrefs();
 }
 function cameraViewerSide() {
   return viewIdx === 0 ? RED : viewIdx === 1 ? BLACK : null;
@@ -5945,6 +5947,7 @@ function saveViewPrefs() {
       tgt: controls.target.toArray(),
       locked: viewLocked,
       viewIdx,
+      pieceGlyphBoardSnapDeg: snappedBoardOrientationDeg,
     }));
   } catch { /* 無法寫入（如隱私模式）時靜默略過 */ }
 }
@@ -5974,8 +5977,12 @@ if (savedPrefs) {
     viewIdx = ((savedPrefs.viewIdx % CAMERA_VIEWS.length) + CAMERA_VIEWS.length) % CAMERA_VIEWS.length;
   }
 }
-// Restore the camera first, then choose its nearest physical-board direction.
-syncSnappedBoardOrientation();
+// Restore the camera first. A saved snap matters only when vertical azimuth is unavailable.
+snappedBoardOrientationDeg = initializeSnappedBoardOrientation({
+  liveAngleDeg: getLiveBoardAzimuthDeg(camera.position, controls.target),
+  persistedSnapDeg: savedPrefs?.pieceGlyphBoardSnapDeg,
+});
+if (savedPrefs) saveViewPrefs(); // migrate old preferences and replace any stale saved snap
 controls.addEventListener('change', syncSnappedBoardOrientation);
 window.addEventListener('pagehide', () => {
   invalidateTeachingModeFeedback();
