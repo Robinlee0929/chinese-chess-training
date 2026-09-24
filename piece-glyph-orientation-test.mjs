@@ -112,6 +112,153 @@ test('exiting the vertical dead cone resumes the existing 10° hysteresis', () =
   assert.equal(update(34, snap), 0);
 });
 
+// Run the production preference and camera-change functions in a small VM with
+// storage, vectors, and the texture refresh as observable boundaries.
+function productionFunction(source, name) {
+  const start = source.indexOf(`function ${name}(`);
+  assert.notEqual(start, -1, `${name} is present in main.js`);
+  const bodyStart = source.indexOf('{', start);
+  let depth = 0;
+  for (let i = bodyStart; i < source.length; i++) {
+    if (source[i] === '{') depth++;
+    if (source[i] === '}' && --depth === 0) return source.slice(start, i + 1);
+  }
+  assert.fail(`${name} has a complete body`);
+}
+
+function makeVector(initial) {
+  let values = [...initial];
+  return {
+    get x() { return values[0]; },
+    get y() { return values[1]; },
+    get z() { return values[2]; },
+    set(x, y, z) { values = [x, y, z]; return this; },
+    fromArray(next) { values = [...next]; return this; },
+    toArray() { return [...values]; },
+  };
+}
+
+function createViewPrefsHarness(prefs) {
+  const source = readFileSync(new URL('./main.js', import.meta.url), 'utf8');
+  const keyDeclaration = source.match(/^const VIEW_PREF_KEY = '[^']+';$/mu)?.[0];
+  assert.ok(keyDeclaration);
+  const restoreStart = source.indexOf('const savedPrefs = loadViewPrefs();');
+  const restoreEnd = source.indexOf("controls.addEventListener('change', syncSnappedBoardOrientation);", restoreStart);
+  assert.ok(restoreStart >= 0 && restoreEnd > restoreStart);
+  const storage = new Map([['xiangqi.viewPrefs.v1', JSON.stringify(prefs)]]);
+  const localStorage = {
+    getItem: key => storage.get(key) ?? null,
+    setItem: (key, value) => storage.set(key, value),
+  };
+  const camera = { position: makeVector([0, 10, 10]), lookAt() {} };
+  const controls = { target: makeVector([0, 0, 0]) };
+  let refreshCount = 0;
+  const script = [
+    'let snappedBoardOrientationDeg = null; let viewLocked = false; let viewIdx = 0;',
+    keyDeclaration,
+    productionFunction(source, 'loadViewPrefs'),
+    productionFunction(source, 'saveViewPrefs'),
+    productionFunction(source, 'syncSnappedBoardOrientation'),
+    source.slice(restoreStart, restoreEnd),
+    '({ snap: () => snappedBoardOrientationDeg, locked: () => viewLocked,',
+    'viewIdx: () => viewIdx, saveViewPrefs, syncSnappedBoardOrientation })',
+  ].join('\n');
+  const runtime = vm.runInNewContext(script, {
+    camera, controls, localStorage, CAMERA_VIEWS: Array(5), syncLockUI() {},
+    getLiveBoardAzimuthDeg, initializeSnappedBoardOrientation,
+    updateSnappedBoardOrientation, ORIENTATION_HYSTERESIS_DEG,
+    refreshPieceGlyphTextures: () => { refreshCount++; },
+  });
+  return {
+    ...runtime, camera, controls, storage,
+    saved: () => JSON.parse(storage.get('xiangqi.viewPrefs.v1')),
+    refreshCount: () => refreshCount,
+  };
+}
+
+const verticalPrefs = (x, snap = 180) => ({
+  pos: [x, 14.2, 0.2], tgt: [0, 0, 0.2], locked: true,
+  viewIdx: 3, pieceGlyphBoardSnapDeg: snap,
+});
+
+test('production viewPrefs write keeps camera, target, lock, and view index beside the snap', () => {
+  const prefs = verticalPrefs(0);
+  const runtime = createViewPrefsHarness(prefs);
+  runtime.saveViewPrefs();
+  assert.deepEqual([...runtime.storage.keys()], ['xiangqi.viewPrefs.v1']);
+  assert.deepEqual(runtime.saved(), prefs);
+  assert.equal(runtime.snap(), 180);
+  assert.equal(runtime.locked(), true);
+  assert.equal(runtime.viewIdx(), 3);
+});
+
+test('production viewPrefs restore keeps 180° for exact and ±1e-12 vertical cameras', () => {
+  for (const x of [0, 1e-12, -1e-12]) {
+    const runtime = createViewPrefsHarness(verticalPrefs(x));
+    assert.equal(runtime.snap(), 180, `X offset ${x}`);
+    assert.equal(runtime.saved().pieceGlyphBoardSnapDeg, 180);
+    assert.deepEqual(runtime.camera.position.toArray(), [x, 14.2, 0.2]);
+  }
+});
+
+test('production restore gives valid live camera priority over a stale saved snap', () => {
+  const runtime = createViewPrefsHarness({
+    ...verticalPrefs(0), pos: [10, 10, 0.2], pieceGlyphBoardSnapDeg: 180,
+  });
+  assert.equal(runtime.snap(), 90);
+  assert.equal(runtime.saved().pieceGlyphBoardSnapDeg, 90);
+});
+
+test('production restore migrates missing and invalid snaps without overriding valid live camera', () => {
+  for (const value of [undefined, null, 45, 'garbage']) {
+    const prefs = verticalPrefs(0);
+    if (value === undefined) delete prefs.pieceGlyphBoardSnapDeg;
+    else prefs.pieceGlyphBoardSnapDeg = value;
+    const runtime = createViewPrefsHarness(prefs);
+    assert.equal(runtime.snap(), 0);
+    assert.equal(runtime.saved().pieceGlyphBoardSnapDeg, 0);
+  }
+  const runtime = createViewPrefsHarness(verticalPrefs(0, 'garbage'));
+  runtime.camera.position.set(10, 10, 0.2);
+  runtime.syncSnappedBoardOrientation();
+  assert.equal(runtime.snap(), 90);
+  assert.equal(runtime.saved().pieceGlyphBoardSnapDeg, 90);
+  const validCamera = createViewPrefsHarness({
+    ...verticalPrefs(0, 'garbage'), pos: [10, 10, 0.2],
+  });
+  assert.equal(validCamera.snap(), 90);
+  assert.equal(validCamera.saved().pieceGlyphBoardSnapDeg, 90);
+});
+
+test('production snap gate ignores vertical noise and same-quadrant motion, then refreshes once', () => {
+  const runtime = createViewPrefsHarness(verticalPrefs(0));
+  const setCamera = (polarDeg, azimuthDeg) => {
+    const polar = polarDeg * Math.PI / 180;
+    const azimuth = azimuthDeg * Math.PI / 180;
+    runtime.camera.position.set(14.2 * Math.sin(polar) * Math.sin(azimuth),
+      14.2 * Math.cos(polar), 0.2 + 14.2 * Math.sin(polar) * Math.cos(azimuth));
+    runtime.syncSnappedBoardOrientation();
+  };
+  setCamera(8, 180);
+  assert.equal(runtime.snap(), 180);
+  assert.equal(runtime.refreshCount(), 0);
+  for (const x of [0, 1e-12, -1e-12]) {
+    runtime.camera.position.set(x, 14.2, 0.2);
+    runtime.syncSnappedBoardOrientation();
+    assert.equal(runtime.snap(), 180);
+  }
+  assert.equal(runtime.refreshCount(), 0);
+  for (const azimuth of [180, 190, 170]) setCamera(8, azimuth);
+  assert.equal(runtime.snap(), 180);
+  assert.equal(runtime.refreshCount(), 0);
+  setCamera(8, 270);
+  assert.equal(runtime.snap(), 270);
+  assert.equal(runtime.refreshCount(), 1);
+  assert.equal(runtime.saved().pieceGlyphBoardSnapDeg, 270);
+  for (const azimuth of [260, 280]) setCamera(8, azimuth);
+  assert.equal(runtime.refreshCount(), 1);
+});
+
 test('initial snap chooses the nearest cardinal direction, including wraparound', () => {
   assert.equal(ORIENTATION_HYSTERESIS_DEG, 10);
   for (const [live, expected] of [[12, 0], [71, 90], [162, 180], [268, 270], [342, 0], [-18, 0], [522, 180]]) {
