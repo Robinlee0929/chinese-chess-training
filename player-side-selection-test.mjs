@@ -29,8 +29,10 @@ function installMany(names, values) {
 test('renders one native AI-only player-side selector with the approved labels', () => {
   assert.equal((html.match(/id="sideChooser"/gu) || []).length, 1);
   assert.match(html, /<fieldset id="sideChooser"[^>]*>[\s\S]*<legend>選擇你的棋色<\/legend>/u);
-  assert.match(html, /name="humanSide" value="red" checked>[\s\S]*紅方・先手/u);
-  assert.match(html, /name="humanSide" value="black">[\s\S]*黑方・後手/u);
+  assert.match(html, /<label for="humanSideRed">紅方<\/label>/u);
+  assert.match(html, /<label for="humanSideBlack">黑方<\/label>/u);
+  assert.doesNotMatch(html, /選黑方時 AI 會先走|尚無著法，紅方先行/u);
+  assert.match(html, /依目前局面的輪走方行棋；若輪到 AI 方，AI 會先行/u);
   assert.match(css, /\.side-chooser input:focus-visible \+ label/u);
   assert.match(css, /@media \(max-width: 480px\)[\s\S]*\.side-chooser label \{ min-height: 44px/u);
 });

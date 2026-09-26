@@ -504,6 +504,122 @@ test('review continuation: invalid configuration, terminal, live teaching and st
   }
 });
 
+function installContinuationNavigation(ctx) {
+  Object.assign(ctx, {
+    createGameReview, selectGameReviewPly,
+    btnGameRecords: node(), gameRecordLibraryHeading: node(), gameReviewHeading: node(),
+    renderGameRecordLibrary: noop,
+    renderGameReview: noop,
+  });
+  vm.runInContext([
+    'pauseLiveGameForGameRecords', 'enterGameRecordLibrary', 'openPreparedGameReview',
+    'openGameReview', 'openStoredGameReview', 'navigateGameReview',
+  ].map(functionSource).join('\n'), ctx);
+  const requests = [];
+  ctx.aiWorker.postMessage = payload => {
+    ctx.aiRequestCount++;
+    requests.push(structuredClone(payload));
+  };
+  return requests;
+}
+
+test('review continuation: consecutive different plies replace played history and AI state through real Review navigation', () => {
+  const first = r4TurnDivergenceReviewFixture();
+  const ctx = continuationHarness(first);
+  const requests = installContinuationNavigation(ctx);
+  const sourceBefore = ctx.gameRecordStorage.serialized;
+  assert.equal(ctx.startNormalGameFromReview(first, { difficulty: 'easy', humanSide: game.BLACK }), true);
+  assert.equal(ctx.logEmpty.textContent, '尚無著法，目前黑方行棋。');
+  ctx.flushAnimations();
+  ctx.doMove(first.record.moves[1].from, first.record.moves[1].to);
+  ctx.flushAnimations();
+  assert.equal(ctx.aiThinking, true);
+  ctx.onAIResult({ token: requests[0].token, result: first.record.moves[2] });
+  ctx.flushTimers(); ctx.flushAnimations();
+  assert.equal(ctx.history.length, 2);
+  const firstSessionId = ctx.normalGameRecordSession.id;
+
+  assert.equal(ctx.enterGameRecordLibrary(), true);
+  assert.equal(ctx.openStoredGameReview(first.record.id), true);
+  assert.equal(ctx.navigateGameReview(2), true);
+  const second = ctx.gameReviewSession;
+  assert.notDeepEqual(second.snapshot.board, first.snapshot.board);
+  ctx.gameReviewContinuationSource = second;
+  assert.equal(ctx.startNormalGameFromReview(second, { difficulty: 'hard', humanSide: game.BLACK }), true);
+  assert.equal(ctx.appState, 'NORMAL_GAME');
+  assert.deepEqual(structuredClone(ctx.board), second.snapshot.board);
+  assert.equal(ctx.turn, game.RED);
+  assert.equal(ctx.logEmpty.textContent, '尚無著法，目前紅方行棋。');
+  assert.equal(ctx.history.length, 0);
+  assert.equal(ctx.repHistory.length, 1);
+  assert.equal(ctx.posHistory.length, 1);
+  assert.equal(ctx.mode, 'hard');
+  assert.notEqual(ctx.normalGameRecordSession.id, firstSessionId);
+  assert.equal(ctx.aiThinking, true);
+  assert.equal(ctx.canHumanMove(), false);
+  assert.equal(requests.length, 2, 'second branch schedules its own opening exactly once');
+  assert.equal(requests[1].level, 'hard');
+  assert.equal(requests[1].side, game.RED);
+  assert.deepEqual(requests[1].board, second.snapshot.board);
+  ctx.onAIResult({ token: requests[1].token, result: second.record.moves[2] });
+  ctx.flushTimers(); ctx.flushAnimations();
+  assert.equal(ctx.history.length, 1, 'only the second branch AI opening is recorded');
+  same(ctx.history[0].from, second.record.moves[2].from);
+  same(ctx.history[0].to, second.record.moves[2].to);
+  assert.equal(ctx.turn, game.BLACK);
+  assert.equal(ctx.canHumanMove(), true);
+  assert.equal(requests.length, 2);
+  assert.equal(ctx.gameRecordStorage.serialized, sourceBefore);
+});
+
+test('review continuation: stale worker reply and queued AI callback cannot alter a replacement branch', () => {
+  for (const delivery of ['worker-pending', 'callback-queued']) {
+    const first = r4TurnDivergenceReviewFixture();
+    const ctx = continuationHarness(first);
+    const requests = installContinuationNavigation(ctx);
+    ctx.startNormalGameFromReview(first, { difficulty: 'easy', humanSide: game.RED });
+    assert.equal(ctx.aiThinking, true);
+    assert.equal(requests.length, 1);
+    const oldReply = { token: requests[0].token, result: first.record.moves[1] };
+    if (delivery === 'callback-queued') {
+      ctx.onAIResult(oldReply);
+      assert.equal(ctx.timers.length, 1);
+      assert.equal(ctx.history.length, 0);
+    }
+
+    assert.equal(ctx.enterGameRecordLibrary(), true);
+    assert.equal(ctx.openStoredGameReview(first.record.id), true);
+    assert.equal(ctx.navigateGameReview(5), true);
+    const second = ctx.gameReviewSession;
+    // The old move is also legal here: legality alone cannot hide a broken
+    // cancellation guard. Only B's own response may settle its pending move.
+    assert.deepEqual(second.snapshot.board, first.snapshot.board);
+    ctx.gameReviewContinuationSource = second;
+    ctx.startNormalGameFromReview(second, { difficulty: 'medium', humanSide: game.RED });
+    const before = structuredClone({ board: ctx.board, history: ctx.history,
+      session: ctx.normalGameRecordSession, posHistory: ctx.posHistory, repHistory: ctx.repHistory });
+    assert.equal(requests.length, 2);
+    if (delivery === 'worker-pending') ctx.onAIResult(oldReply);
+    ctx.flushTimers(); ctx.flushAnimations();
+    same({ board: ctx.board, history: ctx.history, session: ctx.normalGameRecordSession,
+      posHistory: ctx.posHistory, repHistory: ctx.repHistory }, before);
+    assert.equal(ctx.turn, game.BLACK);
+    assert.equal(ctx.aiThinking, true, `${delivery}: stale A must not clear B's thinking state`);
+    assert.equal(ctx.canHumanMove(), false);
+    assert.equal(requests.length, 2, `${delivery}: no extra AI request`);
+    assert.equal(ctx.checkBoardMeshInvariant(ctx.board).ok, true);
+
+    ctx.onAIResult({ token: requests[1].token, result: second.record.moves[5] });
+    ctx.flushTimers(); ctx.flushAnimations();
+    assert.equal(ctx.history.length, 1, `${delivery}: B accepts exactly its own AI move`);
+    same(ctx.history[0].from, second.record.moves[5].from);
+    same(ctx.history[0].to, second.record.moves[5].to);
+    assert.equal(ctx.aiThinking, false);
+    assert.equal(ctx.canHumanMove(), true);
+    assert.equal(requests.length, 2);
+  }
+});
+
 test('review continuation: a full library retains the oldest source when the branch is saved', () => {
   const r = r4ReviewFixture('oldest-source'); const ctx = continuationHarness(r);
   for (let index = 0; index < 99; index++) {

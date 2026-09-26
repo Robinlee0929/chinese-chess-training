@@ -4917,6 +4917,7 @@ function initializeNormalGamePosition(startBoard, startTurn, { sourceRecordId = 
   overlay.classList.add('hidden');
   banner.classList.add('hidden');
   logEl.innerHTML = '';
+  logEmpty.textContent = `尚無著法，目前${turn === RED ? '紅方' : '黑方'}行棋。`;
   logEmpty.style.display = '';
   syncLastMoveMark();
   buildScene();
