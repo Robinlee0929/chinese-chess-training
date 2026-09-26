@@ -1207,6 +1207,18 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
 }
 #btnGameReviewDelete { width: 100%; min-height: 40px; }
 .game-review-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+.game-review-continue { min-height: 44px; width: 100%; border: 1px solid #b79c70; background: #443826; color: #fff1d5; border-radius: 8px; padding: 10px; cursor: pointer; }
+.game-review-continue:disabled { opacity: .5; cursor: not-allowed; }
+.game-review-continue-reason { font-size: 12px; line-height: 1.6; color: #bcb5a9; }
+#gameReviewContinuationDialog { margin: auto; width: min(440px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); box-sizing: border-box; overflow: auto; padding: 24px; border: 1px solid #827052; border-radius: 14px; background: #201e1b; color: #eee7dc; }
+#gameReviewContinuationDialog::backdrop { background: #000a; }
+#gameReviewContinuationDialog h2 { margin-top: 0; font-size: 20px; }
+#gameReviewContinuationDialog p { font-size: 13px; line-height: 1.7; }
+#gameReviewContinuationDialog label { display: block; margin: 14px 0 6px; }
+#gameReviewContinuationDialog select { width: 100%; min-height: 44px; padding: 8px; background: #302d28; color: inherit; border: 1px solid #827052; border-radius: 6px; }
+.game-review-continuation-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 20px; }
+.game-review-continuation-actions button { min-height: 44px; }
+.game-review-continue:focus-visible, #gameReviewContinuationDialog :focus-visible { outline: 2px solid #edc77d; outline-offset: 3px; }
 .game-review-actions button { min-width: 0; min-height: 44px; padding: 7px 8px; font-size: 12px; }
 .game-analysis-primary {
   min-height: 44px;

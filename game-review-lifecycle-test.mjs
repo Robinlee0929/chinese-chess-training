@@ -567,6 +567,7 @@ function harness({
     },
     refreshHUD() {},
     renderGameTeachingMode() {},
+    renderGameReviewContinuation() {},
     renderGameAnalysis() {},
     checkBoardMeshInvariant: () => ({ ok: true, errors: [] }),
     toast: (message) => context.messages.push(message),

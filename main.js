@@ -16,7 +16,12 @@ import {
   hasAnyLegalMove, name, notation, hashBoard, repetitionVerdict,
 } from './game.js?v=a0cadeb326';
 import { createGameRecord } from './game-record.js?v=a0cadeb326';
-import { createGameRecordStore } from './game-record-store.js?v=a0cadeb326';
+import {
+  canStartGameFromReview, createReviewContinuationPosition,
+  defaultContinuationDifficulty, defaultContinuationHumanSide,
+  validateContinuationConfiguration,
+} from './game-review-continuation.js?v=1c0a12b001';
+import { createGameRecordStore } from './game-record-store.js?v=1c0a12b001';
 import {
   createGameReview,
   createGameRecordLibraryView,
@@ -762,6 +767,7 @@ let normalGameRecordSession = null;
 let completedGameRecordSessionId = null;
 let lastCompletedGameRecord = null;
 let gameReviewSession = null;
+let gameReviewContinuationSource = null;
 let gameReviewReturnState = APP_STATE.NORMAL_GAME;
 let gameReviewInvoker = null;
 let gameReviewStored = false;
@@ -3168,9 +3174,89 @@ function requestGameReviewAiCandidate() {
   return true;
 }
 
+function renderGameReviewContinuation() {
+  const button = document.getElementById('btnGameReviewContinue');
+  const reason = document.getElementById('gameReviewContinueReason');
+  button.disabled = !canStartGameFromReview(gameReviewSession);
+  reason.textContent = gameReviewSession?.sourceKind === 'live-teaching'
+    ? '進行中的教學對局請返回棋局繼續下棋。'
+    : gameReviewSession?.snapshot.terminal
+      ? '此局面已終局，請先返回較早著數。'
+      : button.disabled ? '目前局面無法建立新對局。'
+        : '會從目前局面建立一盤新對局，原棋譜不會變更。';
+  if (gameReviewContinuationSource !== gameReviewSession) {
+    document.getElementById('gameReviewContinuationDialog').close();
+    gameReviewContinuationSource = null;
+  }
+}
+
+function openGameReviewContinuation() {
+  if (appState !== APP_STATE.GAME_REVIEW || !canStartGameFromReview(gameReviewSession)) return false;
+  gameReviewContinuationSource = gameReviewSession;
+  const { selectedPly, snapshot, record } = gameReviewSession;
+  document.getElementById('gameReviewContinuationPosition').textContent =
+    `目前局面：第 ${selectedPly} 著後・輪到：${snapshot.sideToMove === RED ? '紅方' : '黑方'}`;
+  document.getElementById('gameReviewContinuationDifficulty').value = defaultContinuationDifficulty(record.mode);
+  document.getElementById('gameReviewContinuationHumanSide').value = defaultContinuationHumanSide(snapshot.sideToMove);
+  document.getElementById('gameReviewContinuationDialog').showModal();
+  document.getElementById('gameReviewContinuationDifficulty').focus();
+  return true;
+}
+
+function cancelGameReviewContinuation() {
+  gameReviewContinuationSource = null;
+  document.getElementById('gameReviewContinuationDialog').close();
+  if (appState === APP_STATE.GAME_REVIEW) document.getElementById('btnGameReviewContinue').focus();
+}
+
+function startNormalGameFromReview(review, configuration) {
+  // Pin confirmation to the exact review that opened the dialog. A stale or
+  // double submission cannot replace another game or a newly selected position.
+  if (appState !== APP_STATE.GAME_REVIEW || review !== gameReviewSession
+    || review !== gameReviewContinuationSource) return false;
+  let position;
+  let settings;
+  try {
+    position = createReviewContinuationPosition(review);
+    settings = validateContinuationConfiguration(configuration);
+  } catch {
+    toast('目前局面或對弈設定無效，請返回複盤重新選擇。');
+    return false;
+  }
+  invalidateGameReviewAi();
+  clearGameAnalysisSelection();
+  gameReviewContinuationSource = null;
+  document.getElementById('gameReviewContinuationDialog').close();
+  gameReviewSession = null;
+  gameAnalysisState = null;
+  gameAnalysisNotice = '';
+  gameReviewStored = false;
+  gameReviewReturnState = APP_STATE.NORMAL_GAME;
+  gameReviewInvoker = null;
+  gameReviewLivePresentation = null;
+  gameReviewPuzzleReturnContext = null;
+  appState = APP_STATE.NORMAL_GAME;
+  appEl.classList.remove('game-record-active');
+  gameRecordPanel.classList.add('hidden');
+  gameRecordLibraryView.classList.remove('hidden');
+  gameReviewView.classList.add('hidden');
+  gameAnalysisView.classList.add('hidden');
+  mode = settings.difficulty;
+  modeSel.value = mode;
+  humanSide = settings.humanSide;
+  initializeNormalGamePosition(position.board, position.sideToMove, { sourceRecordId: review.record.id });
+  showPlayerPerspective(humanSide);
+  refreshHUD();
+  maybeAIMove();
+  turnBox.setAttribute('tabindex', '-1');
+  turnBox.focus({ preventScroll: true });
+  return true;
+}
+
 function renderGameReview() {
   if (!gameReviewSession) return;
   const review = gameReviewSession;
+  renderGameReviewContinuation();
   gameReviewMeta.replaceChildren();
   appendGameReviewMeta('模式', gameRecordModeLabel(review.record.mode));
   if (review.sourceKind === 'live-teaching') {
@@ -4810,9 +4896,7 @@ function canHumanMove() {
     && (!isAI() || turn === humanSide);
 }
 
-function newGame({ resetHumanSide = true, reconcileHumanSideCamera = true } = {}) {
-  if (!normalGameActive()) return;
-  if (resetHumanSide) humanSide = RED;
+function initializeNormalGamePosition(startBoard, startTurn, { sourceRecordId = null } = {}) {
   invalidateTeachingModeFeedback();
   tweens.length = 0;
   aiToken++;
@@ -4822,11 +4906,11 @@ function newGame({ resetHumanSide = true, reconcileHumanSideCamera = true } = {}
   over = false;
   winner = null;
   busy = false;
-  board = initialBoard();
-  turn = RED;
+  board = startBoard;
+  turn = startTurn;
   posHistory = [hashBoard(board)];
   repHistory = [{ key: hashBoard(board) + '|' + turn, mover: null, check: false }];
-  beginNormalGameRecordSession();
+  beginNormalGameRecordSession({ sourceRecordId });
   gameStartTime = Date.now();
   undoCount = 0;
   stopConfetti();
@@ -4836,6 +4920,12 @@ function newGame({ resetHumanSide = true, reconcileHumanSideCamera = true } = {}
   logEmpty.style.display = '';
   syncLastMoveMark();
   buildScene();
+}
+
+function newGame({ resetHumanSide = true, reconcileHumanSideCamera = true } = {}) {
+  if (!normalGameActive()) return;
+  if (resetHumanSide) humanSide = RED;
+  initializeNormalGamePosition(initialBoard(), RED);
   refreshHUD();
   if (reconcileHumanSideCamera) showPlayerPerspective(humanSide);
   maybeAIMove();
@@ -4843,29 +4933,7 @@ function newGame({ resetHumanSide = true, reconcileHumanSideCamera = true } = {}
 
 /** 測試用：直接佈局 */
 function resetTo(customBoard, turnSide) {
-  invalidateTeachingModeFeedback();
-  tweens.length = 0;
-  aiToken++;
-  aiThinking = false;
-  board = customBoard;
-  if (turnSide) turn = turnSide;
-  posHistory = [hashBoard(board)];
-  repHistory = [{ key: hashBoard(board) + '|' + turn, mover: null, check: false }];
-  beginNormalGameRecordSession();
-  history = [];
-  capturedBy = { [RED]: [], [BLACK]: [] };
-  over = false;
-  winner = null;
-  busy = false;
-  gameStartTime = Date.now();
-  undoCount = 0;
-  stopConfetti();
-  overlay.classList.add('hidden');
-  banner.classList.add('hidden');
-  logEl.innerHTML = '';
-  logEmpty.style.display = '';
-  syncLastMoveMark();
-  buildScene();
+  initializeNormalGamePosition(customBoard, turnSide || turn);
   refreshHUD();
 }
 
@@ -4981,7 +5049,7 @@ function cloneNormalGameRecordBoard(source) {
   )))));
 }
 
-function beginNormalGameRecordSession() {
+function beginNormalGameRecordSession({ sourceRecordId = null } = {}) {
   const createdAt = gameRecordNow();
   normalGameRecordSession = Object.freeze({
     id: gameRecordIdFactory(),
@@ -4992,6 +5060,7 @@ function beginNormalGameRecordSession() {
     }),
     mode,
     ...(isAI() ? { humanSide } : {}),
+    ...(sourceRecordId ? { sourceRecordId } : {}),
   });
   completedGameRecordSessionId = null;
 }
@@ -5039,7 +5108,7 @@ function finalizeNormalGameRecord(endReason) {
   completedGameRecordSessionId = session.id;
   lastCompletedGameRecord = record;
   try {
-    gameRecordStore.saveGameRecord(record);
+    gameRecordStore.saveGameRecord(record, { preserveRecordId: session.sourceRecordId });
   } catch {
     // Persistence is secondary. The canonical terminal state and immutable
     // in-memory record remain valid, with no retry loop.
@@ -5078,7 +5147,7 @@ function undoPly() {
 function normalUndoAvailable() {
   return normalGameActive() && history.length > 0 && !busy && !aiThinking && !over
     && (!isAI() || (turn === humanSide && history.some((_, index) => (
-      (index % 2 === 0 ? RED : BLACK) === humanSide
+      ((history.length - index) % 2 === 0 ? turn : (turn === RED ? BLACK : RED)) === humanSide
     ))));
 }
 
@@ -5515,6 +5584,19 @@ async function shareResult() {
 }
 btnShare.addEventListener('click', shareResult);
 btnReviewGame.addEventListener('click', () => openLastCompletedGameReview(btnReviewGame));
+document.getElementById('btnGameReviewContinue').addEventListener('click', openGameReviewContinuation);
+document.getElementById('btnGameReviewContinuationCancel').addEventListener('click', cancelGameReviewContinuation);
+document.getElementById('gameReviewContinuationDialog').addEventListener('cancel', (event) => {
+  event.preventDefault();
+  cancelGameReviewContinuation();
+});
+document.getElementById('gameReviewContinuationForm').addEventListener('submit', (event) => {
+  event.preventDefault();
+  startNormalGameFromReview(gameReviewContinuationSource, {
+    difficulty: document.getElementById('gameReviewContinuationDifficulty').value,
+    humanSide: document.getElementById('gameReviewContinuationHumanSide').value,
+  });
+});
 
 // ---------------- 按鈕 ----------------
 mode = modeSel.value;
@@ -5811,6 +5893,8 @@ document.addEventListener('pointerdown', (e) => {
   if (hudMore.classList.contains('open') && !hudMore.contains(e.target) && !btnMore.contains(e.target)) closeHudMenu();
 });
 document.addEventListener('keydown', (e) => {
+  // The modal owns Escape and navigation keys until confirmed or cancelled.
+  if (document.getElementById('gameReviewContinuationDialog').open) return;
   if (e.key === 'Escape') {
     if (appState === APP_STATE.GAME_ANALYSIS) returnToGameReview();
     else if (appState === APP_STATE.GAME_REVIEW) exitGameReview();

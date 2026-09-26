@@ -173,7 +173,7 @@ test('side changes restart cleanly while new games reconcile the current-side ca
 });
 
 test('PSS-REV-01: the latest authoritative side owns the camera after rapid game resets', () => {
-  const context = installMany(['changeHumanSide', 'newGame'], {
+  const context = installMany(['changeHumanSide', 'initializeNormalGamePosition', 'newGame'], {
     normalGameActive: () => true,
     isAI: () => true,
     humanSide: BLACK,

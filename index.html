@@ -69,7 +69,7 @@
   "isBasedOn": "https://github.com/doggy8088/chinese-chess"
 }
 </script>
-<link rel="stylesheet" href="./css/style.css?v=a0cadeb326">
+<link rel="stylesheet" href="./css/style.css?v=1c0a12b001">
 <script type="importmap">
 {
   "imports": {
@@ -528,6 +528,32 @@
           <button id="btnGameReviewNext" type="button" aria-label="下一著">▶<span>下一著</span></button>
           <button id="btnGameReviewLast" type="button" aria-label="前往終局">▶|<span>終局</span></button>
         </div>
+        <button id="btnGameReviewContinue" type="button" class="game-review-continue"
+          aria-haspopup="dialog" aria-controls="gameReviewContinuationDialog"
+          aria-describedby="gameReviewContinueReason">從此局面對弈</button>
+        <p id="gameReviewContinueReason" class="game-review-continue-reason"></p>
+        <dialog id="gameReviewContinuationDialog" aria-labelledby="gameReviewContinuationHeading"
+          aria-describedby="gameReviewContinuationWarning">
+          <form id="gameReviewContinuationForm">
+            <h2 id="gameReviewContinuationHeading">從此局面對弈</h2>
+            <p id="gameReviewContinuationPosition"></p>
+            <p>會從目前局面建立一盤新對局，原棋譜不會變更。</p>
+            <p id="gameReviewContinuationWarning">開始後會以此局面建立新對局；目前尚未完成的棋局若未有完成紀錄，不會成為這個新對局的一部分。</p>
+            <p>重複局面紀錄會從此處重新計算。</p>
+            <label for="gameReviewContinuationDifficulty">AI 難度</label>
+            <select id="gameReviewContinuationDifficulty">
+              <option value="easy">簡單</option><option value="medium">中等</option><option value="hard">困難</option>
+            </select>
+            <label for="gameReviewContinuationHumanSide">你的棋色（本盤新選擇）</label>
+            <select id="gameReviewContinuationHumanSide">
+              <option value="red">紅方</option><option value="black">黑方</option>
+            </select>
+            <div class="game-review-continuation-actions">
+              <button type="submit" class="game-review-continue">開始對弈</button>
+              <button id="btnGameReviewContinuationCancel" type="button">取消</button>
+            </div>
+          </form>
+        </dialog>
         <div class="game-review-actions" aria-label="複盤操作">
           <button id="btnGameReviewAnalyze" type="button" class="game-analysis-primary">從這裡分析</button>
           <button id="btnGameReviewAiAnalyze" type="button" class="game-review-ai-primary"
@@ -659,6 +685,6 @@
   <div id="toast" class="hidden" role="status"></div>
 </div>
 
-<script type="module" src="./main.js?v=a0cadeb326"></script>
+<script type="module" src="./main.js?v=1c0a12b001"></script>
 </body>
 </html>
