@@ -10,10 +10,26 @@ import {
   loadReviewCoachStagingShell,
   startReviewCoachStagingApp,
 } from './staging/review-coach-bootstrap.js';
-import {
+const productionBootstrapUrl = new URL('./review-coach-staging-bootstrap.js', import.meta.url);
+const productionBootstrapSource = readFileSync(productionBootstrapUrl, 'utf8');
+
+function productionConnectivitySpecifier(source) {
+  const imports = [...source.matchAll(/\bfrom\s+(['"])([^'"]+)\1/gu)]
+    .map((match) => match[2])
+    .filter((specifier) => /(?:^|\/)review-coach-connectivity\.js(?:[?#]|$)/u.test(specifier));
+  assert.equal(imports.length, 1, 'production must import connectivity exactly once');
+  assert.match(imports[0], /^\.\/review-coach-connectivity\.js\?v=[0-9a-f]{10}$/u,
+    'production connectivity requires the exact local path and canonical cache query');
+  return imports[0];
+}
+
+const productionConnectivityUrl = new URL(
+  productionConnectivitySpecifier(productionBootstrapSource), productionBootstrapUrl,
+);
+const {
   readInstalledReviewCoachStagingCapability,
   B2A_BROWSER_TIMEOUT_MS,
-} from './review-coach-connectivity.js?v=a0cadeb326';
+} = await import(productionConnectivityUrl.href);
 
 const indexSource = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
 const entryHtml = readFileSync(new URL('./staging/review-coach.html', import.meta.url), 'utf8');
@@ -397,6 +413,22 @@ test('rewritten staging document preserves one shell and replaces normal main wi
 });
 
 test('staging capability is branded and installed before main initialization', async () => {
+  const testSource = readFileSync(new URL(import.meta.url), 'utf8');
+  assert.doesNotMatch(testSource,
+    /['"]\.\/review-coach-connectivity\.js\?v=[0-9a-f]{10}['"]/u,
+    'the harness must not pin production connectivity to any literal cache hash');
+  const specifier = productionConnectivitySpecifier(productionBootstrapSource);
+  for (const hash of ['0123456789', 'fedcba9876']) {
+    const nextSpecifier = specifier.replace(/\?v=[0-9a-f]{10}$/u, `?v=${hash}`);
+    assert.equal(productionConnectivitySpecifier(productionBootstrapSource.replace(specifier, nextSpecifier)),
+      nextSpecifier, 'identity follows future canonical cache versions');
+  }
+  for (const malformed of ['', `${productionBootstrapSource}\n${productionBootstrapSource}`,
+    ...['../review-coach-connectivity.js?v=0123456789', specifier.split('?')[0],
+      `${specifier}&extra=1`, specifier.replace(/.$/u, 'G')]
+      .map((replacement) => productionBootstrapSource.replace(specifier, replacement))]) {
+    assert.throws(() => productionConnectivitySpecifier(malformed), assert.AssertionError);
+  }
   const target = {};
   const calls = [];
   let installedAtMain = null;
