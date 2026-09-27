@@ -69,7 +69,7 @@
   "isBasedOn": "https://github.com/doggy8088/chinese-chess"
 }
 </script>
-<link rel="stylesheet" href="./css/style.css?v=a0cadeb326">
+<link rel="stylesheet" href="./css/style.css?v=1c0a12b001">
 <script type="importmap">
 {
   "imports": {
@@ -96,9 +96,9 @@
       <fieldset id="sideChooser" class="side-chooser">
         <legend>選擇你的棋色</legend>
         <input id="humanSideRed" type="radio" name="humanSide" value="red" checked>
-        <label for="humanSideRed">紅方・先手</label>
+        <label for="humanSideRed">紅方</label>
         <input id="humanSideBlack" type="radio" name="humanSide" value="black">
-        <label for="humanSideBlack">黑方・後手</label>
+        <label for="humanSideBlack">黑方</label>
       </fieldset>
       <button id="btnEditor" type="button" aria-pressed="false">建立殺局</button>
       <button id="btnLibrary" type="button" aria-pressed="false">我的殺局</button>
@@ -140,7 +140,7 @@
       </section>
       <div class="help">
         <p>上方選單可選擇 AI 難度（簡單／中等／困難）或雙人對弈，切換即開新局。</p>
-        <p>人機模式可選紅方先手或黑方後手；選黑方時 AI 會先走，悔棋會連 AI 的回應一併退回。</p>
+        <p>可選擇執紅或執黑，依目前局面的輪走方行棋；若輪到 AI 方，AI 會先行。悔棋會連 AI 的回應一併退回。</p>
         <p>點擊己方棋子選中（亮起走法提示），再點擊目標交叉點移動；落到敵子上即為吃子。</p>
         <p>拖曳空白處旋轉視角，滾輪 / 雙指縮放；按「固定視角」會把鏡頭凍結在當下的視角，畫面就不會再晃動。</p>
       </div>
@@ -528,6 +528,32 @@
           <button id="btnGameReviewNext" type="button" aria-label="下一著">▶<span>下一著</span></button>
           <button id="btnGameReviewLast" type="button" aria-label="前往終局">▶|<span>終局</span></button>
         </div>
+        <button id="btnGameReviewContinue" type="button" class="game-review-continue"
+          aria-haspopup="dialog" aria-controls="gameReviewContinuationDialog"
+          aria-describedby="gameReviewContinueReason">從此局面對弈</button>
+        <p id="gameReviewContinueReason" class="game-review-continue-reason"></p>
+        <dialog id="gameReviewContinuationDialog" aria-labelledby="gameReviewContinuationHeading"
+          aria-describedby="gameReviewContinuationWarning">
+          <form id="gameReviewContinuationForm">
+            <h2 id="gameReviewContinuationHeading">從此局面對弈</h2>
+            <p id="gameReviewContinuationPosition"></p>
+            <p>會從目前局面建立一盤新對局，原棋譜不會變更。</p>
+            <p id="gameReviewContinuationWarning">開始後會以此局面建立新對局；目前尚未完成的棋局若未有完成紀錄，不會成為這個新對局的一部分。</p>
+            <p>重複局面紀錄會從此處重新計算。</p>
+            <label for="gameReviewContinuationDifficulty">AI 難度</label>
+            <select id="gameReviewContinuationDifficulty">
+              <option value="easy">簡單</option><option value="medium">中等</option><option value="hard">困難</option>
+            </select>
+            <label for="gameReviewContinuationHumanSide">你的棋色（本盤新選擇）</label>
+            <select id="gameReviewContinuationHumanSide">
+              <option value="red">紅方</option><option value="black">黑方</option>
+            </select>
+            <div class="game-review-continuation-actions">
+              <button type="submit" class="game-review-continue">開始對弈</button>
+              <button id="btnGameReviewContinuationCancel" type="button">取消</button>
+            </div>
+          </form>
+        </dialog>
         <div class="game-review-actions" aria-label="複盤操作">
           <button id="btnGameReviewAnalyze" type="button" class="game-analysis-primary">從這裡分析</button>
           <button id="btnGameReviewAiAnalyze" type="button" class="game-review-ai-primary"
@@ -628,7 +654,7 @@
       </section>
       <h3>棋譜</h3>
       <ol id="log"></ol>
-      <p id="logEmpty">尚無著法，紅方先行。</p>
+      <p id="logEmpty">尚無著法。</p>
     </aside>
   </main>
 
@@ -659,6 +685,6 @@
   <div id="toast" class="hidden" role="status"></div>
 </div>
 
-<script type="module" src="./main.js?v=a0cadeb326"></script>
+<script type="module" src="./main.js?v=1c0a12b002"></script>
 </body>
 </html>

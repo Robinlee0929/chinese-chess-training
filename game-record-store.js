@@ -87,7 +87,7 @@ export function createGameRecordStore({
     return loadAll().records.find((record) => record.id === id) ?? null;
   }
 
-  function saveGameRecord(input) {
+  function saveGameRecord(input, { preserveRecordId } = {}) {
     const incoming = canonicalRecord(input);
     const records = recordsForMutation();
     const existing = records.find((record) => record.id === incoming.id);
@@ -104,8 +104,11 @@ export function createGameRecordStore({
 
     const ordered = [...records, incoming].sort(compareOldestFirst);
     const evictionCount = Math.max(0, ordered.length - GAME_RECORD_RETENTION_LIMIT);
-    const evictedIds = ordered.slice(0, evictionCount).map((record) => record.id);
-    const retained = ordered.slice(evictionCount);
+    // A branch save must not evict its source, even when the library is full.
+    // This is an ephemeral save option; it adds nothing to persisted records.
+    const evictedIds = ordered.filter((record) => record.id !== preserveRecordId)
+      .slice(0, evictionCount).map((record) => record.id);
+    const retained = ordered.filter((record) => !evictedIds.includes(record.id));
     writeRecords(retained);
     return freezeSaveResult(incoming, evictedIds);
   }

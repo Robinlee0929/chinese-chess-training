@@ -16,6 +16,7 @@ import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js';
 import { createGameRecord, validateGameRecord } from './game-record.js';
 import { GameRecordStoreError, createGameRecordStore } from './game-record-store.js';
 import { createGameReview, selectGameReviewPly } from './game-review.js';
+import * as continuation from './game-review-continuation.js';
 import {
   createGameReviewAiState,
   beginGameReviewAiRequest,
@@ -139,6 +140,7 @@ function harness(options = {}) {
     remove(mesh) { this.children = this.children.filter((entry) => entry !== mesh); mesh.parent = null; } };
   const context = vm.createContext({
     ...game, ...editor, ...recorder, ...practice, ...review, ...photo, ...pieceTypes, ...transfer, ...analytics,
+    ...continuation,
     PuzzleStoreError,
     createGameRecord: (record) => createGameRecord(structuredClone(record)),
     validateGameRecord,
@@ -157,6 +159,9 @@ function harness(options = {}) {
     aiWorker: { postMessage: () => { context.aiRequestCount++; } }, aiModule: null,
     practiceToken: 0, appState: 'NORMAL_GAME', editorState: null, recorderState: null,
     gameReviewSession: null, gameReviewPuzzleReturnContext: null, reviewAiInvalidations: 0,
+    gameReviewContinuationSource: null, gameAnalysisState: null, gameAnalysisNotice: '',
+    gameReviewStored: false, gameReviewReturnState: 'NORMAL_GAME', gameReviewInvoker: null,
+    gameReviewLivePresentation: null, clearGameAnalysisSelection: noop,
     gameReviewEvidenceState: null, gameReviewTeachingMessageState: undefined, r4StaleEvidence: null,
     gameReviewCoachRequester,
     gameReviewCoachState: options.coachEnabled ? createIdleCoachState() : createDisabledCoachState(),
@@ -219,7 +224,7 @@ function harness(options = {}) {
     }),
     AbortController,
     decodePhotoObjectUrl: async () => ({ naturalWidth: 4, naturalHeight: 3 }),
-    document: { querySelector: () => ({ checked: false }) },
+    document: { querySelector: () => ({ checked: false }), getElementById: () => ({ close: noop }) },
     window: { confirm: () => false },
     performance: { now: () => context.clock },
     setTimeout: (callback) => context.timers.push(callback),
@@ -243,7 +248,7 @@ function harness(options = {}) {
     'btnLibraryImportConfirm', 'recorderTitle', 'recorderSubtitle', 'recorderBadge',
     'practiceTurnText', 'practiceTurnDot', 'practiceProgress', 'practiceMistakes',
     'practiceMessage', 'practiceHintMessage', 'btnPracticeHint', 'btnPracticeRestart', 'btnReviewGame',
-    'btnPracticeExit']) context[name] = node();
+    'btnPracticeExit', 'modeSel', 'turnBox']) context[name] = node();
   for (const name of ['gameReviewTeaching', 'gameReviewCoachLeadIn', 'gameReviewTeachingTitle',
     'gameReviewTeachingBody', 'gameReviewCoachEncouragement', 'btnGameReviewCoach',
     'gameReviewCoachStatus', 'gameReviewCoachProfileControl', 'gameReviewCoachModelProfile',
@@ -276,6 +281,7 @@ function harness(options = {}) {
     'animateCapture', 'doMove', 'finishMove', 'cloneNormalGameRecordBoard',
     'beginNormalGameRecordSession', 'normalGameRecordTerminationReason',
     'finalizeNormalGameRecord', 'normalUndoAvailable', 'undoPly', 'undo', 'newGame', 'resetTo',
+    'initializeNormalGamePosition', 'startNormalGameFromReview', 'canHumanMove',
     'doRecorderMove', 'finishRecorderMove', 'resetRecorder', 'undoRecorder',
     'animatePracticeMove', 'afterPracticeMove', 'queueOpponentReply', 'completePractice',
     'formatPracticeCoordinate', 'formatPracticeHintMessage', 'practiceHintAvailable',
@@ -354,6 +360,281 @@ function fixture() {
     { side: 'red', from: { r: 6, c: 8 }, to: { r: 9, c: 8 } },
   ] };
 }
+
+function continuationHarness(sourceReview = r4TurnDivergenceReviewFixture()) {
+  const ctx = harness({ mode: 'hard' });
+  ctx.isAI = () => ctx.mode !== 'pvp';
+  ctx.gameRecordStore.saveGameRecord(sourceReview.record);
+  ctx.appState = 'GAME_REVIEW';
+  ctx.gameReviewSession = sourceReview;
+  ctx.gameReviewContinuationSource = sourceReview;
+  ctx.gameReviewLivePresentation = { selected: { r: 0, c: 0 } };
+  ctx.history = [{ from: { r: 3, c: 0 }, to: { r: 4, c: 0 } }];
+  ctx.capturedBy.red = [{ type: 'P', side: game.BLACK }];
+  ctx.aiThinking = true;
+  ctx.teachingInvalidations = 0;
+  ctx.invalidateTeachingModeFeedback = () => { ctx.teachingInvalidations++; };
+  ctx.cameraSides = [];
+  ctx.showPlayerPerspective = side => ctx.cameraSides.push(side);
+  return ctx;
+}
+
+test('review continuation: exact Black root, empty history, fresh repetition and human input', () => {
+  const r = r4TurnDivergenceReviewFixture();
+  const ctx = continuationHarness(r);
+  const storedBefore = ctx.gameRecordStorage.serialized;
+  const sourceBefore = JSON.stringify(r);
+  const oldToken = ctx.aiToken;
+  assert.equal(ctx.startNormalGameFromReview(r, { difficulty: 'easy', humanSide: game.BLACK }), true);
+  assert.equal(ctx.appState, 'NORMAL_GAME');
+  assert.deepEqual(structuredClone(ctx.board), r.snapshot.board);
+  assert.equal(ctx.turn, game.BLACK);
+  assert.equal(ctx.mode, 'easy');
+  assert.equal(ctx.modeSel.value, 'easy');
+  assert.equal(ctx.humanSide, game.BLACK);
+  assert.equal(ctx.canHumanMove(), true);
+  assert.equal(ctx.aiRequestCount, 0);
+  assert.equal(ctx.history.length, 0);
+  assert.deepEqual(structuredClone(ctx.capturedBy), { red: [], black: [] });
+  assert.deepEqual(structuredClone(ctx.posHistory), [game.hashBoard(r.snapshot.board)]);
+  assert.deepEqual(structuredClone(ctx.repHistory), [{ key: `${game.hashBoard(r.snapshot.board)}|black`, mover: null, check: false }]);
+  assert.deepEqual(structuredClone(ctx.normalGameRecordSession.initialPosition), {
+    board: r.snapshot.board, sideToMove: game.BLACK,
+  });
+  assert.notEqual(ctx.normalGameRecordSession.id, r.record.id);
+  assert.equal(ctx.normalUndoAvailable(), false);
+  ctx.undo();
+  assert.equal(ctx.history.length, 0);
+  assert.equal(ctx.repHistory.length, 1);
+  assert.equal(ctx.gameReviewSession, null);
+  assert.equal(ctx.gameReviewLivePresentation, null);
+  assert.equal(ctx.reviewAiInvalidations, 1);
+  assert.equal(ctx.teachingInvalidations, 1);
+  assert.ok(ctx.aiToken > oldToken);
+  assert.equal(ctx.checkBoardMeshInvariant(ctx.board).ok, true);
+  assert.deepEqual(ctx.cameraSides, [game.BLACK]);
+  assert.equal(ctx.turnBox.focused, true);
+  assert.equal(ctx.gameRecordStorage.serialized, storedBefore);
+  assert.equal(JSON.stringify(r), sourceBefore);
+  assert.equal(ctx.startNormalGameFromReview(r, { difficulty: 'easy', humanSide: game.BLACK }), false);
+});
+
+test('review continuation: AI first is requested once, stale result ignored, accepted result and undo respect root', () => {
+  const r = r4TurnDivergenceReviewFixture();
+  const ctx = continuationHarness(r);
+  const oldToken = ctx.aiToken;
+  assert.equal(ctx.startNormalGameFromReview(r, { difficulty: 'medium', humanSide: game.RED }), true);
+  const aiMove = r.record.moves[1];
+  assert.equal(ctx.aiRequestCount, 1);
+  assert.equal(ctx.aiThinking, true);
+  assert.equal(ctx.canHumanMove(), false);
+  ctx.maybeAIMove();
+  assert.equal(ctx.aiRequestCount, 1);
+  ctx.onAIResult({ token: oldToken, result: aiMove });
+  assert.equal(ctx.history.length, 0);
+  ctx.onAIResult({ token: ctx.aiToken, result: aiMove });
+  ctx.timers.splice(0).forEach(callback => callback());
+  ctx.flushAnimations();
+  assert.equal(ctx.history.length, 1);
+  assert.equal(ctx.turn, game.RED);
+  assert.equal(ctx.canHumanMove(), true);
+  assert.equal(ctx.aiRequestCount, 1);
+  assert.equal(ctx.normalUndoAvailable(), false, 'an AI-only opening is not a human turn to undo');
+  const humanMove = r.record.moves[2];
+  ctx.doMove(humanMove.from, humanMove.to); ctx.flushAnimations();
+  const reply = r.record.moves[3];
+  ctx.onAIResult({ token: ctx.aiToken, result: reply });
+  ctx.timers.splice(0).forEach(callback => callback()); ctx.flushAnimations();
+  assert.equal(ctx.history.length, 3);
+  assert.equal(ctx.normalUndoAvailable(), true);
+  ctx.undo();
+  assert.equal(ctx.history.length, 1);
+  ctx.undo();
+  assert.equal(ctx.history.length, 1);
+});
+
+test('review continuation: human Black plus AI pair undoes exactly to Black root', () => {
+  const r = r4TurnDivergenceReviewFixture(); const ctx = continuationHarness(r);
+  ctx.startNormalGameFromReview(r, { difficulty: 'hard', humanSide: game.BLACK });
+  ctx.flushAnimations();
+  ctx.doMove(r.record.moves[1].from, r.record.moves[1].to); ctx.flushAnimations();
+  ctx.onAIResult({ token: ctx.aiToken, result: r.record.moves[2] });
+  ctx.timers.splice(0).forEach(callback => callback()); ctx.flushAnimations();
+  assert.equal(ctx.history.length, 2);
+  ctx.undo();
+  assert.equal(ctx.history.length, 0);
+  assert.equal(ctx.turn, game.BLACK);
+  assert.deepEqual(structuredClone(ctx.board), r.snapshot.board);
+  assert.equal(ctx.repHistory.length, 1);
+  assert.equal(ctx.checkBoardMeshInvariant(ctx.board).ok, true);
+});
+
+test('review continuation: terminal branch saves independent valid record with only new moves', () => {
+  const r = r4ReviewFixture(); const ctx = continuationHarness(r);
+  const original = JSON.stringify(ctx.gameRecordStore.getGameRecord(r.record.id));
+  ctx.startNormalGameFromReview(r, { difficulty: 'medium', humanSide: game.RED });
+  ctx.flushAnimations();
+  const move = r.record.moves[0]; ctx.doMove(move.from, move.to); ctx.flushAnimations();
+  assert.equal(ctx.over, true);
+  const saved = ctx.lastCompletedGameRecord;
+  assert.notEqual(saved.id, r.record.id);
+  assert.equal(saved.schemaVersion, 1);
+  assert.equal(saved.mode, 'medium');
+  assert.deepEqual(saved.initialPosition, { board: r.snapshot.board, sideToMove: r.snapshot.sideToMove });
+  assert.deepEqual(saved.moves, [move]);
+  assert.equal(validateGameRecord(saved).ok, true);
+  assert.deepEqual(ctx.gameRecordStore.getGameRecord(saved.id), saved);
+  assert.equal(JSON.stringify(ctx.gameRecordStore.getGameRecord(r.record.id)), original);
+});
+
+test('review continuation: invalid configuration, terminal, live teaching and stale source never replace live game', () => {
+  const r = r4TurnDivergenceReviewFixture();
+  for (const kind of ['config', 'terminal', 'live-teaching', 'stale']) {
+    const ctx = continuationHarness(r);
+    const candidate = kind === 'terminal' ? selectGameReviewPly(r, r.totalPlies)
+      : kind === 'live-teaching' ? { ...r, sourceKind: 'live-teaching' } : r;
+    ctx.gameReviewSession = candidate;
+    ctx.gameReviewContinuationSource = kind === 'stale' ? { ...candidate } : candidate;
+    const before = JSON.stringify([ctx.board, ctx.history, ctx.repHistory, ctx.normalGameRecordSession, ctx.aiToken]);
+    assert.equal(ctx.startNormalGameFromReview(candidate, {
+      difficulty: kind === 'config' ? 'pvp' : 'easy', humanSide: game.BLACK,
+    }), false);
+    assert.equal(JSON.stringify([ctx.board, ctx.history, ctx.repHistory, ctx.normalGameRecordSession, ctx.aiToken]), before);
+    assert.equal(ctx.appState, 'GAME_REVIEW');
+  }
+});
+
+function installContinuationNavigation(ctx) {
+  Object.assign(ctx, {
+    createGameReview, selectGameReviewPly,
+    btnGameRecords: node(), gameRecordLibraryHeading: node(), gameReviewHeading: node(),
+    renderGameRecordLibrary: noop,
+    renderGameReview: noop,
+  });
+  vm.runInContext([
+    'pauseLiveGameForGameRecords', 'enterGameRecordLibrary', 'openPreparedGameReview',
+    'openGameReview', 'openStoredGameReview', 'navigateGameReview',
+  ].map(functionSource).join('\n'), ctx);
+  const requests = [];
+  ctx.aiWorker.postMessage = payload => {
+    ctx.aiRequestCount++;
+    requests.push(structuredClone(payload));
+  };
+  return requests;
+}
+
+test('review continuation: consecutive different plies replace played history and AI state through real Review navigation', () => {
+  const first = r4TurnDivergenceReviewFixture();
+  const ctx = continuationHarness(first);
+  const requests = installContinuationNavigation(ctx);
+  const sourceBefore = ctx.gameRecordStorage.serialized;
+  assert.equal(ctx.startNormalGameFromReview(first, { difficulty: 'easy', humanSide: game.BLACK }), true);
+  assert.equal(ctx.logEmpty.textContent, '尚無著法，目前黑方行棋。');
+  ctx.flushAnimations();
+  ctx.doMove(first.record.moves[1].from, first.record.moves[1].to);
+  ctx.flushAnimations();
+  assert.equal(ctx.aiThinking, true);
+  ctx.onAIResult({ token: requests[0].token, result: first.record.moves[2] });
+  ctx.flushTimers(); ctx.flushAnimations();
+  assert.equal(ctx.history.length, 2);
+  const firstSessionId = ctx.normalGameRecordSession.id;
+
+  assert.equal(ctx.enterGameRecordLibrary(), true);
+  assert.equal(ctx.openStoredGameReview(first.record.id), true);
+  assert.equal(ctx.navigateGameReview(2), true);
+  const second = ctx.gameReviewSession;
+  assert.notDeepEqual(second.snapshot.board, first.snapshot.board);
+  ctx.gameReviewContinuationSource = second;
+  assert.equal(ctx.startNormalGameFromReview(second, { difficulty: 'hard', humanSide: game.BLACK }), true);
+  assert.equal(ctx.appState, 'NORMAL_GAME');
+  assert.deepEqual(structuredClone(ctx.board), second.snapshot.board);
+  assert.equal(ctx.turn, game.RED);
+  assert.equal(ctx.logEmpty.textContent, '尚無著法，目前紅方行棋。');
+  assert.equal(ctx.history.length, 0);
+  assert.equal(ctx.repHistory.length, 1);
+  assert.equal(ctx.posHistory.length, 1);
+  assert.equal(ctx.mode, 'hard');
+  assert.notEqual(ctx.normalGameRecordSession.id, firstSessionId);
+  assert.equal(ctx.aiThinking, true);
+  assert.equal(ctx.canHumanMove(), false);
+  assert.equal(requests.length, 2, 'second branch schedules its own opening exactly once');
+  assert.equal(requests[1].level, 'hard');
+  assert.equal(requests[1].side, game.RED);
+  assert.deepEqual(requests[1].board, second.snapshot.board);
+  ctx.onAIResult({ token: requests[1].token, result: second.record.moves[2] });
+  ctx.flushTimers(); ctx.flushAnimations();
+  assert.equal(ctx.history.length, 1, 'only the second branch AI opening is recorded');
+  same(ctx.history[0].from, second.record.moves[2].from);
+  same(ctx.history[0].to, second.record.moves[2].to);
+  assert.equal(ctx.turn, game.BLACK);
+  assert.equal(ctx.canHumanMove(), true);
+  assert.equal(requests.length, 2);
+  assert.equal(ctx.gameRecordStorage.serialized, sourceBefore);
+});
+
+test('review continuation: stale worker reply and queued AI callback cannot alter a replacement branch', () => {
+  for (const delivery of ['worker-pending', 'callback-queued']) {
+    const first = r4TurnDivergenceReviewFixture();
+    const ctx = continuationHarness(first);
+    const requests = installContinuationNavigation(ctx);
+    ctx.startNormalGameFromReview(first, { difficulty: 'easy', humanSide: game.RED });
+    assert.equal(ctx.aiThinking, true);
+    assert.equal(requests.length, 1);
+    const oldReply = { token: requests[0].token, result: first.record.moves[1] };
+    if (delivery === 'callback-queued') {
+      ctx.onAIResult(oldReply);
+      assert.equal(ctx.timers.length, 1);
+      assert.equal(ctx.history.length, 0);
+    }
+
+    assert.equal(ctx.enterGameRecordLibrary(), true);
+    assert.equal(ctx.openStoredGameReview(first.record.id), true);
+    assert.equal(ctx.navigateGameReview(5), true);
+    const second = ctx.gameReviewSession;
+    // The old move is also legal here: legality alone cannot hide a broken
+    // cancellation guard. Only B's own response may settle its pending move.
+    assert.deepEqual(second.snapshot.board, first.snapshot.board);
+    ctx.gameReviewContinuationSource = second;
+    ctx.startNormalGameFromReview(second, { difficulty: 'medium', humanSide: game.RED });
+    const before = structuredClone({ board: ctx.board, history: ctx.history,
+      session: ctx.normalGameRecordSession, posHistory: ctx.posHistory, repHistory: ctx.repHistory });
+    assert.equal(requests.length, 2);
+    if (delivery === 'worker-pending') ctx.onAIResult(oldReply);
+    ctx.flushTimers(); ctx.flushAnimations();
+    same({ board: ctx.board, history: ctx.history, session: ctx.normalGameRecordSession,
+      posHistory: ctx.posHistory, repHistory: ctx.repHistory }, before);
+    assert.equal(ctx.turn, game.BLACK);
+    assert.equal(ctx.aiThinking, true, `${delivery}: stale A must not clear B's thinking state`);
+    assert.equal(ctx.canHumanMove(), false);
+    assert.equal(requests.length, 2, `${delivery}: no extra AI request`);
+    assert.equal(ctx.checkBoardMeshInvariant(ctx.board).ok, true);
+
+    ctx.onAIResult({ token: requests[1].token, result: second.record.moves[5] });
+    ctx.flushTimers(); ctx.flushAnimations();
+    assert.equal(ctx.history.length, 1, `${delivery}: B accepts exactly its own AI move`);
+    same(ctx.history[0].from, second.record.moves[5].from);
+    same(ctx.history[0].to, second.record.moves[5].to);
+    assert.equal(ctx.aiThinking, false);
+    assert.equal(ctx.canHumanMove(), true);
+    assert.equal(requests.length, 2);
+  }
+});
+
+test('review continuation: a full library retains the oldest source when the branch is saved', () => {
+  const r = r4ReviewFixture('oldest-source'); const ctx = continuationHarness(r);
+  for (let index = 0; index < 99; index++) {
+    ctx.gameRecordStore.saveGameRecord(createGameRecord({ ...r.record, id: `newer-${index}`,
+      createdAt: '2026-09-02T01:00:00.000Z', completedAt: '2026-09-02T01:01:00.000Z' }));
+  }
+  ctx.gameRecordNow = () => '2026-09-26T01:00:00.000Z';
+  ctx.startNormalGameFromReview(r, { difficulty: 'easy', humanSide: game.RED });
+  ctx.flushAnimations();
+  const move = r.record.moves[0]; ctx.doMove(move.from, move.to); ctx.flushAnimations();
+  assert.equal(ctx.gameRecordStore.listGameRecords().length, 100);
+  assert.deepEqual(ctx.gameRecordStore.getGameRecord(r.record.id), r.record);
+  assert.ok(ctx.gameRecordStore.getGameRecord(ctx.lastCompletedGameRecord.id));
+  assert.equal(Object.hasOwn(ctx.lastCompletedGameRecord, 'sourceRecordId'), false);
+});
 
 function normalCheckmateFixture() {
   const board = editor.createEmptyEditorBoard();
