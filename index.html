@@ -69,7 +69,7 @@
   "isBasedOn": "https://github.com/doggy8088/chinese-chess"
 }
 </script>
-<link rel="stylesheet" href="./css/style.css?v=cc26ea4c9e">
+<link rel="stylesheet" href="./css/style.css?v=3228bf6c1d">
 <script type="importmap">
 {
   "imports": {
@@ -226,8 +226,30 @@
         </div>
 
         <div id="recorderReady">
-          <p class="editor-hint">開始後請直接在棋盤走出已知答案。每一步都會依中國象棋規則驗證。</p>
+          <p class="editor-hint">錄製答案時，請在棋盤走出已知解法；選擇對弈則由電腦即時應戰。</p>
           <button id="btnRecorderStart" type="button" class="recorder-primary">開始錄製答案</button>
+          <button id="btnCustomPlay" type="button" class="game-review-continue"
+            aria-haspopup="dialog" aria-controls="customPlayDialog">從此局面對弈</button>
+          <dialog id="customPlayDialog" aria-labelledby="customPlayHeading" aria-describedby="customPlayDescription">
+            <form id="customPlayForm">
+              <h2 id="customPlayHeading">從此局面對弈</h2>
+              <p id="customPlayPosition"></p>
+              <p id="customPlayDescription">以已確認棋面開始新對局。玩家棋色與輪走方分開設定；輪到電腦時，電腦會先走。原本尚未完成的對局將被取代。</p>
+              <label for="customPlayDifficulty">AI 難度</label>
+              <select id="customPlayDifficulty">
+                <option value="easy">簡單</option><option value="medium">中等</option><option value="hard">困難</option>
+              </select>
+              <label for="customPlayHumanSide">玩家棋色</label>
+              <select id="customPlayHumanSide">
+                <option value="red">紅方</option><option value="black">黑方</option>
+              </select>
+              <p id="customPlayError" role="alert"></p>
+              <div class="game-review-continuation-actions">
+                <button id="btnCustomPlayCancel" type="button">取消</button>
+                <button type="submit" class="recorder-primary">開始對弈</button>
+              </div>
+            </form>
+          </dialog>
         </div>
 
         <div id="recorderWorkspace" class="hidden">
@@ -686,6 +708,6 @@
   <div id="toast" class="hidden" role="status"></div>
 </div>
 
-<script type="module" src="./main.js?v=cc26ea4c9e"></script>
+<script type="module" src="./main.js?v=3228bf6c1d"></script>
 </body>
 </html>
