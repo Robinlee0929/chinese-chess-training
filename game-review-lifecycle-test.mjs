@@ -297,7 +297,14 @@ function harness({
     emit(data) { this.onmessage?.({ data }); }
     fail() { this.onerror?.({ preventDefault() {} }); }
   }
+  const dialogNodes = new Map();
   const document = {
+    getElementById(id) {
+      if (!dialogNodes.has(id)) dialogNodes.set(id, Object.assign(domNode(), {
+        open: false, close() { this.open = false; },
+      }));
+      return dialogNodes.get(id);
+    },
     activeElement: null,
     createElement: (tagName) => domNode(false, tagName),
   };
@@ -392,7 +399,7 @@ function harness({
     analyticsWrites: 0,
     messages: [],
     editorState: null,
-    confirmedPosition: null,
+    confirmedPosition: null, customPlaySource: null,
     recorderState: null,
     recordedPuzzleResult: null,
     practiceState: null,
@@ -638,7 +645,7 @@ function harness({
     'openLastCompletedGameReview', 'openStoredGameReview', 'navigateGameReview',
     'deleteGameRecordFromLibrary', 'exitGameReview', 'exitGameRecordFlow',
     'enterGameAnalysis', 'returnToGameReview',
-    'createPuzzleFromGameReview', 'exitEditor',
+    'createPuzzleFromGameReview', 'exitEditor', 'discardPuzzleEditor', 'cancelCustomPositionPlay',
   ];
   // In realRenderer mode these are byte-identical production functions from main.js.
   // Only low-level DOM, mesh rebuilding, HUD, audio/confetti, and storage boundaries are doubled.

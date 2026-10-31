@@ -17,6 +17,7 @@ import { createGameRecord, validateGameRecord } from './game-record.js';
 import { GameRecordStoreError, createGameRecordStore } from './game-record-store.js';
 import { createGameReview, selectGameReviewPly } from './game-review.js';
 import * as continuation from './game-review-continuation.js';
+import { validateCustomPlayPosition } from './custom-position-play.js';
 import {
   createGameReviewAiState,
   beginGameReviewAiRequest,
@@ -140,7 +141,7 @@ function harness(options = {}) {
     remove(mesh) { this.children = this.children.filter((entry) => entry !== mesh); mesh.parent = null; } };
   const context = vm.createContext({
     ...game, ...editor, ...recorder, ...practice, ...review, ...photo, ...pieceTypes, ...transfer, ...analytics,
-    ...continuation,
+    ...continuation, validateCustomPlayPosition,
     PuzzleStoreError,
     createGameRecord: (record) => createGameRecord(structuredClone(record)),
     validateGameRecord,
@@ -157,6 +158,7 @@ function harness(options = {}) {
     aiSide: () => context.humanSide === game.RED ? game.BLACK : game.RED,
     aiMoveStart: 0, aiRequestCount: 0, aiMaybeMoveCalls: 0,
     aiWorker: { postMessage: () => { context.aiRequestCount++; } }, aiModule: null,
+    confirmedPosition: null, customPlaySource: null,
     practiceToken: 0, appState: 'NORMAL_GAME', editorState: null, recorderState: null,
     gameReviewSession: null, gameReviewPuzzleReturnContext: null, reviewAiInvalidations: 0,
     gameReviewContinuationSource: null, gameAnalysisState: null, gameAnalysisNotice: '',
@@ -233,6 +235,8 @@ function harness(options = {}) {
       'PUZZLE_RECORDED', 'PUZZLE_PRACTICING', 'PUZZLE_PRACTICE_COMPLETE',
       'PUZZLE_LIBRARY', 'PUZZLE_VIEW'].includes(context.appState),
     normalGameActive: () => context.appState === 'NORMAL_GAME',
+    recorderBoardActive: () => ['PUZZLE_RECORDING', 'PUZZLE_RECORDED'].includes(context.appState),
+    authoringActive: () => ['PUZZLE_EDITOR', 'PUZZLE_CONFIRMED'].includes(context.appState),
     libraryActive: () => ['PUZZLE_LIBRARY', 'PUZZLE_VIEW'].includes(context.appState),
     practiceActive: () => ['PUZZLE_PRACTICING', 'PUZZLE_PRACTICE_COMPLETE'].includes(context.appState),
     URL: { revokeObjectURL: (url) => context.revoked.push(url),
@@ -281,7 +285,9 @@ function harness(options = {}) {
     'animateCapture', 'doMove', 'finishMove', 'cloneNormalGameRecordBoard',
     'beginNormalGameRecordSession', 'normalGameRecordTerminationReason',
     'finalizeNormalGameRecord', 'normalUndoAvailable', 'undoPly', 'undo', 'newGame', 'resetTo',
-    'initializeNormalGamePosition', 'startNormalGameFromReview', 'canHumanMove',
+    'initializeNormalGamePosition', 'startNormalGameFromReview', 'startConfiguredNormalGame', 'canHumanMove',
+    'discardPuzzleEditor', 'confirmEditorPosition', 'openCustomPositionPlay', 'cancelCustomPositionPlay',
+    'startCustomPositionPlay', 'startRecording', 'cancelRecording',
     'doRecorderMove', 'finishRecorderMove', 'resetRecorder', 'undoRecorder',
     'animatePracticeMove', 'afterPracticeMove', 'queueOpponentReply', 'completePractice',
     'formatPracticeCoordinate', 'formatPracticeHintMessage', 'practiceHintAvailable',
@@ -2557,4 +2563,221 @@ test('late file read after leaving the library cannot restore pending import sta
   await pending;
   assert.equal(ctx.pendingPuzzleImport, null);
   assert.equal(ctx.appState, 'NORMAL_GAME');
+});
+
+
+// Custom-position cases execute the production lifecycle with the same rendering,
+// timer, record store and engine doubles used by normal play and Review above.
+function customPlayHarness({ board = game.initialBoard(), sideToMove = game.BLACK } = {}) {
+  const ctx = harness({ mode: 'medium' });
+  ctx.isAI = () => ctx.mode !== 'pvp';
+  const nodes = new Map();
+  ctx.document.getElementById = id => {
+    if (!nodes.has(id)) {
+      const element = node();
+      Object.assign(element, { open: false,
+        showModal() { this.open = true; }, close() { this.open = false; },
+        focus() { ctx.focusedControl = id; } });
+      nodes.set(id, element);
+    }
+    return nodes.get(id);
+  };
+  ctx.cameraSides = [];
+  ctx.showPlayerPerspective = side => ctx.cameraSides.push(side);
+  ctx.setEditorMessage = message => { ctx.editorMessageText = message; };
+  ctx.activatePuzzleEditor(editor.createEditorState({ board, sideToMove }), '編輯中');
+  return ctx;
+}
+function confirmCustom(ctx) {
+  assert.equal(ctx.confirmEditorPosition(), true);
+  assert.equal(ctx.openCustomPositionPlay(), true, ctx.editorMessageText);
+}
+function startCustom(ctx, humanSide = ctx.editorState.sideToMove, difficulty = 'medium') {
+  confirmCustom(ctx);
+  assert.equal(ctx.startCustomPositionPlay({ humanSide, difficulty }), true);
+}
+function firstMove(ctx) {
+  for (let r = 0; r < 10; r++) for (let c = 0; c < 9; c++) {
+    if (ctx.board[r][c]?.side !== ctx.turn) continue;
+    const to = game.legalMoves(ctx.board, r, c)[0];
+    if (to) return { from: { r, c }, to };
+  }
+  throw new Error('fixture must have a move');
+}
+function aiReply(ctx) {
+  ctx.onAIResult({ token: ctx.aiToken, result: firstMove(ctx) });
+  ctx.flushTimers(); ctx.flushAnimations();
+}
+
+for (const humanSide of [game.BLACK, game.RED]) for (const sideToMove of [game.BLACK, game.RED]) {
+  for (const difficulty of ['easy', 'medium', 'hard']) {
+    test(`T01–T06/T12/T18: ${humanSide} player, ${sideToMove} turn, ${difficulty}`, () => {
+      const source = game.initialBoard(); source[3][0] = null;
+      const ctx = customPlayHarness({ board: source, sideToMove });
+      const editorBefore = ctx.editorState;
+      ctx.history = [{ old: true }]; ctx.posHistory.push('old');
+      ctx.capturedBy.red.push({ type: 'P', side: game.BLACK });
+      const token = ctx.aiToken;
+      startCustom(ctx, humanSide, difficulty);
+      same(ctx.board, source); assert.notEqual(ctx.board, source);
+      assert.notEqual(ctx.board[0][0], editorBefore.board[0][0]);
+      assert.equal(ctx.appState, 'NORMAL_GAME'); assert.equal(ctx.turn, sideToMove);
+      assert.equal(ctx.humanSide, humanSide); assert.equal(ctx.mode, difficulty);
+      assert.equal(ctx.modeSel.value, difficulty); same(ctx.cameraSides, [humanSide]);
+      assert.equal(ctx.canHumanMove(), humanSide === sideToMove);
+      assert.equal(ctx.aiRequestCount, humanSide === sideToMove ? 0 : 1);
+      assert.ok(ctx.aiToken > token); assert.equal(ctx.history.length, 0);
+      same(ctx.capturedBy, { red: [], black: [] });
+      same(ctx.posHistory, [game.hashBoard(source)]);
+      same(ctx.repHistory, [{ key: `${game.hashBoard(source)}|${sideToMove}`, mover: null, check: false }]);
+      same(ctx.normalGameRecordSession.initialPosition, { board: source, sideToMove });
+      assert.equal(ctx.normalGameRecordSession.humanSide, humanSide);
+      assert.equal(ctx.gameRecordStorage.writes, 0);
+      invariant(ctx, ctx.board);
+      const session = ctx.normalGameRecordSession;
+      assert.equal(ctx.startCustomPositionPlay({ humanSide, difficulty }), false);
+      assert.equal(ctx.normalGameRecordSession, session);
+      if (humanSide !== sideToMove) {
+        aiReply(ctx); assert.equal(ctx.turn, humanSide); assert.equal(ctx.history.length, 1);
+        invariant(ctx, ctx.board);
+      }
+      same(source, editorBefore.board);
+    });
+  }
+}
+
+test('T07/T08/T09: unconfirmed or invalid start keeps draft, normal game and AI intact', () => {
+  const cases = [game.initialBoard(), editor.createEmptyEditorBoard()];
+  const facing = editor.createEmptyEditorBoard();
+  facing[0][4] = { type: 'K', side: game.RED }; facing[9][4] = { type: 'K', side: game.BLACK };
+  cases.push(facing);
+  const terminal = normalStalemateFixture();
+  game.applyMove(terminal.board, ...terminal.move); cases.push(terminal.board);
+  for (const [index, board] of cases.entries()) {
+    const ctx = customPlayHarness({ board }); const live = ctx.board; const session = ctx.normalGameRecordSession;
+    const draft = ctx.editorState; const token = ctx.aiToken;
+    assert.equal(ctx.openCustomPositionPlay(), false);
+    assert.equal(ctx.startCustomPositionPlay({ humanSide: game.BLACK, difficulty: 'easy' }), false);
+    if (index > 0) {
+      ctx.confirmEditorPosition(); assert.equal(ctx.openCustomPositionPlay(), false);
+      assert.match(ctx.editorMessageText, /[\u4e00-\u9fff]/);
+    }
+    assert.equal(ctx.board, live); assert.equal(ctx.normalGameRecordSession, session);
+    assert.equal(ctx.editorState, draft); assert.equal(ctx.aiToken, token);
+    assert.equal(ctx.aiRequestCount, 0); invariant(ctx, draft.board);
+  }
+});
+
+test('T10/T11: dialog defaults, focus, cancellation, dirty confirmation and stale identity', () => {
+  const ctx = customPlayHarness(); const draft = ctx.editorState;
+  confirmCustom(ctx); const source = ctx.customPlaySource;
+  const token = ctx.aiToken; const session = ctx.normalGameRecordSession;
+  assert.equal(ctx.focusedControl, 'customPlayDifficulty');
+  assert.match(ctx.document.getElementById('customPlayPosition').textContent, /黑方/);
+  assert.equal(ctx.document.getElementById('customPlayHumanSide').value, game.BLACK);
+  assert.equal(ctx.openCustomPositionPlay(), false, 'double open is inert');
+  ctx.cancelCustomPositionPlay();
+  assert.equal(ctx.focusedControl, 'btnCustomPlay'); assert.equal(ctx.customPlaySource, null);
+  assert.equal(ctx.document.getElementById('customPlayDialog').open, false);
+  assert.equal(ctx.editorState, draft); assert.equal(ctx.appState, 'PUZZLE_CONFIRMED');
+  assert.equal(ctx.aiToken, token); assert.equal(ctx.normalGameRecordSession, session);
+  ctx.openCustomPositionPlay();
+  ctx.editorState = editor.setEditorSideToMove(ctx.editorState, game.RED);
+  assert.equal(ctx.startCustomPositionPlay({ humanSide: game.RED, difficulty: 'easy' }), false);
+  ctx.markEditorDirty(); assert.equal(ctx.confirmedPosition, null); assert.equal(ctx.customPlaySource, null);
+  assert.equal(ctx.appState, 'PUZZLE_EDITOR'); assert.equal(ctx.openCustomPositionPlay(), false);
+  ctx.customPlaySource = source;
+  assert.equal(ctx.startCustomPositionPlay({ humanSide: game.RED, difficulty: 'easy' }), false);
+  ctx.customPlaySource = null; confirmCustom(ctx);
+  assert.equal(ctx.startCustomPositionPlay({ humanSide: 'white', difficulty: 'pvp' }), false);
+  assert.match(ctx.document.getElementById('customPlayError').textContent, /請選擇/);
+  assert.equal(ctx.normalGameRecordSession, session); assert.equal(ctx.aiRequestCount, 0);
+});
+
+for (const delivery of ['worker', 'timer']) test(`T13: stale ${delivery} cannot mutate custom replacement`, () => {
+  const ctx = customPlayHarness(); startCustom(ctx, game.RED);
+  const oldToken = ctx.aiToken; const move = firstMove(ctx);
+  if (delivery === 'timer') ctx.onAIResult({ token: oldToken, result: move });
+  ctx.activatePuzzleEditor(editor.createEditorState({ board: game.initialBoard(), sideToMove: game.RED }), '下一盤');
+  startCustom(ctx, game.BLACK);
+  const session = ctx.normalGameRecordSession; const before = structuredClone(ctx.board);
+  if (delivery === 'worker') ctx.onAIResult({ token: oldToken, result: move });
+  ctx.flushTimers(); ctx.flushAnimations();
+  same(ctx.board, before); assert.equal(ctx.normalGameRecordSession, session);
+  assert.equal(ctx.aiThinking, true); assert.equal(ctx.history.length, 0);
+  aiReply(ctx); assert.equal(ctx.history.length, 1); invariant(ctx, ctx.board);
+});
+
+for (const aiFirst of [false, true]) test(`T14: undo respects ${aiFirst ? 'AI-first' : 'human-first'} custom root`, () => {
+  const ctx = customPlayHarness(); const root = structuredClone(ctx.editorState.board);
+  startCustom(ctx, aiFirst ? game.RED : game.BLACK);
+  if (aiFirst) aiReply(ctx);
+  const historyFloor = aiFirst ? 1 : 0;
+  const playableRoot = structuredClone(ctx.board);
+  ctx.undo(); assert.equal(ctx.history.length, historyFloor);
+  const move = firstMove(ctx); ctx.doMove(move.from, move.to); ctx.flushAnimations(); aiReply(ctx);
+  ctx.undo(); ctx.undo();
+  assert.equal(ctx.history.length, historyFloor); same(ctx.board, playableRoot);
+  same(ctx.normalGameRecordSession.initialPosition.board, root); invariant(ctx, ctx.board);
+  ctx.newGame(); same(ctx.board, game.initialBoard()); assert.equal(ctx.turn, game.RED);
+});
+
+test('T15/T19: Review → editor → play → terminal record → replay preserves original record', () => {
+  const ctx = customPlayHarness(); const original = r4TurnDivergenceReviewFixture();
+  ctx.gameRecordStore.saveGameRecord(original.record);
+  const serialized = ctx.gameRecordStorage.serialized;
+  ctx.gameReviewSession = original; ctx.appState = 'GAME_REVIEW';
+  assert.equal(ctx.createPuzzleFromGameReview(), true);
+  const setup = normalStalemateFixture();
+  ctx.editorState = editor.createEditorState({ board: setup.board, sideToMove: setup.turn });
+  ctx.markEditorDirty(); ctx.syncEditorScene();
+  startCustom(ctx, game.RED);
+  assert.equal(ctx.gameReviewSession, null); assert.equal(ctx.gameReviewPuzzleReturnContext, null);
+  assert.equal(ctx.gameReviewLivePresentation, null);
+  assert.equal(ctx.gameRecordStorage.serialized, serialized, 'no incomplete write');
+  ctx.doMove(...setup.move); ctx.flushAnimations();
+  assert.equal(ctx.over, true); const saved = ctx.lastCompletedGameRecord;
+  assert.equal(validateGameRecord(saved).ok, true); assert.equal(saved.schemaVersion, 1);
+  assert.notEqual(saved.id, original.record.id); assert.equal(saved.moves.length, 1);
+  same(saved.initialPosition, { board: setup.board, sideToMove: setup.turn });
+  same(ctx.gameRecordStore.getGameRecord(original.record.id), original.record);
+  const replay = createGameReview(saved);
+  same(replay.snapshot.board, ctx.board); assert.equal(replay.snapshot.terminal.terminationReason, 'stalemate');
+  invariant(ctx, ctx.board);
+});
+
+test('T16/T18: cancel play can still record/cancel; starting disposes photo, draft and old meshes', () => {
+  const ctx = customPlayHarness(); confirmCustom(ctx); ctx.cancelCustomPositionPlay();
+  ctx.startRecording(); assert.equal(ctx.appState, 'PUZZLE_RECORDING'); invariant(ctx, ctx.recorderState.board);
+  ctx.cancelRecording(); assert.equal(ctx.appState, 'PUZZLE_CONFIRMED'); invariant(ctx, ctx.editorState.board);
+  const oldMeshes = ctx.pieces.slice();
+  ctx.photoObjectUrl = 'blob:custom'; ctx.pendingPhotoObjectUrl = 'blob:pending';
+  confirmCustom(ctx);
+  ctx.practiceState = {}; ctx.recordedPuzzleResult = {}; ctx.selected = { r: 0, c: 0 };
+  assert.equal(ctx.startCustomPositionPlay({ humanSide: game.BLACK, difficulty: 'medium' }), true);
+  assert.ok(ctx.revoked.includes('blob:custom')); assert.ok(ctx.revoked.includes('blob:pending'));
+  assert.equal(ctx.editorState, null); assert.equal(ctx.confirmedPosition, null);
+  assert.equal(ctx.recorderState, null); assert.equal(ctx.practiceState, null);
+  assert.equal(ctx.recordedPuzzleResult, null); assert.equal(ctx.customPlaySource, null);
+  assert.equal(ctx.aiRequestCount, 0, 'cleanup never resumes previous AI turn');
+  for (const mesh of oldMeshes) assert.equal(mesh.parent, null);
+  invariant(ctx, ctx.board);
+});
+
+
+test('T15: a legal custom checkmate saves once and replays from the custom root', () => {
+  const board = editor.createEmptyEditorBoard();
+  board[0][3] = { type: 'K', side: game.RED }; board[9][4] = { type: 'K', side: game.BLACK };
+  board[8][8] = { type: 'R', side: game.RED }; board[7][0] = { type: 'R', side: game.RED };
+  const ctx = customPlayHarness({ board, sideToMove: game.RED });
+  startCustom(ctx, game.RED);
+  assert.equal(ctx.gameRecordStorage.writes, 0);
+  ctx.doMove({ r: 7, c: 0 }, { r: 9, c: 0 }); ctx.flushAnimations(); ctx.flushTimers();
+  assert.equal(ctx.over, true); assert.equal(ctx.gameRecordStorage.writes, 1);
+  const saved = ctx.lastCompletedGameRecord;
+  assert.equal(validateGameRecord(saved).ok, true);
+  assert.equal(saved.result.terminationReason, 'checkmate');
+  same(saved.initialPosition.board, board);
+  same(createGameReview(saved).snapshot.board, ctx.board);
+  ctx.finalizeNormalGameRecord('將死'); assert.equal(ctx.gameRecordStorage.writes, 1);
 });
