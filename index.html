@@ -69,7 +69,7 @@
   "isBasedOn": "https://github.com/doggy8088/chinese-chess"
 }
 </script>
-<link rel="stylesheet" href="./css/style.css?v=36ce3754cc">
+<link rel="stylesheet" href="./css/style.css?v=533286807f">
 <script type="importmap">
 {
   "imports": {
@@ -104,6 +104,7 @@
       <button id="btnLibrary" type="button" aria-pressed="false">我的殺局</button>
       <button id="btnUndo" type="button">悔棋</button>
       <button id="btnNew" type="button"><span class="t-full">新對局</span><span class="t-short">新局</span></button>
+      <button id="btnCustomRematch" type="button" class="hidden" aria-haspopup="dialog" aria-controls="customRematchDialog">重新挑戰</button>
       <button id="btnMore" type="button" aria-haspopup="true" aria-expanded="false" title="更多設定" aria-label="更多設定">⋯</button>
       <div id="hudMore">
         <button id="btnGameRecords" type="button" aria-pressed="false">對局紀錄</button>
@@ -683,6 +684,17 @@
 
   <div id="checkBanner" class="hidden">將 軍 ！</div>
 
+  <dialog id="customRematchDialog" aria-labelledby="customRematchHeading" aria-describedby="customRematchDescription">
+    <form id="customRematchForm">
+      <h2 id="customRematchHeading">重新挑戰此局面？</h2>
+      <p id="customRematchDescription">將放棄本局尚未完成的進度，回到原始棋盤與輪走方，保留玩家棋色及 AI 難度。</p>
+      <div class="custom-rematch-actions">
+        <button id="btnCustomRematchCancel" type="button" autofocus>取消</button>
+        <button type="submit">重新挑戰</button>
+      </div>
+    </form>
+  </dialog>
+
   <div id="overlay" class="hidden">
     <canvas id="confettiCv" aria-hidden="true"></canvas>
     <div class="card" id="ovCard">
@@ -701,6 +713,7 @@
         <button id="btnShare" type="button" class="primary">分享戰績 🎉</button>
         <button id="btnReviewGame" type="button" class="hidden">複盤本局</button>
         <button id="btnAgain" type="button">再來一局</button>
+        <button id="btnCustomRematchEnd" type="button" class="hidden">重新挑戰</button>
       </div>
     </div>
   </div>
@@ -708,6 +721,6 @@
   <div id="toast" class="hidden" role="status"></div>
 </div>
 
-<script type="module" src="./main.js?v=36ce3754cc"></script>
+<script type="module" src="./main.js?v=533286807f"></script>
 </body>
 </html>

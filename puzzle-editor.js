@@ -1,5 +1,5 @@
-import { ROWS, COLS, RED, BLACK } from './game.js?v=36ce3754cc';
-import { validatePuzzle } from './puzzle-domain.js?v=36ce3754cc';
+import { ROWS, COLS, RED, BLACK } from './game.js?v=533286807f';
+import { validatePuzzle } from './puzzle-domain.js?v=533286807f';
 
 const SIDES = new Set([RED, BLACK]);
 const PIECE_TYPES = new Set(['K', 'A', 'B', 'N', 'R', 'C', 'P']);
