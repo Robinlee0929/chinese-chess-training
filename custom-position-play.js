@@ -1,8 +1,59 @@
-import { RED, BLACK, name, kingPos, kingsFacing, inCheck, hasAnyLegalMove } from './game.js?v=3228bf6c1d';
-import { createEditorState, PuzzleEditorError } from './puzzle-editor.js?v=3228bf6c1d';
+import { RED, BLACK, name, kingPos, kingsFacing, inCheck, hasAnyLegalMove } from './game.js?v=36ce3754cc';
+import { createEditorState, PuzzleEditorError } from './puzzle-editor.js?v=36ce3754cc';
+import { validateContinuationConfiguration } from './game-review-continuation.js?v=36ce3754cc';
 
 const LIMITS = { K: 1, A: 2, B: 2, N: 2, R: 2, C: 2, P: 5 };
 const invalid = (code, message) => ({ ok: false, error: { code, message } });
+
+export class CustomGameRootError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = 'CustomGameRootError';
+    this.code = code;
+  }
+}
+
+// Capture the confirmed starting position, never a live game's moving board.
+// This factory does not start a game or persist provenance/settings.
+export function createCustomGameRoot(position, configuration, {
+  savedPositionId = null, sourceRecordId = null,
+} = {}) {
+  const validation = validateCustomPlayPosition(position);
+  if (!validation.ok) throw new CustomGameRootError(validation.error.code, validation.error.message);
+  let settings;
+  try {
+    settings = validateContinuationConfiguration(configuration);
+  } catch {
+    throw new CustomGameRootError('INVALID_CONFIGURATION', 'Invalid custom-game settings.');
+  }
+  for (const id of [savedPositionId, sourceRecordId]) {
+    if (id !== null && (typeof id !== 'string' || !id || id.trim() !== id)) {
+      throw new CustomGameRootError('INVALID_PROVENANCE_ID', 'Provenance IDs must be canonical strings or null.');
+    }
+  }
+  const initialPosition = validation.position;
+  for (const row of initialPosition.board) {
+    for (const piece of row) if (piece) Object.freeze(piece);
+    Object.freeze(row);
+  }
+  Object.freeze(initialPosition.board);
+  return Object.freeze({
+    initialPosition: Object.freeze(initialPosition),
+    settings: Object.freeze(settings),
+    savedPositionId,
+    sourceRecordId,
+  });
+}
+
+// Each consumer gets a fresh, validated, mutable board (including its pieces).
+export function createMutableCustomGamePosition(root) {
+  const validation = validateCustomPlayPosition({
+    initialBoard: root?.initialPosition?.board,
+    sideToMove: root?.initialPosition?.sideToMove,
+  });
+  if (!validation.ok) throw new CustomGameRootError(validation.error.code, validation.error.message);
+  return validation.position;
+}
 
 // Separate from puzzle confirmation: authoring/recording keeps its existing rules.
 // Movement, check and terminal detection always come from the game engine.
