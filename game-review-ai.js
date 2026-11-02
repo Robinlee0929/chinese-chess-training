@@ -1,4 +1,4 @@
-import { RED, BLACK, legalMoves, notation } from './game.js?v=3228bf6c1d';
+import { RED, BLACK, legalMoves, notation } from './game.js?v=36ce3754cc';
 
 export const GAME_REVIEW_AI_PRESET = 'review-v1';
 export const GAME_REVIEW_AI_ERROR_MESSAGE = '暫時無法完成電腦搜尋，請再試一次。';
