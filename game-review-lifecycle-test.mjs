@@ -348,7 +348,8 @@ function harness({
     aiToken: 7,
     aiThinking: mode !== 'pvp' && turn === BLACK,
     aiMoveStart: 4321,
-    aiWorker: Object.freeze({ kind: 'normal-worker' }),
+    aiWorker: { kind: 'normal-worker', terminate() { this.terminated = true; } },
+    aiRequest: null,
     aiRequests: 0,
     aiMaybeMoveCalls: 0,
     tweens: [],
@@ -573,6 +574,7 @@ function harness({
       return context.libraryView;
     },
     refreshHUD() {},
+    syncCustomRematchUI() {},
     renderGameTeachingMode() {},
     renderGameReviewContinuation() {},
     renderGameAnalysis() {},
@@ -643,7 +645,7 @@ function harness({
     'enterGameRecordLibrary', 'showGameRecordLibrary', 'openPreparedGameReview', 'openGameReview',
     'openGameTeachingReviewHandoff',
     'openLastCompletedGameReview', 'openStoredGameReview', 'navigateGameReview',
-    'deleteGameRecordFromLibrary', 'exitGameReview', 'exitGameRecordFlow',
+    'deleteGameRecordFromLibrary', 'exitGameReview', 'exitGameRecordFlow', 'invalidateNormalAI',
     'enterGameAnalysis', 'returnToGameReview',
     'createPuzzleFromGameReview', 'exitEditor', 'discardPuzzleEditor', 'cancelCustomPositionPlay',
   ];

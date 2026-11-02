@@ -1,5 +1,5 @@
-import { RED, BLACK } from './game.js?v=36ce3754cc';
-import { createGameTimeline } from './game-record.js?v=36ce3754cc';
+import { RED, BLACK } from './game.js?v=533286807f';
+import { createGameTimeline } from './game-record.js?v=533286807f';
 
 const DIFFICULTIES = new Set(['easy', 'medium', 'hard']);
 
