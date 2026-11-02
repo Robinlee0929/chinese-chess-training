@@ -15,13 +15,13 @@ function functionSource(name) {
 }
 
 function install(name, values) {
-  const context = vm.createContext({ RED, BLACK, ...values });
+  const context = vm.createContext({ RED, BLACK, customRematchRequest: null, ...values });
   vm.runInContext(functionSource(name), context);
   return context;
 }
 
 function installMany(names, values) {
-  const context = vm.createContext({ RED, BLACK, ...values });
+  const context = vm.createContext({ RED, BLACK, customRematchRequest: null, ...values });
   vm.runInContext(names.map(functionSource).join('\n'), context);
   return context;
 }
@@ -115,8 +115,12 @@ test('AI scheduler no-ops for human Red opening and starts exactly once for huma
 
 test('AI failure is bounded, local and stale-token safe', () => {
   const messages = [];
-  const context = install('onAIResult', {
+  const session = {};
+  const context = installMany(['currentAIRequest', 'onAIResult'], {
     aiToken: 9,
+    aiRequest: { token: 9, session, payload: { side: BLACK, level: 'medium' } },
+    normalGameRecordSession: session, normalGameActive: () => true, isAI: () => true,
+    over: false, turn: BLACK, aiSide: () => BLACK, mode: 'medium',
     aiThinking: true,
     refreshHUD() {},
     toast(message) { messages.push(message); },
@@ -196,6 +200,11 @@ test('PSS-REV-01: the latest authoritative side owns the camera after rapid game
     initialBoard: () => [['fresh']],
     hashBoard: () => 'fresh-position',
     invalidateTeachingModeFeedback() {},
+    invalidateNormalAI() { context.aiToken++; context.aiThinking = false; },
+    clearTimeout() {}, gameOverTimer: null, customRematchUnlockTimer: null,
+    customRematchLock: null, customGameContext: null,
+    document: { getElementById: () => ({ close() {} }) },
+    showBanner() {}, clearSelection() {},
     beginNormalGameRecordSession() {},
     stopConfetti() {},
     overlay: { classList: { add() {} } },

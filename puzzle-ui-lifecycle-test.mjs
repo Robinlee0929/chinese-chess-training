@@ -17,7 +17,7 @@ import { createGameRecord, validateGameRecord } from './game-record.js';
 import { GameRecordStoreError, createGameRecordStore } from './game-record-store.js';
 import { createGameReview, selectGameReviewPly } from './game-review.js';
 import * as continuation from './game-review-continuation.js';
-import { validateCustomPlayPosition } from './custom-position-play.js';
+import { validateCustomPlayPosition, createCustomGameRoot, createMutableCustomGamePosition } from './custom-position-play.js';
 import {
   createGameReviewAiState,
   beginGameReviewAiRequest,
@@ -141,7 +141,7 @@ function harness(options = {}) {
     remove(mesh) { this.children = this.children.filter((entry) => entry !== mesh); mesh.parent = null; } };
   const context = vm.createContext({
     ...game, ...editor, ...recorder, ...practice, ...review, ...photo, ...pieceTypes, ...transfer, ...analytics,
-    ...continuation, validateCustomPlayPosition,
+    ...continuation, validateCustomPlayPosition, createCustomGameRoot, createMutableCustomGamePosition,
     PuzzleStoreError,
     createGameRecord: (record) => createGameRecord(structuredClone(record)),
     validateGameRecord,
@@ -154,10 +154,18 @@ function harness(options = {}) {
     busy: false, over: false, winner: null, aiToken: 0, aiThinking: false, undoCount: 0,
     mode: options.mode ?? 'pvp', humanSide: game.RED, normalGameRecordSession: null,
     completedGameRecordSessionId: null, lastCompletedGameRecord: null,
+    customGameContext: null, customRematchRequest: null, customRematchLock: null,
+    customRematchUnlockTimer: null, gameOverTimer: null, aiRequest: null,
     gameRecordStore, gameRecordStorage, gameRecordNow, gameRecordIdFactory,
     aiSide: () => context.humanSide === game.RED ? game.BLACK : game.RED,
     aiMoveStart: 0, aiRequestCount: 0, aiMaybeMoveCalls: 0,
-    aiWorker: { postMessage: () => { context.aiRequestCount++; } }, aiModule: null,
+    aiWorker: null, aiModule: null, aiWorkers: [],
+    aiPostMessage: () => { context.aiRequestCount++; },
+    Worker: class {
+      constructor() { context.aiWorkers.push(this); }
+      postMessage(payload) { context.aiPostMessage(payload); }
+      terminate() { this.terminated = true; }
+    },
     confirmedPosition: null, customPlaySource: null,
     practiceToken: 0, appState: 'NORMAL_GAME', editorState: null, recorderState: null,
     gameReviewSession: null, gameReviewPuzzleReturnContext: null, reviewAiInvalidations: 0,
@@ -230,6 +238,9 @@ function harness(options = {}) {
     window: { confirm: () => false },
     performance: { now: () => context.clock },
     setTimeout: (callback) => context.timers.push(callback),
+    // Retain queued callbacks deliberately: the tests also exercise guards when a
+    // browser callback has already been queued and clearTimeout cannot remove it.
+    clearTimeout: noop,
     showGameOver: (endReason) => context.shownResults.push(endReason),
     puzzleFlowActive: () => ['PUZZLE_EDITOR', 'PUZZLE_CONFIRMED', 'PUZZLE_RECORDING',
       'PUZZLE_RECORDED', 'PUZZLE_PRACTICING', 'PUZZLE_PRACTICE_COMPLETE',
@@ -239,8 +250,10 @@ function harness(options = {}) {
     authoringActive: () => ['PUZZLE_EDITOR', 'PUZZLE_CONFIRMED'].includes(context.appState),
     libraryActive: () => ['PUZZLE_LIBRARY', 'PUZZLE_VIEW'].includes(context.appState),
     practiceActive: () => ['PUZZLE_PRACTICING', 'PUZZLE_PRACTICE_COMPLETE'].includes(context.appState),
-    URL: { revokeObjectURL: (url) => context.revoked.push(url),
-      createObjectURL: () => { const url = `blob:new-${context.createdUrls.length}`; context.createdUrls.push(url); return url; } },
+    URL: class extends URL {
+      static revokeObjectURL(url) { context.revoked.push(url); }
+      static createObjectURL() { const url = `blob:new-${context.createdUrls.length}`; context.createdUrls.push(url); return url; }
+    },
     Date,
     to3D: (r, c) => vector(c - 4, 0, 4.5 - r),
   });
@@ -281,7 +294,9 @@ function harness(options = {}) {
     'finishGameReviewCoachFailure', 'handleGameReviewCoachResponse', 'requestGameReviewCoach',
     'tween', 'stepTweens', 'pieceAt', 'releasePieceMesh', 'rebuildPieceMeshes', 'buildScene',
     'checkBoardMeshInvariant', 'syncEditorScene', 'syncRecorderScene', 'syncPracticeScene',
-    'requestAIMove', 'maybeAIMove',
+    'requestAIMove', 'maybeAIMove', 'invalidateNormalAI', 'currentAIRequest', 'startAIFallback',
+    'customRematchAvailable', 'syncCustomRematchUI', 'requestCustomRematch',
+    'cancelCustomRematch', 'confirmCustomRematch', 'performCustomRematch',
     'animateCapture', 'doMove', 'finishMove', 'cloneNormalGameRecordBoard',
     'beginNormalGameRecordSession', 'normalGameRecordTerminationReason',
     'finalizeNormalGameRecord', 'normalUndoAvailable', 'undoPly', 'undo', 'newGame', 'resetTo',
@@ -327,7 +342,7 @@ function harness(options = {}) {
         "    renderGameReview();\n    gameReviewCoachLeadIn.textContent = '可以一起看看這個地方。';");
       assert.notEqual(candidate, before, 'R4 coach resurrection mutation applied');
     }
-    return candidate;
+    return candidate.replaceAll('import.meta.url', JSON.stringify(new URL('./main.js', import.meta.url).href));
   });
   vm.runInContext(lifecycleSources.join('\n'), context);
   context.renderGameReview = () => context.renderGameReviewTeaching(context.gameReviewEvidenceState);
@@ -522,7 +537,7 @@ function installContinuationNavigation(ctx) {
     'openGameReview', 'openStoredGameReview', 'navigateGameReview',
   ].map(functionSource).join('\n'), ctx);
   const requests = [];
-  ctx.aiWorker.postMessage = payload => {
+  ctx.aiPostMessage = payload => {
     ctx.aiRequestCount++;
     requests.push(structuredClone(payload));
   };
@@ -2168,15 +2183,17 @@ test('native review-reset cancellation preserves state; confirmation clears deci
 
 test('late AI results and delayed AI moves cannot enter a puzzle or later game', () => {
   for (const transition of ['enterEditor', 'newGame']) {
-    const ctx = harness();
+    const ctx = harness({ mode: 'medium' });
     ctx.rebuildPieceMeshes(ctx.board);
     ctx.turn = 'black';
-    ctx.aiToken = 7; ctx.aiThinking = true;
+    ctx.isAI = () => true;
+    ctx.maybeAIMove();
+    const oldToken = ctx.aiToken;
     const result = { from: { r: 6, c: 0 }, to: { r: 5, c: 0 } };
-    ctx.onAIResult({ token: 7, result });
+    ctx.onAIResult({ token: oldToken, result });
     ctx[transition]();
     ctx.flushTimers(); ctx.flushAnimations();
-    ctx.onAIResult({ token: 7, result });
+    ctx.onAIResult({ token: oldToken, result });
     assert.equal(ctx.history.length, 0);
     assert.equal(ctx.timers.length, 0);
     assert.equal(ctx.aiThinking, false);
@@ -2780,4 +2797,206 @@ test('T15: a legal custom checkmate saves once and replays from the custom root'
   same(saved.initialPosition.board, board);
   same(createGameReview(saved).snapshot.board, ctx.board);
   ctx.finalizeNormalGameRecord('將死'); assert.equal(ctx.gameRecordStorage.writes, 1);
+});
+
+function rematchMateFixture() {
+  const board = editor.createEmptyEditorBoard();
+  board[0][3] = { type: 'K', side: game.RED };
+  board[9][4] = { type: 'K', side: game.BLACK };
+  board[8][8] = { type: 'R', side: game.RED };
+  board[7][0] = { type: 'R', side: game.RED };
+  return { board, move: { from: { r: 7, c: 0 }, to: { r: 9, c: 0 } } };
+}
+
+for (const humanSide of [game.RED, game.BLACK]) for (const sideToMove of [game.RED, game.BLACK]) {
+  for (const difficulty of ['easy', 'medium', 'hard']) {
+    test(`Phase C: rematch restores 90 cells, settings, session and one AI opening: ${humanSide}/${sideToMove}/${difficulty}`, () => {
+      const board = game.initialBoard(); board[3][0] = null;
+      const ctx = customPlayHarness({ board, sideToMove });
+      startCustom(ctx, humanSide, difficulty);
+      const root = ctx.customGameContext.root;
+      assert.ok(Object.isFrozen(root.initialPosition.board[0][0]));
+      if (sideToMove !== humanSide) aiReply(ctx);
+      const move = firstMove(ctx);
+      ctx.doMove(move.from, move.to); ctx.flushAnimations(); aiReply(ctx);
+      assert.notDeepEqual(structuredClone(ctx.board), board);
+      const oldSession = ctx.normalGameRecordSession;
+      const requests = ctx.aiRequestCount;
+      ctx.undoCount = 3;
+      assert.equal(ctx.requestCustomRematch(), true);
+      assert.equal(ctx.focusedControl, 'btnCustomRematchCancel');
+      assert.equal(ctx.confirmCustomRematch(), true);
+      same(ctx.board, board); same(root.initialPosition.board, board);
+      assert.equal(ctx.turn, sideToMove);
+      assert.equal(ctx.humanSide, humanSide); assert.equal(ctx.mode, difficulty);
+      assert.equal(ctx.customGameContext.root, root);
+      assert.equal(ctx.customGameContext.session, ctx.normalGameRecordSession);
+      assert.notEqual(ctx.normalGameRecordSession.id, oldSession.id);
+      assert.equal(ctx.history.length, 0);
+      same(ctx.capturedBy, { red: [], black: [] });
+      assert.equal(ctx.repHistory.length, 1); assert.equal(ctx.posHistory.length, 1);
+      assert.equal(ctx.undoCount, 0); assert.equal(ctx.normalUndoAvailable(), false);
+      assert.equal(ctx.selected, null); assert.equal(ctx.over, false);
+      assert.equal(ctx.aiRequestCount, requests + Number(humanSide !== sideToMove));
+      ctx.maybeAIMove();
+      assert.equal(ctx.aiRequestCount, requests + Number(humanSide !== sideToMove));
+      assert.notEqual(ctx.board, root.initialPosition.board);
+      assert.notEqual(ctx.board[0], root.initialPosition.board[0]);
+      invariant(ctx, board);
+      ctx.flushTimers();
+      if (humanSide !== sideToMove) { aiReply(ctx); assert.equal(ctx.normalUndoAvailable(), false); }
+    });
+  }
+}
+
+test('Phase C: capture is restored in both board and Mesh; undo stops at rematched root', () => {
+  const board = editor.createEmptyEditorBoard();
+  board[0][3] = { type: 'K', side: game.RED }; board[9][4] = { type: 'K', side: game.BLACK };
+  board[4][0] = { type: 'R', side: game.RED }; board[4][2] = { type: 'P', side: game.BLACK };
+  const ctx = customPlayHarness({ board, sideToMove: game.RED }); startCustom(ctx);
+  ctx.doMove({ r: 4, c: 0 }, { r: 4, c: 2 }); ctx.flushAnimations();
+  assert.equal(ctx.capturedBy.red.length, 1);
+  assert.equal(ctx.requestCustomRematch(), true); assert.equal(ctx.confirmCustomRematch(), true);
+  same(ctx.board, board); invariant(ctx, board);
+  assert.equal(ctx.capturedBy.red.length, 0); ctx.undo(); same(ctx.board, board);
+});
+
+test('Phase C: cancel during AI thinking terminates old worker, preserves session/history and resumes once', () => {
+  const ctx = customPlayHarness({ sideToMove: game.RED }); startCustom(ctx, game.BLACK);
+  const oldWorker = ctx.aiWorker; const lateMessage = oldWorker.onmessage; const lateError = oldWorker.onerror;
+  const payload = { token: ctx.aiToken, result: firstMove(ctx) };
+  const session = ctx.normalGameRecordSession;
+  const before = JSON.stringify([ctx.board, ctx.history, ctx.repHistory, ctx.capturedBy]);
+  assert.equal(ctx.requestCustomRematch(), true); assert.equal(oldWorker.terminated, true);
+  ctx.maybeAIMove(); assert.equal(ctx.aiRequestCount, 1);
+  ctx.cancelCustomRematch(); ctx.cancelCustomRematch();
+  assert.equal(ctx.aiRequestCount, 2); assert.equal(ctx.normalGameRecordSession, session);
+  assert.equal(ctx.focusedControl, 'btnCustomRematch');
+  assert.equal(JSON.stringify([ctx.board, ctx.history, ctx.repHistory, ctx.capturedBy]), before);
+  lateMessage({ data: payload }); lateError(); ctx.flushTimers();
+  assert.equal(ctx.history.length, 0); assert.equal(ctx.aiRequestCount, 2);
+  aiReply(ctx); assert.equal(ctx.history.length, 1); assert.equal(ctx.turn, game.BLACK);
+  invariant(ctx, ctx.board);
+});
+
+test('Phase C: pending confirmation is consumed once; stale confirmation cannot replace a standard game', () => {
+  const ctx = customPlayHarness(); startCustom(ctx);
+  ctx.requestCustomRematch();
+  assert.equal(ctx.requestCustomRematch(), false);
+  ctx.confirmCustomRematch();
+  const session = ctx.normalGameRecordSession;
+  assert.equal(ctx.confirmCustomRematch(), false);
+  assert.equal(ctx.requestCustomRematch(), false);
+  assert.equal(ctx.normalGameRecordSession, session);
+  ctx.flushTimers(); ctx.requestCustomRematch(); ctx.newGame();
+  const standard = ctx.normalGameRecordSession;
+  assert.equal(ctx.confirmCustomRematch(), false); assert.equal(ctx.customGameContext, null);
+  assert.equal(ctx.normalGameRecordSession, standard); same(ctx.board, game.initialBoard());
+});
+
+test('Phase C: terminal rematch keeps completed/source records byte-identical and creates a fresh session', () => {
+  const { board, move } = rematchMateFixture();
+  const record = createGameRecord({ schemaVersion: 1, id: 'phase-c-protected-source',
+    createdAt: '2026-11-01T00:00:00.000Z', completedAt: '2026-11-01T00:01:00.000Z',
+    initialPosition: { board, sideToMove: game.RED }, moves: [move], mode: 'medium',
+    result: { winner: game.RED, terminationReason: 'checkmate' } });
+  const ctx = customPlayHarness(); ctx.gameRecordStore.saveGameRecord(record);
+  ctx.appState = 'GAME_REVIEW'; ctx.gameReviewSession = selectGameReviewPly(createGameReview(record), 0);
+  assert.equal(ctx.createPuzzleFromGameReview(), true);
+  startCustom(ctx, game.RED, 'hard');
+  assert.equal(ctx.customGameContext.root.sourceRecordId, record.id);
+  ctx.doMove(move.from, move.to); ctx.flushAnimations(); ctx.flushTimers();
+  assert.equal(ctx.over, true);
+  const completed = ctx.lastCompletedGameRecord;
+  const stored = ctx.gameRecordStorage.serialized; const writes = ctx.gameRecordStorage.writes;
+  assert.equal(ctx.requestCustomRematch(), true, 'terminal game skips the confirmation');
+  assert.equal(ctx.document.getElementById('customRematchDialog').open, false);
+  assert.notEqual(ctx.normalGameRecordSession.id, completed.id);
+  assert.equal(ctx.normalGameRecordSession.sourceRecordId, record.id);
+  assert.equal(ctx.lastCompletedGameRecord, completed);
+  assert.equal(ctx.gameRecordStorage.serialized, stored); assert.equal(ctx.gameRecordStorage.writes, writes);
+  same(ctx.gameRecordStore.getGameRecord(record.id), record);
+  same(ctx.gameRecordStore.getGameRecord(completed.id), completed);
+  same(ctx.board, board); invariant(ctx, board);
+});
+
+test('Phase C: temporary editor, puzzle library and Review visits preserve the exact root/session', () => {
+  const ctx = customPlayHarness(); startCustom(ctx);
+  const owned = ctx.customGameContext;
+  ctx.enterEditor(); assert.equal(ctx.customRematchAvailable(), false); ctx.exitEditor();
+  assert.equal(ctx.customGameContext, owned); assert.equal(ctx.customRematchAvailable(), true);
+  ctx.enterLibrary(); ctx.exitEditor();
+  assert.equal(ctx.customGameContext, owned); invariant(ctx, ctx.board);
+  installContinuationNavigation(ctx);
+  vm.runInContext(['exitGameRecordFlow', 'restoreLiveGamePresentation'].map(functionSource).join('\n'), ctx);
+  ctx.gameRecordFlowActive = () => ['GAME_REVIEW', 'GAME_RECORD_LIBRARY'].includes(ctx.appState);
+  ctx.showMoveDots = noop;
+  ctx.enterGameRecordLibrary(); assert.equal(ctx.customRematchAvailable(), false); ctx.exitGameRecordFlow();
+  assert.equal(ctx.customGameContext, owned); assert.equal(ctx.customRematchAvailable(), true);
+  invariant(ctx, ctx.board);
+});
+
+test('Phase C: standard new game, side change and direct Review continuation remove rematch eligibility', () => {
+  for (const action of ['new', 'side', 'mode', 'review']) {
+    const ctx = customPlayHarness(); startCustom(ctx);
+    if (action === 'side') {
+      vm.runInContext(functionSource('changeHumanSide'), ctx); ctx.changeHumanSide(game.RED);
+    } else if (action === 'mode') { ctx.mode = 'pvp'; ctx.newGame(); }
+    else if (action === 'review') {
+      const r = r4TurnDivergenceReviewFixture(); ctx.appState = 'GAME_REVIEW';
+      ctx.gameReviewSession = r; ctx.gameReviewContinuationSource = r;
+      ctx.startNormalGameFromReview(r, { humanSide: game.BLACK, difficulty: 'easy' });
+    } else ctx.newGame();
+    assert.equal(ctx.customGameContext, null, action); assert.equal(ctx.customRematchAvailable(), false, action);
+  }
+});
+
+test('Phase C: UI is hidden outside its session; animation blocks reset with visible status', () => {
+  const ctx = customPlayHarness(); startCustom(ctx);
+  const button = ctx.document.getElementById('btnCustomRematch');
+  ctx.syncCustomRematchUI(); assert.equal(button.classList.contains('hidden'), false);
+  const session = ctx.normalGameRecordSession;
+  const move = firstMove(ctx); ctx.doMove(move.from, move.to);
+  ctx.syncCustomRematchUI(); assert.equal(button.disabled, true); assert.match(button.textContent, /動畫/);
+  assert.equal(ctx.requestCustomRematch(), false); assert.equal(ctx.normalGameRecordSession, session);
+  ctx.flushAnimations(); ctx.syncCustomRematchUI(); assert.equal(button.disabled, false);
+  ctx.newGame(); ctx.syncCustomRematchUI(); assert.equal(button.classList.contains('hidden'), true);
+  invariant(ctx, ctx.board);
+});
+
+function assertOriginalRootRestored(ctx, original) {
+  ctx.requestCustomRematch(); ctx.confirmCustomRematch();
+  same(ctx.board, original);
+}
+test('Phase C negative control: using current played board instead of root fails the 90-cell assertion', () => {
+  for (const mutate of [false, true]) {
+    const ctx = customPlayHarness(); startCustom(ctx);
+    const original = structuredClone(ctx.board); const move = firstMove(ctx);
+    ctx.doMove(move.from, move.to); ctx.flushAnimations();
+    if (mutate) {
+      const before = functionSource('performCustomRematch');
+      const after = before.replace('createMutableCustomGamePosition(root)', '({ board: structuredClone(board), sideToMove: turn })');
+      assert.notEqual(before, after); ctx.structuredClone = structuredClone;
+      vm.runInContext(after, ctx);
+      assert.throws(() => assertOriginalRootRestored(ctx, original), { code: 'ERR_ASSERTION' });
+    } else assertOriginalRootRestored(ctx, original);
+  }
+});
+
+test('Phase C negative control: removing duplicate transition guard creates a second session', () => {
+  for (const mutate of [false, true]) {
+    const ctx = customPlayHarness(); startCustom(ctx);
+    if (mutate) {
+      const before = functionSource('performCustomRematch');
+      const after = before.replace(' || customRematchLock) return false;', ') return false;');
+      assert.notEqual(before, after); vm.runInContext(after, ctx);
+    }
+    const assertion = () => {
+      ctx.performCustomRematch(ctx.customGameContext);
+      const session = ctx.normalGameRecordSession;
+      ctx.performCustomRematch(ctx.customGameContext);
+      assert.equal(ctx.normalGameRecordSession, session);
+    };
+    if (mutate) assert.throws(assertion, { code: 'ERR_ASSERTION' }); else assertion();
+  }
 });
