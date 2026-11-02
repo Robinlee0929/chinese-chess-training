@@ -1,6 +1,6 @@
-import { hashBoard } from './game.js?v=3c2f1dcfa8';
-import { validateCustomPlayPosition } from './custom-position-play.js?v=3c2f1dcfa8';
-import { validateContinuationConfiguration } from './game-review-continuation.js?v=3c2f1dcfa8';
+import { hashBoard } from './game.js?v=029a7ace40';
+import { validateCustomPlayPosition } from './custom-position-play.js?v=029a7ace40';
+import { validateContinuationConfiguration } from './game-review-continuation.js?v=029a7ace40';
 
 export const CUSTOM_POSITION_STORAGE_KEY = 'chinese-chess-training:custom-positions:v1';
 export const CUSTOM_POSITION_STORAGE_VERSION = 1;
@@ -310,4 +310,38 @@ function freezeDeep(value) {
 
 function fail(code, message, details) {
   throw new CustomPositionStoreError(code, message, details);
+}
+
+// Data-only entry points for transactional adapters. No browser storage is read
+// here; the private string adapter reuses the existing mutation rules verbatim.
+export function validateCustomPositionEnvelope(input) {
+  requireFields(input, ['version', 'revision', 'positions']);
+  if (input.version !== 1) fail('UNSUPPORTED_VERSION', 'Unsupported custom position version.');
+  requireRevision(input.revision, 'INVALID_REVISION');
+  if (!Array.isArray(input.positions)) fail('INVALID_POSITIONS', 'Positions must be an array.');
+  if (input.positions.length > CUSTOM_POSITION_LIMIT) fail('POSITION_LIMIT', 'Stored position limit exceeded.');
+  const positions = input.positions.map(canonicalRecord);
+  if (new Set(positions.map(p => p.id)).size !== positions.length) fail('DUPLICATE_ID', 'Duplicate saved position ID.');
+  const envelope = { version: 1, revision: input.revision, positions };
+  requireSize(JSON.stringify(envelope));
+  return freezeDeep(envelope);
+}
+
+export function applyCustomPositionOperation(envelope, command, options = {}) {
+  const shapes = { save: ['type', 'position'], rename: ['type', 'id', 'title'],
+    preferences: ['type', 'id', 'preferences'], delete: ['type', 'id'] };
+  const descriptor = command && Object.getOwnPropertyDescriptor(command, 'type');
+  const type = descriptor && Object.hasOwn(descriptor, 'value') ? descriptor.value : null;
+  if (!Object.hasOwn(shapes, type)) fail('INVALID_OPERATION', 'Unknown custom position operation.');
+  requireFields(command, shapes[type]);
+  let serialized = JSON.stringify(validateCustomPositionEnvelope(envelope));
+  const store = createCustomPositionStore({ ...options, storage: {
+    getItem: () => serialized, setItem: (_key, value) => { serialized = value; },
+  } });
+  const revision = { expectedRevision: envelope.revision };
+  const result = type === 'save' ? store.savePosition(command.position, revision)
+    : type === 'rename' ? store.renamePosition(command.id, command.title, revision)
+      : type === 'preferences' ? store.updatePlayPreferences(command.id, command.preferences, revision)
+        : store.deletePosition(command.id, revision);
+  return freezeDeep({ envelope: validateCustomPositionEnvelope(JSON.parse(serialized)), result });
 }

@@ -7,7 +7,7 @@ import {
   applyMove,
   inCheck,
   hasAnyLegalMove,
-} from './game.js?v=3c2f1dcfa8';
+} from './game.js?v=029a7ace40';
 
 const SIDES = new Set([RED, BLACK]);
 const PIECE_TYPES = new Set(['K', 'A', 'B', 'N', 'R', 'C', 'P']);
