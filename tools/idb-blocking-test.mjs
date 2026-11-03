@@ -1,10 +1,23 @@
 import assert from 'node:assert/strict';
 import { launch, deadline } from './idb-browser-harness.mjs';
-import { capacityFixture, capacityBoard } from './idb-capacity-fixture.mjs';
+import { capacityFixture as originalFixture, capacityBoard } from './idb-capacity-fixture.mjs';
+import { createHash } from 'node:crypto';
 import { applyCustomPositionOperation } from '../custom-position-store.js';
 
 const profiling = process.env.IDB_PROFILE === '1';
-const h = await launch(profiling ? 'blocking-profile' : 'blocking-regression', { persistentContexts: true });
+const migrated = process.env.IDB_MIGRATED_DATA === '1';
+function capacityFixture(count, wide) {
+  const fixture=originalFixture(count,wide);
+  if(migrated){
+    const candidateJSON=JSON.stringify(fixture.metadata.baseEnvelope),sourceFingerprint=createHash('sha256').update(candidateJSON).digest('hex');
+    fixture.metadata.migration={version:1,state:'ACTIVE',migrationId:'legacy-v1:'+sourceFingerprint,sourceFingerprint,
+      sourceRevision:2,initialRevision:2,stagedOperationId:'33333333-3333-4333-8333-333333333333',
+      activatedOperationId:'44444444-4444-4444-8444-444444444444',stagedAt:'2026-11-02T00:00:00.000Z',
+      activatedAt:'2026-11-02T00:00:00.000Z',candidateJSON};
+  }
+  return fixture;
+}
+const h = await launch(profiling ? 'blocking-profile' : migrated ? 'blocking-migrated-regression' : 'blocking-regression', { persistentContexts: true });
 const results = [];
 const read = async tab => {
   const result = await h.evaluate(tab, 'poc.read()', true);
@@ -186,7 +199,7 @@ try {
       await h.dispose({ a, b });
     }
   }
-  await h.save('summary', { profiling, results, maxMs: Math.max(...results.map(r => r.totalMs ?? 0)), failures: results.filter(r => r.result === 'FAIL') });
+  await h.save('summary', { profiling, migrated, results, maxMs: Math.max(...results.map(r => r.totalMs ?? 0)), failures: results.filter(r => r.result === 'FAIL') });
   assert.equal(results.filter(r => r.result === 'FAIL').length, 0, 'Every required sample must satisfy 2000 ms');
 } catch (error) {
   await h.save('failure', { message: error.message, stack: error.stack, results }); throw error;

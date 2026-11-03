@@ -1,4 +1,5 @@
 import {variantSource} from './idb-test-variants.mjs';
+import {migrationVariant} from './idb-migration-variants.mjs';
 import { spawn, execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { readFile, writeFile, mkdtemp, rm, realpath, mkdir } from 'node:fs/promises';
@@ -18,7 +19,10 @@ export function fingerprint() {
   const contents = files.map(file => ({ file, sha256: createHash('sha256').update(readFileSync(path.join(repo, file))).digest('hex') }));
   return { head: git(['rev-parse','HEAD']), branch: git(['branch','--show-current']), status: git(['status','--porcelain=v1']), files: contents, fingerprint: createHash('sha256').update(JSON.stringify(contents)).digest('hex') };
 }
-export async function launch(label, {persistentContexts = false,pocSource='poc.js',bfcache=true} = {}) {
+export async function launch(label, {persistentContexts = false,pocSource='poc.js',bfcache=true,fixture='idb-browser-fixture.js',migrationMutation='',sourceRoot=repo,adapterRevision=null} = {}) {
+  assert.match(fixture,/^[a-z0-9-]+\.js$/);
+  if(adapterRevision!==null)assert.match(adapterRevision,/^[0-9a-f]{40}$/);
+  const adapterText=adapterRevision===null?null:execFileSync('git',['show',adapterRevision+':custom-position-idb.js'],{cwd:repo,encoding:'utf8'});
   await mkdir(path.resolve(process.env.IDB_EVIDENCE_DIR || path.join(repo,'test-results/idb')),{recursive:true});
   let evidence = path.join(process.env.IDB_EVIDENCE_DIR || path.join(repo,'test-results/idb'), label);
   try { await mkdir(evidence, { recursive: false }); }
@@ -30,9 +34,10 @@ export async function launch(label, {persistentContexts = false,pocSource='poc.j
     const pathname = new URL(req.url,'http://localhost').pathname;
     if(pathname==='/journal'&&req.method==='POST'){let body='';for await(const chunk of req)body+=chunk;try{const entry={externalTime:new Date().toISOString(),externalPerf:performance.now(),event:JSON.parse(body)};journals.push(entry);journalStream.write(JSON.stringify(entry)+'\n');for(const fn of journalListeners)fn(entry);}catch(error){journalStream.write(JSON.stringify({parseError:error.message})+'\n');}res.writeHead(204);res.end();return;}
     if (pathname === '/favicon.ico') { res.writeHead(204);res.end();return; }
-    if(pathname==='/'||['/source','/far','/destination'].includes(pathname)){res.setHeader('Content-Type','text/html');res.end(await readFile(path.join(root,'idb-browser.html')));return;}
-    const file=path.resolve(repo,'.'+pathname);if(!file.startsWith(repo+path.sep)||!file.endsWith('.js')){res.writeHead(404);res.end();return;}
-    try{let source=await readFile(file,'utf8');if(path.basename(file)==='custom-position-idb.js')source=variantSource(source,new URL(req.url,'http://localhost').searchParams.get('variant'));res.setHeader('Content-Type','text/javascript');res.end(source);}catch{res.writeHead(404);res.end();}
+    if(pathname==='/'||['/source','/far','/destination'].includes(pathname)){res.setHeader('Content-Type','text/html');res.end((await readFile(path.join(root,'idb-browser.html'),'utf8')).replace('/tools/idb-browser-fixture.js','/tools/'+fixture));return;}
+    const sourceBase=pathname.startsWith('/tools/')?repo:path.resolve(sourceRoot);
+    const file=path.resolve(sourceBase,'.'+pathname);if(!file.startsWith(sourceBase+path.sep)||!file.endsWith('.js')){res.writeHead(404);res.end();return;}
+    try{let source=path.basename(file)==='custom-position-idb.js'&&adapterText!==null?adapterText:await readFile(file,'utf8');if(path.basename(file)==='custom-position-idb.js')source=variantSource(source,new URL(req.url,'http://localhost').searchParams.get('variant'));source=migrationVariant(source,migrationMutation,path.basename(file));res.setHeader('Content-Type','text/javascript');res.end(source);}catch{res.writeHead(404);res.end();}
   });
   await new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
   const origin = 'http://127.0.0.1:' + server.address().port;
@@ -87,7 +92,7 @@ export async function launch(label, {persistentContexts = false,pocSource='poc.j
   }
   async function resume(tab) { await send('Page.setWebLifecycleState',{state:'active'},tab.sessionId);return evaluate(tab,'poc.inspect()'); }
   const version=await send('Browser.getVersion');
-  await writeFile(path.join(evidence,'environment.json'),JSON.stringify({chrome:version,origin,profile,headless:true,bfcacheRequested:bfcache,chromeArgs,storageContext:persistentContexts?'isolated profile default context (disk-backed)':'Target.createBrowserContext per case (off-the-record)',control:'Raw external Chrome CDP; no Playwright focus emulation',database:'chinese-chess-training:custom-positions',databaseVersion:1,store:'state',keys:['envelope','metadata']},null,2));
+  await writeFile(path.join(evidence,'environment.json'),JSON.stringify({chrome:version,origin,profile,sourceRoot:path.resolve(sourceRoot),adapterRevision,headless:true,bfcacheRequested:bfcache,chromeArgs,storageContext:persistentContexts?'isolated profile default context (disk-backed)':'Target.createBrowserContext per case (off-the-record)',control:'Raw external Chrome CDP; no Playwright focus emulation',database:'chinese-chess-training:custom-positions',databaseVersion:1,store:'state',keys:['envelope','metadata']},null,2));
   async function save(name,value) {await writeFile(path.join(evidence,name+'.json'),JSON.stringify(value,null,2));}
   async function dispose(pair) {
     if(pair.context)return send('Target.disposeBrowserContext',{browserContextId:pair.context});

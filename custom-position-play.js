@@ -1,6 +1,6 @@
-import { RED, BLACK, name, kingPos, kingsFacing, inCheck, hasAnyLegalMove } from './game.js?v=0bcf8ccbd6';
-import { createEditorState, PuzzleEditorError } from './puzzle-editor.js?v=0bcf8ccbd6';
-import { validateContinuationConfiguration } from './game-review-continuation.js?v=0bcf8ccbd6';
+import { RED, BLACK, name, kingPos, kingsFacing, inCheck, hasAnyLegalMove } from './game.js?v=1eae6523bb';
+import { createEditorState, PuzzleEditorError } from './puzzle-editor.js?v=1eae6523bb';
+import { validateContinuationConfiguration } from './game-review-continuation.js?v=1eae6523bb';
 
 const LIMITS = { K: 1, A: 2, B: 2, N: 2, R: 2, C: 2, P: 5 };
 const invalid = (code, message) => ({ ok: false, error: { code, message } });

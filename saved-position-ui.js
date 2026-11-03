@@ -1,5 +1,5 @@
-import { createSavedPositionSession } from './saved-position-session.js?v=0bcf8ccbd6';
-import { customPositionErrorMessage } from './custom-position-coordinator.js?v=0bcf8ccbd6';
+import { createSavedPositionSession } from './saved-position-session.js?v=1eae6523bb';
+import { customPositionErrorMessage } from './custom-position-coordinator.js?v=1eae6523bb';
 
 export function createSavedPositionUI({ document, window, coordinator, host }) {
   const el = id => document.getElementById(id);

@@ -1,4 +1,5 @@
-import { validateCustomPositionEnvelope, applyCustomPositionOperation } from './custom-position-store.js?v=0bcf8ccbd6';
+import { validateCustomPositionEnvelope, applyCustomPositionOperation } from './custom-position-store.js?v=1eae6523bb';
+import { validateMigrationState, applyMigrationTransition, observeMigration } from './custom-position-migration-state.js?v=1eae6523bb';
 
 export const CUSTOM_POSITION_DATABASE = 'chinese-chess-training:custom-positions';
 export const CUSTOM_POSITION_DATABASE_VERSION = 1;
@@ -85,7 +86,8 @@ function validateReceipt(replay, receipt, storageInstanceId) {
 
 export function validateCustomPositionIDBState(rawEnvelope, rawMetadata) {
   const envelope = validateCustomPositionEnvelope(data(rawEnvelope)), metadata = data(rawMetadata);
-  fields(metadata, ['version', 'storageInstanceId', 'baseEnvelope', 'committedOperationIds', 'commits', 'lastCommit']);
+  fields(metadata, ['version', 'storageInstanceId', 'baseEnvelope', 'committedOperationIds', 'commits', 'lastCommit',
+    ...(Object.hasOwn(metadata, 'migration') ? ['migration'] : [])]);
   if (metadata.version !== 1) fail('UNSUPPORTED_METADATA_VERSION'); uuid(metadata.storageInstanceId);
   const base = validateCustomPositionEnvelope(metadata.baseEnvelope);
   if (!Array.isArray(metadata.commits) || !Array.isArray(metadata.committedOperationIds)
@@ -101,6 +103,7 @@ export function validateCustomPositionIDBState(rawEnvelope, rawMetadata) {
   const last = metadata.commits.at(-1);
   const expectedLast = last ? { operationId: last.operation.operationId, revision: last.revision, committedAt: last.committedAt } : null;
   if (exact(expectedLast) !== exact(metadata.lastCommit)) fail('INVALID_WITNESS');
+  if (Object.hasOwn(metadata, 'migration')) validateMigrationState(envelope, metadata);
   const state = freeze({ envelope, metadata });
   validatedStates.add(state); return state;
 }
@@ -157,10 +160,16 @@ export function observeCustomPositionOperation(state, rawToken) {
  * a receipt. Legacy Store no-op semantics and its public API are unchanged.
  * Operation IDs bind instance + expected revision + nonce, so an evicted ID
  * cannot be reused at a new revision. UNKNOWN is never automatically retried.
+ * Stage 2 uses initializeEmpty:false: absent keys remain absent (snapshot:null),
+ * and CRUD requires ACTIVE migration metadata. The legacy default is retained
+ * only for the standalone Stage 1 contract, not for the Stage 2 facade.
+ * prepareMigration()/verifyMigrationOutcome() share this transaction/lifecycle
+ * runner; localStorage confirmation belongs to createCustomPositionMigration.
  */
 export function createCustomPositionIDB({ indexedDB = () => globalThis.indexedDB,
-  randomUUID = () => globalThis.crypto.randomUUID(), now = () => new Date().toISOString(), durability = 'default' } = {}) {
+  randomUUID = () => globalThis.crypto.randomUUID(), now = () => new Date().toISOString(), durability = 'default', initializeEmpty = true } = {}) {
   if (!['default', 'strict'].includes(durability)) fail('INVALID_DURABILITY');
+  if (typeof initializeEmpty !== 'boolean') fail('INVALID_OPTIONS');
   let connection = null, opening = null, recovery = null, recoveryGeneration = null, generation = 0, accepting = true, disposed = false, unbind = null;
   const active = new Set(), prepared = new WeakMap();
   let attemptSequence = 0;
@@ -242,12 +251,20 @@ export function createCustomPositionIDB({ indexedDB = () => globalThis.indexedDB
         if (++reads !== 2) return;
         try {
           if (captured !== generation || disposed) fail('STALE_LIFECYCLE');
-          if (envelope === undefined && metadata === undefined && !token) {
+          if (envelope === undefined && metadata === undefined && !token && initializeEmpty) {
             envelope = empty(); metadata = initialMetadata(initializeId);
             store.put(envelope, 'envelope'); store.put(metadata, 'metadata');
           }
-          const state = validateCustomPositionIDBState(envelope, metadata);
-          if (token) {
+          const absent = envelope === undefined && metadata === undefined;
+          const state = absent ? null : validateCustomPositionIDBState(envelope, metadata);
+          if (token && prepared.get(token).kind === 'migration') {
+            const next = applyMigrationTransition(state, token);
+            entry.result = validateCustomPositionIDBState(next.envelope, next.metadata);
+            ({ envelope, metadata } = entry.result);
+            store.put(envelope, 'envelope'); store.put(metadata, 'metadata');
+          } else if (token) {
+            if (!state || state.metadata.migration?.state === 'STAGED'
+              || !initializeEmpty && state.metadata.migration?.state !== 'ACTIVE') fail('MIGRATION_NOT_ACTIVE');
             if (token.storageInstanceId !== state.metadata.storageInstanceId) fail('STORAGE_INSTANCE_CHANGED');
             const duplicate = state.metadata.commits.find(r => r.operation.operationId === token.operationId);
             if (duplicate) fail(exact(duplicate.operation) === exact(token) ? 'DUPLICATE_OPERATION' : 'OPERATION_ID_COLLISION');
@@ -284,11 +301,21 @@ export function createCustomPositionIDB({ indexedDB = () => globalThis.indexedDB
   function prepare(snapshot, command, { nonce = randomUUID() } = {}) {
     if (!accepting || disposed) fail('SUSPENDED');
     const state = validatedState(snapshot), copy = data(command);
+    if (state.metadata.migration?.state === 'STAGED'
+      || !initializeEmpty && state.metadata.migration?.state !== 'ACTIVE') fail('MIGRATION_NOT_ACTIVE');
     const t = tokenData({ storageInstanceId: state.metadata.storageInstanceId, expectedRevision: state.envelope.revision,
       operationId: `${state.metadata.storageInstanceId}/${state.envelope.revision}/${uuid(nonce)}`, command: copy,
       preparedAt: timestamp(now()), positionId: uuid(randomUUID()) });
     applyCustomPositionOperation(state.envelope, t.command, { now: () => t.preparedAt, idFactory: () => t.positionId });
     freeze(t); prepared.set(t, { generation, used: false, attempt: null }); return t;
+  }
+  function prepareMigration(snapshot, command, { storageInstanceId = snapshot?.metadata.storageInstanceId ?? randomUUID() } = {}) {
+    if (!accepting || disposed) fail('SUSPENDED');
+    const state = snapshot === null ? null : validatedState(snapshot);
+    const token = freeze({ operationId: uuid(randomUUID()), storageInstanceId: uuid(storageInstanceId),
+      expectedRevision: state?.envelope.revision ?? null, preparedAt: timestamp(now()), command: data(command) });
+    applyMigrationTransition(state, token);
+    prepared.set(token, { generation, used: false, attempt: null, kind: 'migration' }); return token;
   }
   async function write(token) {
     const local = prepared.get(token);
@@ -306,6 +333,13 @@ export function createCustomPositionIDB({ indexedDB = () => globalThis.indexedDB
     const readResult = await read();
     if (!readResult.ok) return freeze({ status: 'UNKNOWN', code: readResult.code, nativeEvent: nativeEventFor(token) });
     return freeze({ ...observeCustomPositionOperation(readResult.snapshot, token), nativeEvent: nativeEventFor(token) });
+  }
+  async function verifyMigrationOutcome(token) {
+    const result = await read();
+    try {
+      return freeze({ ...(result.ok ? observeMigration(result.snapshot, data(token))
+        : { status: 'UNKNOWN', code: result.code }), nativeEvent: nativeEventFor(token) });
+    } catch (error) { return freeze({ status: 'UNKNOWN', code: error.code || 'INVALID_DATA', nativeEvent: nativeEventFor(token) }); }
   }
   function resume() {
     if (disposed) return Promise.resolve(errorResult({ code: 'DISPOSED' }));
@@ -335,5 +369,5 @@ export function createCustomPositionIDB({ indexedDB = () => globalThis.indexedDB
   }
   function dispose() { suspend('dispose'); disposed = true; unbind?.(); closeConnection();
     for (const entry of active) settle(entry, { status: 'UNKNOWN', code: 'DISPOSED_BEFORE_EVENT', nativeEvent: 'UNKNOWN' }); }
-  return Object.freeze({ open: read, read, prepare, write, verifyOutcome, suspend, resume, attachLifecycle, dispose });
+  return Object.freeze({ open: read, read, prepare, write, verifyOutcome, prepareMigration, verifyMigrationOutcome, suspend, resume, attachLifecycle, dispose });
 }
