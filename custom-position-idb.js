@@ -1,4 +1,4 @@
-import { validateCustomPositionEnvelope, applyCustomPositionOperation } from './custom-position-store.js?v=029a7ace40';
+import { validateCustomPositionEnvelope, applyCustomPositionOperation } from './custom-position-store.js?v=0bcf8ccbd6';
 
 export const CUSTOM_POSITION_DATABASE = 'chinese-chess-training:custom-positions';
 export const CUSTOM_POSITION_DATABASE_VERSION = 1;
@@ -6,7 +6,17 @@ export const CUSTOM_POSITION_WITNESS_LIMIT = 128;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const empty = () => ({ version: 1, revision: 0, positions: [] });
 const fail = (code, message = code) => { throw Object.assign(new Error(message), { code }); };
-const freeze = value => { if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); } return value; };
+const deeplyFrozen = new WeakSet(), validatedStates = new WeakSet();
+const freeze = value => {
+  if (value && typeof value === 'object' && !deeplyFrozen.has(value)) {
+    Object.values(value).forEach(freeze); Object.freeze(value); deeplyFrozen.add(value);
+  }
+  return value;
+};
+// Only objects validated and deeply frozen by this module are reusable. Copies,
+// caller-frozen objects and every fresh IDB read still receive full validation.
+const validatedState = state => validatedStates.has(state) ? state
+  : validateCustomPositionIDBState(state.envelope, state.metadata);
 
 // Reject accessors/cycles/non-data before copying. Stable order is used for
 // exact intent comparison, not a lossy hash or an operation-ID collision guess.
@@ -45,15 +55,32 @@ function initialMetadata(id) {
   return { version: 1, storageInstanceId: id, baseEnvelope: empty(), committedOperationIds: [], commits: [], lastCommit: null };
 }
 function applyDelta(envelope, receipt) {
-  const next = structuredClone(envelope), d = receipt.delta;
+  // Internal only: callers supply a private positions array. Records are never
+  // mutated; they belong to the detached metadata or a validated frozen base.
+  const next = envelope, d = receipt.delta;
   fields(d, ['index', 'before', 'after']);
   if (!Number.isInteger(d.index) || d.index < 0 || d.index > next.positions.length) fail('INVALID_WITNESS');
   if (d.before !== null) {
     if (exact(next.positions[d.index] ?? null) !== exact(d.before)) fail('WITNESS_DATA_MISMATCH');
     next.positions.splice(d.index, 1);
   }
-  if (d.after !== null) next.positions.splice(d.index, 0, structuredClone(d.after));
+  if (d.after !== null) next.positions.splice(d.index, 0, d.after);
   next.revision = receipt.revision; return next;
+}
+
+function validateReceipt(replay, receipt, storageInstanceId) {
+  const r = receipt; fields(r, ['operation', 'revision', 'committedAt', 'delta']);
+  const t = tokenData(r.operation); timestamp(r.committedAt); revision(r.revision);
+  if (t.storageInstanceId !== storageInstanceId || t.expectedRevision !== replay.revision
+    || r.revision !== replay.revision + 1) fail('INVALID_WITNESS');
+  const d = r.delta; fields(d, ['index', 'before', 'after']);
+  const check = applyCustomPositionOperation({ version: 1, revision: replay.revision,
+    positions: d.before === null ? [] : [d.before] }, t.command,
+  { now: () => t.preparedAt, idFactory: () => t.positionId });
+  if (t.command.type === 'delete' && !check.result.deleted) fail('INVALID_WITNESS');
+  if (exact(check.envelope.positions) !== exact(d.after === null ? [] : [d.after])) fail('WITNESS_INTENT_MISMATCH');
+  if (d.before === null && d.index !== replay.positions.length) fail('INVALID_WITNESS');
+  applyDelta(replay, r); return t.operationId;
 }
 
 export function validateCustomPositionIDBState(rawEnvelope, rawMetadata) {
@@ -64,30 +91,42 @@ export function validateCustomPositionIDBState(rawEnvelope, rawMetadata) {
   if (!Array.isArray(metadata.commits) || !Array.isArray(metadata.committedOperationIds)
     || metadata.commits.length > CUSTOM_POSITION_WITNESS_LIMIT
     || metadata.committedOperationIds.length !== metadata.commits.length) fail('INVALID_WITNESS');
-  let replay = base; const ids = new Set();
+  const replay = { ...base, positions: [...base.positions] }, ids = new Set();
   for (let i = 0; i < metadata.commits.length; i++) {
-    const r = metadata.commits[i]; fields(r, ['operation', 'revision', 'committedAt', 'delta']);
-    const t = tokenData(r.operation); timestamp(r.committedAt); revision(r.revision);
-    if (t.storageInstanceId !== metadata.storageInstanceId || t.expectedRevision !== replay.revision
-      || r.revision !== replay.revision + 1 || ids.has(t.operationId)
-      || metadata.committedOperationIds[i] !== t.operationId) fail('INVALID_WITNESS');
-    // Validate the exact intent against its single-record before/after image.
-    // This reuses domain rules without revalidating all 100 positions 128 times.
-    const d = r.delta;
-    fields(d, ['index', 'before', 'after']);
-    const check = applyCustomPositionOperation({ version: 1, revision: replay.revision,
-      positions: d.before === null ? [] : [d.before] }, t.command,
-    { now: () => t.preparedAt, idFactory: () => t.positionId });
-    if (t.command.type === 'delete' && !check.result.deleted) fail('INVALID_WITNESS');
-    if (exact(check.envelope.positions) !== exact(d.after === null ? [] : [d.after])) fail('WITNESS_INTENT_MISMATCH');
-    if (d.before === null && d.index !== replay.positions.length) fail('INVALID_WITNESS');
-    ids.add(t.operationId); replay = applyDelta(replay, r);
+    const id = validateReceipt(replay, metadata.commits[i], metadata.storageInstanceId);
+    if (ids.has(id) || metadata.committedOperationIds[i] !== id) fail('INVALID_WITNESS');
+    ids.add(id);
   }
   if (exact(replay) !== exact(envelope)) fail('WITNESS_DATA_MISMATCH');
   const last = metadata.commits.at(-1);
   const expectedLast = last ? { operationId: last.operation.operationId, revision: last.revision, committedAt: last.committedAt } : null;
   if (exact(expectedLast) !== exact(metadata.lastCommit)) fail('INVALID_WITNESS');
-  return freeze({ envelope, metadata });
+  const state = freeze({ envelope, metadata });
+  validatedStates.add(state); return state;
+}
+
+// A private extension of the fully validated state read INSIDE this transaction.
+// The immutable prefix is reused by identity, never fetched from a revision cache.
+// The complete new envelope comes from the domain operation's full validation;
+// its only subsequent change is the checked revision increment. Reuse those
+// immutable records while verifying the new intent/delta/sequence. The old
+// prefix and its eviction base were already verified; no external metadata enters.
+function appendValidatedReceipt(previous, envelope, receipt) {
+  if (!validatedStates.has(previous)) fail('INVALID_WITNESS');
+  const replay = { ...previous.envelope, positions: [...previous.envelope.positions] };
+  const id = validateReceipt(replay, receipt, previous.metadata.storageInstanceId);
+  if (previous.metadata.committedOperationIds.includes(id)) fail('INVALID_WITNESS');
+  if (exact(replay) !== exact(envelope)) fail('WITNESS_DATA_MISMATCH');
+  const commits = [...previous.metadata.commits, receipt];
+  let baseEnvelope = previous.metadata.baseEnvelope;
+  if (commits.length > CUSTOM_POSITION_WITNESS_LIMIT) {
+    baseEnvelope = { ...baseEnvelope, positions: [...baseEnvelope.positions] };
+    applyDelta(baseEnvelope, commits.shift());
+  }
+  const metadata = { ...previous.metadata, baseEnvelope, commits,
+    committedOperationIds: commits.map(r => r.operation.operationId),
+    lastCommit: { operationId: id, revision: receipt.revision, committedAt: receipt.committedAt } };
+  const state = freeze({ envelope, metadata }); validatedStates.add(state); return state;
 }
 
 // Independent observation does not fabricate a native event. An absent witness
@@ -95,7 +134,7 @@ export function validateCustomPositionIDBState(rawEnvelope, rawMetadata) {
 export function observeCustomPositionOperation(state, rawToken) {
   const nativeEvent = 'UNKNOWN'; // Persistence alone cannot establish event delivery.
   try {
-    const t = tokenData(rawToken), s = validateCustomPositionIDBState(state.envelope, state.metadata);
+    const t = tokenData(rawToken), s = validatedState(state);
     const outcome = (status, code, receipt) => freeze({ status, code, nativeEvent, receipt });
     if (t.storageInstanceId !== s.metadata.storageInstanceId) return outcome('UNKNOWN', 'STORAGE_INSTANCE_CHANGED');
     const r = s.metadata.commits.find(r => r.operation.operationId === t.operationId);
@@ -123,9 +162,18 @@ export function createCustomPositionIDB({ indexedDB = () => globalThis.indexedDB
   randomUUID = () => globalThis.crypto.randomUUID(), now = () => new Date().toISOString(), durability = 'default' } = {}) {
   if (!['default', 'strict'].includes(durability)) fail('INVALID_DURABILITY');
   let connection = null, opening = null, recovery = null, recoveryGeneration = null, generation = 0, accepting = true, disposed = false, unbind = null;
-  const active = new Set(), prepared = new WeakMap(), native = new Map();
+  const active = new Set(), prepared = new WeakMap();
+  let attemptSequence = 0;
   const errorResult = error => freeze({ status: 'FAILED', code: error.code || error.name || 'IDB_FAILED', nativeEvent: 'UNKNOWN' });
-  function remember(id, event) { if (!id) return; native.set(id, event); if (native.size > 256) native.delete(native.keys().next().value); }
+  function remember(entry, event) {
+    const attempt = entry.attempt;
+    if (!attempt || attempt.transaction !== entry.tx) return;
+    attempt.nativeEvent = event;
+    attempt.transaction = null;
+  }
+  // operationId identifies persistence; token/attempt/transaction identity
+  // identifies native delivery. Serialized or foreign tokens have no local event.
+  const nativeEventFor = token => prepared.get(token)?.attempt?.nativeEvent || 'UNKNOWN';
   function settle(entry, value) { if (!entry.settled) { entry.settled = true; entry.resolve(freeze(value)); } }
   function closeConnection() { connection?.close(); connection = null; }
   function suspend(reason = 'freeze') {
@@ -174,15 +222,17 @@ export function createCustomPositionIDB({ indexedDB = () => globalThis.indexedDB
   function transact(db, captured, token, initializeId, submittedAt) {
     return new Promise(resolve => {
       let tx; try { tx = db.transaction('state', 'readwrite', { durability }); } catch (error) { resolve(errorResult(error)); return; }
-      const entry = { tx, token, resolve, committing: false, abortRequested: false, settled: false, failure: null, result: null };
+      const attempt = token ? prepared.get(token).attempt : null;
+      if (attempt) attempt.transaction = tx;
+      const entry = { tx, token, attempt, resolve, committing: false, abortRequested: false, settled: false, failure: null, result: null };
       active.add(entry);
       tx.oncomplete = () => {
-        active.delete(entry); remember(token?.operationId, 'COMPLETE');
+        active.delete(entry); remember(entry, 'COMPLETE');
         settle(entry, token ? { status: 'COMMITTED', code: 'TRANSACTION_COMPLETE', nativeEvent: 'COMPLETE', snapshot: entry.result }
           : { ok: true, snapshot: entry.result, nativeEvent: 'COMPLETE' });
       };
       tx.onabort = () => {
-        active.delete(entry); remember(token?.operationId, 'ABORT');
+        active.delete(entry); remember(entry, 'ABORT');
         const error = entry.failure || tx.error;
         settle(entry, { status: error?.code === 'REVISION_CONFLICT' ? 'REVISION_CONFLICT' : error ? 'FAILED' : 'ABORTED_OBSERVED',
           code: error?.code || error?.name || 'NATIVE_ABORT', nativeEvent: 'ABORT' });
@@ -205,19 +255,18 @@ export function createCustomPositionIDB({ indexedDB = () => globalThis.indexedDB
             if (token.expectedRevision === Number.MAX_SAFE_INTEGER) fail('REVISION_EXHAUSTED');
             const applied = applyCustomPositionOperation(state.envelope, token.command, { now: () => token.preparedAt, idFactory: () => token.positionId });
             if (token.command.type === 'delete' && !applied.result.deleted) fail('POSITION_NOT_FOUND');
-            envelope = structuredClone(applied.envelope); envelope.revision = token.expectedRevision + 1;
-            envelope = validateCustomPositionEnvelope(envelope);
+            // applyCustomPositionOperation fully validates and freezes both
+            // its input and output. Only the safe revision changes here; do not
+            // clone/revalidate all 100 boards twice again to build the receipt.
+            envelope = { ...applied.envelope, revision: token.expectedRevision + 1 };
             const id = applied.result.position?.id ?? token.command.id;
             const oldIndex = state.envelope.positions.findIndex(p => p.id === id), newIndex = envelope.positions.findIndex(p => p.id === id);
             // Timestamp of submission, captured outside the IDB callback. The
             // actual completion is evidenced by complete/witness, not this clock.
             const receipt = { operation: token, revision: envelope.revision, committedAt: submittedAt,
               delta: { index: oldIndex >= 0 ? oldIndex : newIndex, before: state.envelope.positions[oldIndex] ?? null, after: envelope.positions[newIndex] ?? null } };
-            metadata = structuredClone(state.metadata); metadata.commits.push(receipt);
-            if (metadata.commits.length > CUSTOM_POSITION_WITNESS_LIMIT) metadata.baseEnvelope = applyDelta(metadata.baseEnvelope, metadata.commits.shift());
-            metadata.committedOperationIds = metadata.commits.map(r => r.operation.operationId);
-            metadata.lastCommit = { operationId: token.operationId, revision: receipt.revision, committedAt: receipt.committedAt };
-            entry.result = validateCustomPositionIDBState(envelope, metadata);
+            entry.result = appendValidatedReceipt(state, envelope, receipt);
+            ({ envelope, metadata } = entry.result);
             store.put(envelope, 'envelope'); store.put(metadata, 'metadata');
           } else entry.result = state;
           tx.commit(); entry.committing = true;
@@ -234,18 +283,19 @@ export function createCustomPositionIDB({ indexedDB = () => globalThis.indexedDB
   function read() { return accepting && !disposed ? readInternal(generation) : Promise.resolve(errorResult({ code: 'SUSPENDED' })); }
   function prepare(snapshot, command, { nonce = randomUUID() } = {}) {
     if (!accepting || disposed) fail('SUSPENDED');
-    const state = validateCustomPositionIDBState(snapshot.envelope, snapshot.metadata), copy = data(command);
+    const state = validatedState(snapshot), copy = data(command);
     const t = tokenData({ storageInstanceId: state.metadata.storageInstanceId, expectedRevision: state.envelope.revision,
       operationId: `${state.metadata.storageInstanceId}/${state.envelope.revision}/${uuid(nonce)}`, command: copy,
       preparedAt: timestamp(now()), positionId: uuid(randomUUID()) });
     applyCustomPositionOperation(state.envelope, t.command, { now: () => t.preparedAt, idFactory: () => t.positionId });
-    freeze(t); prepared.set(t, { generation, used: false }); return t;
+    freeze(t); prepared.set(t, { generation, used: false, attempt: null }); return t;
   }
   async function write(token) {
     const local = prepared.get(token);
     try {
       if (!local || local.used) fail('INVALID_OR_USED_OPERATION');
       local.used = true;
+      local.attempt = { attemptId: ++attemptSequence, transaction: null, nativeEvent: 'UNKNOWN' };
       if (!accepting || local.generation !== generation || disposed) fail('STALE_LIFECYCLE');
       const db = await connect();
       if (!accepting || local.generation !== generation || disposed) fail('STALE_LIFECYCLE');
@@ -254,8 +304,8 @@ export function createCustomPositionIDB({ indexedDB = () => globalThis.indexedDB
   }
   async function verifyOutcome(token) {
     const readResult = await read();
-    if (!readResult.ok) return freeze({ status: 'UNKNOWN', code: readResult.code, nativeEvent: native.get(token?.operationId) || 'UNKNOWN' });
-    return freeze({ ...observeCustomPositionOperation(readResult.snapshot, token), nativeEvent: native.get(token?.operationId) || 'UNKNOWN' });
+    if (!readResult.ok) return freeze({ status: 'UNKNOWN', code: readResult.code, nativeEvent: nativeEventFor(token) });
+    return freeze({ ...observeCustomPositionOperation(readResult.snapshot, token), nativeEvent: nativeEventFor(token) });
   }
   function resume() {
     if (disposed) return Promise.resolve(errorResult({ code: 'DISPOSED' }));

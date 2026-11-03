@@ -2,9 +2,9 @@ import {
   createGameReviewAiState,
   beginGameReviewAiRequest,
   settleGameReviewAiResponse,
-} from './game-review-ai.js?v=029a7ace40';
-import { createGameMoveEvidence } from './game-review-evidence.js?v=029a7ace40';
-import { deriveGameReviewTeaching } from './game-review-teaching.js?v=029a7ace40';
+} from './game-review-ai.js?v=0bcf8ccbd6';
+import { createGameMoveEvidence } from './game-review-evidence.js?v=0bcf8ccbd6';
+import { deriveGameReviewTeaching } from './game-review-teaching.js?v=0bcf8ccbd6';
 
 export function createGameTeachingModeState(revision = 0) {
   if (!Number.isInteger(revision) || revision < 0) {
