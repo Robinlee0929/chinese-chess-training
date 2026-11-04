@@ -1547,6 +1547,8 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
 .card {
   position: relative;
   width: min(92vw, 440px);
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 18px;

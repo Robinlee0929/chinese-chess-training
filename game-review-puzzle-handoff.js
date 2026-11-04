@@ -1,4 +1,4 @@
-import { createEditorState } from './puzzle-editor.js?v=09ebdb0d34';
+import { createEditorState } from './puzzle-editor.js?v=23211d9340';
 
 export class GameReviewPuzzleHandoffError extends Error {
   constructor(code, message) {

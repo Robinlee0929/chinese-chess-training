@@ -1,4 +1,4 @@
-import { createCustomGameRoot, createMutableCustomGamePosition, validateCustomPlayPosition } from './custom-position-play.js?v=09ebdb0d34';
+import { createCustomGameRoot, createMutableCustomGamePosition, validateCustomPlayPosition } from './custom-position-play.js?v=23211d9340';
 
 export function savedPositionMessage(result = {}) {
   const code = result.code ?? result.status;

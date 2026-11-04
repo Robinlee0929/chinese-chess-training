@@ -1,5 +1,5 @@
-import { createCustomPositionIDB } from './custom-position-idb.js?v=09ebdb0d34';
-import { createCustomPositionMigration } from './custom-position-migration.js?v=09ebdb0d34';
+import { createCustomPositionIDB } from './custom-position-idb.js?v=23211d9340';
+import { createCustomPositionMigration } from './custom-position-migration.js?v=23211d9340';
 
 const unavailable = new Set(['IDB_UNAVAILABLE', 'OPEN_BLOCKED', 'SecurityError', 'UnknownError',
   'VersionError', 'QuotaExceededError', 'SUSPENDED', 'STALE_LIFECYCLE', 'DISPOSED']);
