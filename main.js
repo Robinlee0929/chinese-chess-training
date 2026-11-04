@@ -14,19 +14,19 @@ import {
   ROWS, COLS, RED, BLACK,
   initialBoard, legalMoves, applyMove, inCheck,
   hasAnyLegalMove, name, notation, hashBoard, repetitionVerdict,
-} from './game.js?v=1eae6523bb';
+} from './game.js?v=d42fbed8c3';
 import {
   validateCustomPlayPosition, createCustomGameRoot, createMutableCustomGamePosition,
-} from './custom-position-play.js?v=1eae6523bb';
-import { createGameRecord } from './game-record.js?v=1eae6523bb';
-import { createCustomPositionCoordinator } from './custom-position-coordinator.js?v=1eae6523bb';
-import { createSavedPositionUI } from './saved-position-ui.js?v=1eae6523bb';
+} from './custom-position-play.js?v=d42fbed8c3';
+import { createGameRecord } from './game-record.js?v=d42fbed8c3';
+import { createCustomPositionCoordinator } from './custom-position-coordinator.js?v=d42fbed8c3';
+import { createSavedPositionUI } from './saved-position-ui.js?v=d42fbed8c3';
 import {
   canStartGameFromReview, createReviewContinuationPosition,
   defaultContinuationDifficulty, defaultContinuationHumanSide,
   validateContinuationConfiguration,
-} from './game-review-continuation.js?v=1eae6523bb';
-import { createGameRecordStore } from './game-record-store.js?v=1eae6523bb';
+} from './game-review-continuation.js?v=d42fbed8c3';
+import { createGameRecordStore } from './game-record-store.js?v=d42fbed8c3';
 import {
   createGameReview,
   createGameRecordLibraryView,
@@ -35,15 +35,15 @@ import {
   nextGameReviewPly,
   lastGameReviewPly,
   selectGameReviewPly,
-} from './game-review.js?v=1eae6523bb';
+} from './game-review.js?v=d42fbed8c3';
 import {
   createGameReviewAiState,
   invalidateGameReviewAiState,
   beginGameReviewAiRequest,
   settleGameReviewAiResponse,
-} from './game-review-ai.js?v=1eae6523bb';
-import { createGameReviewEvidence } from './game-review-evidence.js?v=1eae6523bb';
-import { deriveGameReviewTeaching } from './game-review-teaching.js?v=1eae6523bb';
+} from './game-review-ai.js?v=d42fbed8c3';
+import { createGameReviewEvidence } from './game-review-evidence.js?v=d42fbed8c3';
+import { deriveGameReviewTeaching } from './game-review-teaching.js?v=d42fbed8c3';
 import {
   createGameTeachingModeState,
   setGameTeachingModeEnabled,
@@ -52,7 +52,7 @@ import {
   settleGameTeachingModeAnalysis,
   gameTeachingModeMatchesHistory,
   shouldScheduleGameTeachingMode,
-} from './game-teaching-mode.js?v=1eae6523bb';
+} from './game-teaching-mode.js?v=d42fbed8c3';
 import {
   createDisabledCoachState,
   createIdleCoachState,
@@ -61,28 +61,28 @@ import {
   settleCoachResponse,
   invalidateCoachState,
   selectCoachModelProfile,
-} from './game-review-coach.js?v=1eae6523bb';
+} from './game-review-coach.js?v=d42fbed8c3';
 import {
   readCoachModelProfilePreference,
   writeCoachModelProfilePreference,
-} from './coach-model-profile-preference.js?v=1eae6523bb';
+} from './coach-model-profile-preference.js?v=d42fbed8c3';
 import {
   readInstalledReviewCoachStagingCapability,
   isReviewCoachProfileAvailable,
-} from './review-coach-connectivity.js?v=1eae6523bb';
+} from './review-coach-connectivity.js?v=d42fbed8c3';
 import {
   createGameAnalysis,
   gameAnalysisLegalMoves,
   applyGameAnalysisMove,
   undoGameAnalysisMove,
   resetGameAnalysis,
-} from './game-analysis.js?v=1eae6523bb';
-import { createGameReviewPuzzleHandoff } from './game-review-puzzle-handoff.js?v=1eae6523bb';
+} from './game-analysis.js?v=d42fbed8c3';
+import { createGameReviewPuzzleHandoff } from './game-review-puzzle-handoff.js?v=d42fbed8c3';
 import {
   createGameLiveReviewHandoff,
   consumeGameLiveReviewHandoff,
   createGameLiveReviewAnalysis,
-} from './game-live-review-handoff.js?v=1eae6523bb';
+} from './game-live-review-handoff.js?v=d42fbed8c3';
 import {
   PuzzleEditorError,
   createEditorState,
@@ -92,7 +92,7 @@ import {
   setEditorSideToMove,
   confirmAuthoredPosition,
   exportAuthoredPosition,
-} from './puzzle-editor.js?v=1eae6523bb';
+} from './puzzle-editor.js?v=d42fbed8c3';
 import {
   PuzzleRecorderError,
   createRecorder,
@@ -102,7 +102,7 @@ import {
   finishRecording,
   exportRecorderBoard,
   exportRecordedResult,
-} from './puzzle-recorder.js?v=1eae6523bb';
+} from './puzzle-recorder.js?v=d42fbed8c3';
 import {
   PuzzlePracticeError,
   PRACTICE_HINT_MAX_LEVEL,
@@ -112,12 +112,12 @@ import {
   derivePracticeHint,
   restartPractice,
   exportPracticeSnapshot,
-} from './puzzle-practice.js?v=1eae6523bb';
-import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=1eae6523bb';
+} from './puzzle-practice.js?v=d42fbed8c3';
+import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=d42fbed8c3';
 import {
   PracticeAnalyticsError,
   createPracticeAnalyticsStore,
-} from './puzzle-analytics.js?v=1eae6523bb';
+} from './puzzle-analytics.js?v=d42fbed8c3';
 import {
   PUZZLE_TRANSFER_FORMAT,
   PUZZLE_TRANSFER_SCHEMA_VERSION,
@@ -125,7 +125,7 @@ import {
   PuzzleTransferError,
   serializePuzzleExport,
   parsePuzzleImport,
-} from './puzzle-transfer.js?v=1eae6523bb';
+} from './puzzle-transfer.js?v=d42fbed8c3';
 import {
   PHOTO_MAX_ZOOM,
   PHOTO_MIN_ZOOM,
@@ -139,7 +139,7 @@ import {
   validatePhotoMetadata,
   zoomPhotoIn,
   zoomPhotoOut,
-} from './puzzle-photo.js?v=1eae6523bb';
+} from './puzzle-photo.js?v=d42fbed8c3';
 import {
   CALIBRATION_CANONICAL_HEIGHT,
   CALIBRATION_CANONICAL_WIDTH,
@@ -155,7 +155,7 @@ import {
   setCorner,
   transformPoint,
   validateQuadrilateral,
-} from './puzzle-photo-calibration.js?v=1eae6523bb';
+} from './puzzle-photo-calibration.js?v=d42fbed8c3';
 import {
   PuzzlePhotoRecognitionError,
   RECOGNITION_OCCUPANCY_EMPTY,
@@ -167,7 +167,7 @@ import {
   isRecognitionTokenCurrent,
   recognizeIntersections,
   selectionKey,
-} from './puzzle-photo-recognition.js?v=1eae6523bb';
+} from './puzzle-photo-recognition.js?v=d42fbed8c3';
 import {
   addTemplate,
   createPieceTypeSessionToken,
@@ -177,13 +177,13 @@ import {
   normalizePiecePatch,
   removeTemplatesForSource,
   suggestUnresolvedPieceTypes,
-} from './puzzle-photo-piece-types.js?v=1eae6523bb';
+} from './puzzle-photo-piece-types.js?v=d42fbed8c3';
 import {
   UNREVIEWED, PuzzlePhotoReviewError,
   createReviewState, buildReviewQueue, selectReviewCandidate, confirmEmpty, confirmPiece,
   nextCandidate, previousCandidate, nextUnresolved, acceptHighConfidenceEmpty,
   undoBulkEmpty, resetReview, rescanReview, reviewProgress, confirmedSelections, buildReviewedBoard,
-} from './puzzle-photo-review.js?v=1eae6523bb';
+} from './puzzle-photo-review.js?v=d42fbed8c3';
 
 // ---------------- 常數 ----------------
 const CELL = 1;
@@ -777,6 +777,8 @@ let customRematchRequest = null;
 let customRematchLock = null;
 let customRematchUnlockTimer = null;
 let gameOverTimer = null;
+// Terminal presentation belongs to the completed game, not an AI request.
+let normalGameTerminalPresentation = null;
 let completedGameRecordSessionId = null;
 let lastCompletedGameRecord = null;
 let gameReviewSession = null;
@@ -855,7 +857,7 @@ function currentAIRequest(request) {
 function startAIFallback(request) {
   if (!currentAIRequest(request) || request.settled || request.fallbackStarted) return;
   request.fallbackStarted = true;
-  (aiModule ??= import('./ai.js?v=1eae6523bb')).then(({ findBestMove }) => {
+  (aiModule ??= import('./ai.js?v=d42fbed8c3')).then(({ findBestMove }) => {
     if (!currentAIRequest(request) || request.settled) return;
     request.fallbackTimer = setTimeout(() => {
       if (!currentAIRequest(request) || request.settled) return;
@@ -884,7 +886,7 @@ function requestAIMove() {
     submitted: false, fallbackStarted: false, worker: null, moveTimer: null, fallbackTimer: null };
   aiRequest = request;
   try {
-    aiWorker ??= new Worker(new URL('./ai-worker.js?v=1eae6523bb', import.meta.url), { type: 'module' });
+    aiWorker ??= new Worker(new URL('./ai-worker.js?v=d42fbed8c3', import.meta.url), { type: 'module' });
     const worker = aiWorker;
     request.worker = worker;
     worker.onmessage = (event) => onAIResult(event.data, request, worker);
@@ -1063,7 +1065,7 @@ function requestGameTeachingModeAnalysis(source) {
   renderGameTeachingMode();
   let worker;
   try {
-    worker = new Worker(new URL('./ai-worker.js?v=1eae6523bb', import.meta.url), { type: 'module' });
+    worker = new Worker(new URL('./ai-worker.js?v=d42fbed8c3', import.meta.url), { type: 'module' });
     gameTeachingModeWorker = worker;
     worker.onmessage = (event) => handleGameTeachingModeResponse(worker, event.data);
     worker.onerror = (event) => {
@@ -3200,7 +3202,7 @@ function handleGameReviewAiResponse(worker, response) {
 }
 
 function createGameReviewAiWorker() {
-  return new Worker(new URL('./ai-worker.js?v=1eae6523bb', import.meta.url), { type: 'module' });
+  return new Worker(new URL('./ai-worker.js?v=d42fbed8c3', import.meta.url), { type: 'module' });
 }
 
 function requestGameReviewAiCandidate() {
@@ -5129,6 +5131,7 @@ function initializeNormalGamePosition(startBoard, startTurn, { sourceRecordId = 
   tweens.length = 0;
   invalidateNormalAI();
   clearTimeout(gameOverTimer);
+  normalGameTerminalPresentation = null;
   clearTimeout(showBanner._t);
   clearTimeout(customRematchUnlockTimer);
   customRematchLock = null;
@@ -5270,10 +5273,7 @@ function finishMove(
   if (over) {
     finalizeNormalGameRecord(endReason);
     refreshHUD();
-    const token = aiToken;
-    gameOverTimer = setTimeout(() => {
-      if (token === aiToken && normalGameActive() && over) showGameOver(endReason);
-    }, endReason === '將死' ? 900 : 300);
+    scheduleNormalGameTerminal(endReason);
   }
   refreshHUD();
   maybeAIMove();
@@ -5530,6 +5530,29 @@ function toast(msg) {
   toastEl.classList.remove('hidden');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => toastEl.classList.add('hidden'), 3600);
+}
+
+function scheduleNormalGameTerminal(endReason) {
+  clearTimeout(gameOverTimer);
+  const presentation = { session: normalGameRecordSession, endReason, ready: false, shown: false };
+  normalGameTerminalPresentation = presentation;
+  gameOverTimer = setTimeout(() => {
+    if (normalGameTerminalPresentation !== presentation
+      || normalGameRecordSession !== presentation.session || !over) return;
+    presentation.ready = true;
+    presentNormalGameTerminal(presentation);
+  }, endReason === '將死' ? 900 : 300);
+}
+
+function presentNormalGameTerminal(presentation = normalGameTerminalPresentation) {
+  if (!presentation || presentation !== normalGameTerminalPresentation
+    || presentation.session !== normalGameRecordSession || !over
+    || !presentation.ready || presentation.shown || !normalGameActive()) return false;
+  // Mark first: repeated closes and already-queued callbacks cannot replay
+  // sounds/confetti. The GameRecord was finalized separately in finishMove.
+  presentation.shown = true;
+  showGameOver(presentation.endReason);
+  return true;
 }
 
 function showGameOver(endReason) {
@@ -6101,7 +6124,7 @@ const savedPositionsUI = createSavedPositionUI({
     context: () => ({ session: normalGameRecordSession, appState, editor: editorState,
       confirmed: confirmedPosition, hasProgress: !over && !!normalGameRecordSession }),
     pause: () => { invalidateNormalAI(); invalidateTeachingModeFeedback(); closeHudMenu(); },
-    resume: () => { refreshHUD(); maybeAIMove(); },
+    resume: () => { refreshHUD(); presentNormalGameTerminal(); maybeAIMove(); },
     refresh: refreshHUD,
     start: (root, position) => {
       if (puzzleFlowActive()) discardPuzzleEditor();
