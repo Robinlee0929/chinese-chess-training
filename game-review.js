@@ -3,7 +3,7 @@ import {
   replayGameRecord,
   createGameTimeline,
   replayGameTimeline,
-} from './game-record.js?v=d42fbed8c3';
+} from './game-record.js?v=41f7febf9d';
 
 export const GAME_REVIEW_INITIAL_PLY = 'last';
 

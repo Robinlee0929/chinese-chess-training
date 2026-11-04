@@ -1,5 +1,5 @@
-import { validateCustomPositionEnvelope, applyCustomPositionOperation } from './custom-position-store.js?v=d42fbed8c3';
-import { validateMigrationState, applyMigrationTransition, observeMigration } from './custom-position-migration-state.js?v=d42fbed8c3';
+import { validateCustomPositionEnvelope, applyCustomPositionOperation } from './custom-position-store.js?v=41f7febf9d';
+import { validateMigrationState, applyMigrationTransition, observeMigration } from './custom-position-migration-state.js?v=41f7febf9d';
 
 export const CUSTOM_POSITION_DATABASE = 'chinese-chess-training:custom-positions';
 export const CUSTOM_POSITION_DATABASE_VERSION = 1;
