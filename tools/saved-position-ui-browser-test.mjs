@@ -10,6 +10,9 @@ import { createHash } from 'node:crypto';
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE ? pathToFileURL(process.env.PLAYWRIGHT_MODULE).href : 'playwright');
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const output=path.resolve(process.env.UI_EVIDENCE_DIR || 'test-results/saved-position-ui');
+const fullCapacity=process.env.UI_FULL_CAPACITY==='1';
+const fullCases=new Set(['cancel-late-preferences-no-game','unknown-native-complete-independent-verification','cancel-UNKNOWN-verification-late-result','cancel-await-getPosition','native-double-click-one-challenge','native-double-click-one-rename']);
+if(fullCapacity)assert.ok(process.env.UI_CASE_FILTER,'Full-capacity supplementary run requires an explicit case filter.');
 await mkdir(output,{recursive:true});
 const server=createServer(async(req,res)=>{
   const pathname=decodeURIComponent(new URL(req.url,'http://localhost').pathname);
@@ -23,7 +26,7 @@ await new Promise(r=>server.listen(0,'127.0.0.1',r));const url='http://127.0.0.1
 // native lifecycle for this suite instead of overriding those browser policies.
 const browser=await chromium.launch({executablePath:process.env.CHROME_PATH||'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true,ignoreDefaultArgs:true,args:['--headless=new','--remote-debugging-pipe','--no-first-run','--no-default-browser-check']});
 const results=[],timings=[];
-const selected=id=>!process.env.UI_CASE_FILTER||new RegExp(process.env.UI_CASE_FILTER).test(id);
+const selected=id=>(!fullCapacity||fullCases.has(id))&&(!process.env.UI_CASE_FILTER||new RegExp(process.env.UI_CASE_FILTER).test(id));
 await writeFile(path.join(output,'environment.json'),JSON.stringify({chrome:browser.version(),url,root,profile:'isolated Playwright browser contexts; synthetic data only',browserPath:'Browser plugin/browser skill unavailable; explicit Chrome/Playwright testing authorized'},null,2));
 async function context(viewport={width:1440,height:1000}){
  const c=await browser.newContext({viewport});
@@ -68,6 +71,18 @@ async function open(p){if(!await p.locator('#btnSavedPositions').isVisible())awa
 const idle=p=>p.waitForFunction(()=>{const d=document.getElementById('savedPositionsDialog');return !d.open||d.getAttribute('aria-busy')==='false';});
 const storageState=p=>p.locator('#savedPositionsDialog').getAttribute('data-storage-state');
 async function seed(p,{legacy=false,staged=false,side='red'}={}){
+ if(fullCapacity){
+  assert.equal(legacy||staged,false);
+  const fixture=capacityFixture(100),candidateJSON=JSON.stringify(fixture.metadata.baseEnvelope),sourceFingerprint=createHash('sha256').update(candidateJSON).digest('hex');
+  fixture.metadata.migration={version:1,state:'ACTIVE',migrationId:'legacy-v1:'+sourceFingerprint,sourceFingerprint,sourceRevision:2,initialRevision:2,stagedOperationId:'33333333-3333-4333-8333-333333333333',activatedOperationId:'44444444-4444-4444-8444-444444444444',stagedAt:'2026-11-02T00:00:00.000Z',activatedAt:'2026-11-02T00:00:00.000Z',candidateJSON};
+  await p.evaluate(async state=>{
+   const {createCustomPositionRepository}=await import('./custom-position-repository.js');const r=createCustomPositionRepository(),s=r.createScope();await s.initialize().completion;r.dispose();
+   const db=await new Promise((resolve,reject)=>{const q=indexedDB.open('chinese-chess-training:custom-positions',1);q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});
+   await new Promise((resolve,reject)=>{const tx=db.transaction('state','readwrite');tx.objectStore('state').put(state.envelope,'envelope');tx.objectStore('state').put(state.metadata,'metadata');tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error);tx.commit();});db.close();
+   __uiQA.fixture={positions:state.envelope.positions.length,witness:state.metadata.commits.length,revision:state.envelope.revision,envelopeBytes:new TextEncoder().encode(JSON.stringify(state.envelope)).length};
+  },fixture);
+  const actual=(await read(p)).snapshot;assert.equal(actual.envelope.positions.length,100);assert.equal(actual.metadata.commits.length,128);return{id:'seed-0'};
+ }
  return p.evaluate(async({legacy,staged,side})=>{
   const {initialBoard}=await import('./game.js');const position={id:'fixture',title:'測試局面',initialBoard:initialBoard(),sideToMove:side,createdAt:'2026-11-04T00:00:00.000Z',updatedAt:'2026-11-04T00:00:00.000Z',playPreferences:{humanSide:'red',difficulty:'easy'}};
   if(legacy||staged){const raw=JSON.stringify({version:1,revision:7,positions:[position]});localStorage.setItem('chinese-chess-training:custom-positions:v1',raw);
@@ -110,7 +125,7 @@ try{
   await p.keyboard.press('Escape');await p.locator('#btnSaveCustomPosition').click();await idle(p);await p.locator('#savedPositionTitle').fill('新儲存');await submit(p);assert.equal((await read(p)).snapshot.envelope.positions.length,1);
  });
  await test('cancel-late-preferences-no-game',async p=>{const f=await seed(p);await open(p);await action(p,f.id,'challenge');await p.locator('#savedPositionDifficulty').selectOption('hard');if(await p.locator('#savedPositionAcknowledgement').isVisible())await p.locator('#savedPositionAcknowledge').check();const before=await p.evaluate(()=>__chess.normalGameRecordSession?.id);
-  await p.evaluate(()=>__uiQA.hold='updatePlayPreferences');await p.locator('#savedPositionSubmit').click();await p.waitForFunction(()=>__uiQA.held?.method==='updatePlayPreferences');await p.screenshot({path:path.join(output,'busy-awaiting-UI-delivery.png'),fullPage:true});await p.keyboard.press('Escape');await p.evaluate(()=>{__uiQA.hold=null;__uiQA.release.splice(0).forEach(r=>r());});
+  await p.evaluate(()=>__uiQA.hold='updatePlayPreferences');await p.locator('#savedPositionSubmit').click();await p.waitForFunction(()=>__uiQA.held?.method==='updatePlayPreferences');assert.equal(await p.locator('#savedPositionsDialog').getAttribute('aria-busy'),'true');assert.equal(await p.locator('#savedPositionSubmit').isDisabled(),true);assert.doesNotMatch(await p.locator('#savedPositionsNotice').innerText(),/已提交|已更新|儲存成功/);await p.screenshot({path:path.join(output,'busy-awaiting-UI-delivery.png'),fullPage:true});await p.keyboard.press('Escape');await p.evaluate(()=>{__uiQA.hold=null;__uiQA.release.splice(0).forEach(r=>r());});
   assert.equal(await p.evaluate(()=>__chess.normalGameRecordSession?.id),before);assert.equal((await read(p)).snapshot.envelope.positions[0].playPreferences.difficulty,'hard');await open(p);assert.equal(await p.locator('#savedPositionVerify').isVisible(),true);await p.locator('#savedPositionVerify').click();await idle(p);assert.match(await p.locator('#savedPositionsNotice').innerText(),/已提交/);
  });
  await test('unknown-native-complete-independent-verification',async p=>{const f=await seed(p);await open(p);await action(p,f.id,'rename');await p.locator('#savedPositionTitle').fill('提交待查');await p.evaluate(()=>{__uiQA.native=[];__uiQA.suppressComplete=true;});await p.locator('#savedPositionSubmit').click();await p.waitForFunction(()=>__uiQA.native.some(e=>e.puts>0&&e.event==='COMPLETE'));
@@ -138,10 +153,21 @@ try{
  });
  await test('native-double-click-one-challenge',async p=>{
   const f=await seed(p);await open(p);await action(p,f.id,'challenge');if(await p.locator('#savedPositionAcknowledgement').isVisible())await p.locator('#savedPositionAcknowledge').check();
+  await p.locator('#savedPositionHumanSide').selectOption('red'); // Both fixture variants start with red to move.
+  const revision=(await read(p)).snapshot.envelope.revision;
   const before=await p.evaluate(()=>__chess.normalGameRecordSession.id);await p.evaluate(()=>{__uiQA.calls=[];__uiQA.posts=[];});
   await p.locator('#savedPositionOnce').dblclick();await p.locator('#savedPositionsDialog').waitFor({state:'hidden'});
   assert.notEqual(await p.evaluate(()=>__chess.normalGameRecordSession.id),before);assert.equal(await p.evaluate(()=>__uiQA.calls.filter(c=>c.method==='getPosition').length),2);
-  assert.equal(await p.evaluate(()=>__uiQA.posts.length),0);assert.equal((await read(p)).snapshot.envelope.revision,1);
+  assert.equal(await p.evaluate(()=>__uiQA.posts.length),0);assert.equal((await read(p)).snapshot.envelope.revision,revision);
+ });
+ await test('native-double-click-one-rename',async p=>{
+  const f=await seed(p);await open(p);await action(p,f.id,'rename');await p.locator('#savedPositionTitle').fill('原生雙擊只寫一次');
+  const before=(await read(p)).snapshot,session=await p.evaluate(()=>__chess.normalGameRecordSession.id);await p.evaluate(()=>{__uiQA.calls=[];__uiQA.native=[];});
+  await p.locator('#savedPositionSubmit').dblclick();await idle(p);
+  const after=(await read(p)).snapshot;assert.equal(after.envelope.revision,before.envelope.revision+1);assert.equal(after.envelope.positions.find(x=>x.id===f.id).title,'原生雙擊只寫一次');
+  assert.equal(after.envelope.positions.length,before.envelope.positions.length);assert.equal(await p.evaluate(()=>__uiQA.calls.filter(x=>x.method==='renamePosition').length),1);
+  assert.equal(await p.evaluate(()=>__uiQA.native.filter(x=>x.event==='COMPLETE'&&x.puts>0).length),1);assert.equal(new Set(after.metadata.commits.map(x=>x.operation.operationId)).size,after.metadata.commits.length);
+  assert.equal(await p.evaluate(()=>__chess.normalGameRecordSession.id),session);
  });
  await test('full-capacity-UI-latency',async p=>{
   await open(p);await p.keyboard.press('Escape');const fixture=capacityFixture(100),candidateJSON=JSON.stringify(fixture.metadata.baseEnvelope),sourceFingerprint=createHash('sha256').update(candidateJSON).digest('hex');
