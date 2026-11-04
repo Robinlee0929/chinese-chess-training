@@ -1,7 +1,7 @@
-import { RED, BLACK, hashBoard } from './game.js?v=41f7febf9d';
-import { createGameTimeline, replayGameTimeline } from './game-record.js?v=41f7febf9d';
-import { createLiveGameReview } from './game-review.js?v=41f7febf9d';
-import { createGameAnalysisFromPosition } from './game-analysis.js?v=41f7febf9d';
+import { RED, BLACK, hashBoard } from './game.js?v=09ebdb0d34';
+import { createGameTimeline, replayGameTimeline } from './game-record.js?v=09ebdb0d34';
+import { createLiveGameReview } from './game-review.js?v=09ebdb0d34';
+import { createGameAnalysisFromPosition } from './game-analysis.js?v=09ebdb0d34';
 
 export const GAME_LIVE_REVIEW_HANDOFF_KIND = 'live-teaching-review-handoff';
 export const GAME_LIVE_REVIEW_HANDOFF_VERSION = 1;

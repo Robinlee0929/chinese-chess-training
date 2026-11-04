@@ -69,7 +69,7 @@
   "isBasedOn": "https://github.com/doggy8088/chinese-chess"
 }
 </script>
-<link rel="stylesheet" href="./css/style.css?v=41f7febf9d">
+<link rel="stylesheet" href="./css/style.css?v=09ebdb0d34">
 <script type="importmap">
 {
   "imports": {
@@ -728,6 +728,13 @@
     <p class="saved-positions-privacy">局面只儲存在目前瀏覽器。清除網站資料可能造成遺失，沒有跨裝置同步；首版不支援 JSON 備份。</p>
     <p id="savedPositionsStorageStatus" role="alert"></p>
     <p id="savedPositionsNotice" role="status" aria-live="polite"></p>
+    <section id="savedPositionMigration" hidden aria-labelledby="savedPositionMigrationHeading">
+      <h3 id="savedPositionMigrationHeading">舊版局面轉移</h3>
+      <p id="savedPositionMigrationCount"></p>
+      <label><input id="savedPositionMigrationConfirm" type="checkbox">我已停止使用其他舊版分頁或視窗，確認轉移並保留舊資料。</label>
+      <button id="savedPositionMigrate" type="button">確認轉移</button>
+    </section>
+    <button id="savedPositionVerify" type="button" hidden>查證先前操作結果</button>
     <button id="savedPositionsReload" type="button">重新載入最新資料</button>
     <section id="savedPositionsListView">
       <p id="savedPositionsEmpty">尚未儲存局面。請先建立並確認局面，再選擇「儲存局面」。</p>
@@ -760,6 +767,6 @@
   <div id="toast" class="hidden" role="status"></div>
 </div>
 
-<script type="module" src="./main.js?v=41f7febf9d"></script>
+<script type="module" src="./main.js?v=09ebdb0d34"></script>
 </body>
 </html>

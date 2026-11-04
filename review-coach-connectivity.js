@@ -1,7 +1,7 @@
 import {
   GAME_REVIEW_COACH_MODEL_PROFILES,
   validateCoachRequestPayload,
-} from './game-review-coach.js?v=41f7febf9d';
+} from './game-review-coach.js?v=09ebdb0d34';
 
 export const B2A_BROWSER_TIMEOUT_MS = 4000;
 

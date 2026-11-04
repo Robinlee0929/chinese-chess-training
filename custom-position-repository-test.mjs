@@ -62,8 +62,9 @@ function harness(mutateSource = s => s) {
 }
 async function seed(h) { const handle = h.scope.savePosition(position(), h.expected()), result = await handle.completion; assert.equal(result.status, 'SUCCESS'); return result.position.id; }
 
-test('standalone repository leaves UI, synchronous session, coordinator and IDB core disconnected', () => {
-  for (const file of ['main.js', 'saved-position-ui.js', 'saved-position-session.js', 'custom-position-coordinator.js']) assert.doesNotMatch(readFileSync(new URL(file, import.meta.url), 'utf8'), /custom-position-repository/);
+test('Repository UI cutover leaves legacy synchronous session/coordinator disconnected', () => {
+  for (const file of ['saved-position-session.js', 'custom-position-coordinator.js']) assert.doesNotMatch(readFileSync(new URL(file, import.meta.url), 'utf8'), /custom-position-repository/);
+  for (const file of ['main.js', 'saved-position-ui.js', 'saved-position-async-session.js']) assert.doesNotMatch(readFileSync(new URL(file, import.meta.url), 'utf8'), /from ['"].*(custom-position-coordinator|saved-position-session)\.js/);
   assert.doesNotMatch(source, /startConfiguredNormalGame\(|new Worker\(|setItem\(|setTimeout\(/);
 });
 test('CRUD maps to the actual adapter commands and returns authoritative receipts', async () => {
@@ -163,6 +164,13 @@ test('same completion promise cannot submit a command twice', async () => {
 test('lifecycle suspends old scope; recovery reads and never resubmits', async () => {
   const h = harness(), handle = h.scope.savePosition(position(), h.expected()); h.repository.suspend('freeze'); await handle.completion;
   await h.repository.resume(); assert.equal(h.writes,0); assert.equal((await h.scope.loadAll().completion).status,'CANCELLED_UI_INTENT'); assert.equal((await h.repository.createScope().loadAll().completion).status,'SUCCESS');
+});
+test('lifecycle also disposes an independent witness verifier and forbids frozen verification', async () => {
+  const h = harness(), handle = h.scope.savePosition(position(), h.expected()), result = await handle.completion;
+  const pending = handle.verify(), verifier = h.adapters.at(-1); let disposed = 0;
+  const original = verifier.dispose; verifier.dispose = () => { disposed++; original(); };
+  h.repository.suspend('freeze'); assert.ok(disposed > 0); await pending;
+  assert.equal((await h.repository.verifyOutcome(result.token)).code, 'SUSPENDED'); assert.equal(h.writes, 1);
 });
 
 const mutants = {

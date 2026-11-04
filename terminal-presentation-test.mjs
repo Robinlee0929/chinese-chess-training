@@ -3,7 +3,8 @@ import test from 'node:test';
 import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
 import { initialBoard } from './game.js';
-import { createSavedPositionSession } from './saved-position-session.js';
+import { createAsyncSavedPositionSession } from './saved-position-async-session.js';
+import { repositoryDouble } from './tools/saved-position-session-double.mjs';
 
 const source = readFileSync(new URL('./main.js', import.meta.url), 'utf8');
 const functionSource = name => {
@@ -20,9 +21,7 @@ function harness() {
   const records = new Map([['completed', recordBytes], ['source', 'original source record']]);
   const position = { id: 'saved', title: 'saved', initialBoard: initialBoard(), sideToMove: 'red',
     playPreferences: { humanSide: 'red', difficulty: 'medium' } };
-  const coordinator = { key: 'custom', loadAll: () => ({ revision: 1, positions: [position], issues: [], writable: true }),
-    getPosition(id, revision) { assert.equal(id, position.id); assert.equal(revision, 1); return position; },
-    mutate() { throw Error('No persistence should occur during this challenge'); } };
+  const { repository } = repositoryDouble([position]);
   const ctx = vm.createContext({
     normalGameRecordSession: Object.freeze({ id: 'completed', sourceRecordId: 'source' }),
     normalGameTerminalPresentation: null, gameOverTimer: null, aiToken: 10,
@@ -40,13 +39,13 @@ function harness() {
     setTimeout(callback, delay) { const id = ++sequence; timers.set(id, { callback, due: now + delay }); callbacks.push(callback); return id; },
     clearTimeout(id) { timers.delete(id); },
     document: { querySelector: () => modal ? {} : null }, window: {}, navigator: {},
-    createCustomPositionCoordinator: () => coordinator,
+    createCustomPositionRepository: () => repository,
     createSavedPositionUI(options) { host = options.host; },
   });
   for (const name of ['scheduleNormalGameTerminal', 'presentNormalGameTerminal']) vm.runInContext(functionSource(name), ctx);
   const integration = source.match(/^const savedPositionsUI = createSavedPositionUI\(\{[^]*?^\}\);/m);
   assert.ok(integration); vm.runInContext(integration[0], ctx);
-  const session = createSavedPositionSession({ coordinator, host, onChange: state => { modal = state.active; } });
+  const session = createAsyncSavedPositionSession({ repository, host, onChange: state => { modal = state.active; } });
   function advance(ms) {
     now += ms;
     for (const [id, timer] of [...timers]) if (timer.due <= now) { timers.delete(id); timer.callback(); }
@@ -76,7 +75,7 @@ for (const [reason, delay] of [['將死', 900], ['困斃', 300]]) {
   });
   test(`P2-05: manager challenge replaces pending ${delay}ms terminal presentation`, async () => {
     const h = harness(); h.ctx.scheduleNormalGameTerminal(reason);
-    const stale = h.callbacks[0]; h.session.open(); h.session.select('challenge', 'saved');
+    const stale = h.callbacks[0]; h.session.open(); await h.session.whenReady(); h.session.select('challenge', 'saved');
     assert.equal(await h.session.submit(), true);
     stale(); h.advance(delay); h.ctx.presentNormalGameTerminal();
     assert.equal(h.ctx.normalGameRecordSession.id, 'new'); assert.equal(h.displays.length, 0);
@@ -86,7 +85,7 @@ for (const [reason, delay] of [['將死', 900], ['困斃', 300]]) {
 
 test('P2-05: a challenge replaces an already displayed result without redisplaying it', async () => {
   const h = harness(); h.ctx.scheduleNormalGameTerminal('將死'); h.advance(900);
-  h.session.open(); h.session.select('challenge', 'saved'); await h.session.submit();
+  h.session.open(); await h.session.whenReady(); h.session.select('challenge', 'saved'); await h.session.submit();
   h.callbacks[0](); h.ctx.presentNormalGameTerminal();
   assert.equal(h.ctx.overlayVisible, false); assert.equal(h.displays.length, 1); h.assertRecords();
 });

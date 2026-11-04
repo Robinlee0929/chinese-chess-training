@@ -1677,6 +1677,10 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
 #savedPositionAcknowledge { flex: 0 0 auto; width: 22px; height: 22px; }
 #savedPositionError, #savedPositionsStorageStatus { color: #f5ad9d; white-space: pre-line; }
 #savedPositionsDialog :focus-visible { outline: 2px solid #e5b85b; outline-offset: 3px; }
+#savedPositionMigration { border: 1px solid var(--line); padding: 12px; margin: 12px 0; }
+#savedPositionMigration label { display: flex; gap: 8px; align-items: flex-start; line-height: 1.6; margin-bottom: 12px; }
+#savedPositionMigrationConfirm { flex: 0 0 auto; width: 22px; height: 22px; }
+#savedPositionsNotice { white-space: pre-line; }
 @media (max-width: 400px) {
   #savedPositionsDialog { padding: 12px; }
   #savedPositionsDialog .saved-position-actions button { flex: 1 1 115px; }

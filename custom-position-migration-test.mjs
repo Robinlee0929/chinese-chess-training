@@ -34,7 +34,17 @@ test('forged migration intent with the same ID is not acknowledged',()=>{const{s
 test('initialize cannot masquerade as an activation witness',()=>{const{s}=stage(),t=token('activate'),active=applyMigrationTransition(s,t);assert.equal(observeMigration(active,{...t,command:{...t.command,type:'initialize'}}).status,'UNKNOWN');});
 test('empty initialization proof cannot contain a nonempty candidate',()=>{const e=envelope();e.revision=0;const active=applyMigrationTransition(null,token('initialize',{version:1,revision:0,positions:[]}));active.envelope=e;active.metadata.baseEnvelope=e;active.metadata.migration.candidateJSON=JSON.stringify(validateCustomPositionEnvelope(e));assert.throws(()=>validateCustomPositionIDBState(active.envelope,active.metadata),{code:'MIGRATION_DATA_MISMATCH'});});
 test('legacy Stage 1 states remain valid but have no migration proof',()=>{const e=validateCustomPositionEnvelope(envelope()),s={envelope:e,metadata:{version:1,storageInstanceId:uuid(1),baseEnvelope:e,commits:[],committedOperationIds:[],lastCommit:null}};assert.deepEqual(validateCustomPositionIDBState(s.envelope,s.metadata),s);assert.equal(observeMigration(s,token()).status,'UNKNOWN');});
-test('formal UI and coordinator do not import migration or adapter',()=>{for(const file of ['main.js','custom-position-coordinator.js','saved-position-session.js'])assert.doesNotMatch(readFileSync(new URL(file,import.meta.url),'utf8'),/custom-position-(idb|migration)/);});
+test('formal UI reaches IDB only through Repository, never direct adapter/migration or legacy writes',()=>{
+  for(const file of ['main.js','saved-position-ui.js','saved-position-async-session.js']) {
+    const text=readFileSync(new URL(file,import.meta.url),'utf8');
+    assert.doesNotMatch(text,/from ['"].*custom-position-(idb|migration|coordinator|store)\.js/);
+    assert.doesNotMatch(text,/createCustomPositionCoordinator|createCustomPositionStore/);
+    const savedUI = file === 'main.js' ? text.match(/^const savedPositionsUI = createSavedPositionUI\(\{[^]*?^\}\);/m)?.[0] : text;
+    assert.ok(savedUI); assert.doesNotMatch(savedUI,/\.setItem\(/); // Other preexisting stores/view preferences retain their contracts.
+  }
+  assert.match(readFileSync(new URL('./main.js',import.meta.url),'utf8'),/repository: createCustomPositionRepository/);
+  assert.match(readFileSync(new URL('./saved-position-ui.js',import.meta.url),'utf8'),/createAsyncSavedPositionSession\(\{ repository/);
+});
 test('STAGED blocks normal CRUD even through the legacy adapter API',()=>{const{s}=stage();for(const initializeEmpty of [true,false]){const a=createCustomPositionIDB({initializeEmpty});assert.throws(()=>a.prepare(s,{type:'rename',id:'legacy-id',title:'blocked'}),{code:'MIGRATION_NOT_ACTIVE'});a.dispose();}});
 test('unavailable IndexedDB does not fall back to legacy writes',async()=>{const m=createCustomPositionMigration({indexedDB:()=>undefined,storage:{getItem(){assert.fail('No fallback read or write')},setItem(){assert.fail('No fallback write')}}});assert.equal((await m.initialize()).state,'UNAVAILABLE');assert.equal((await m.initialize()).code,'IDB_UNAVAILABLE');m.dispose();});
 test('disposed manager cannot initialize, confirm, or resume',async()=>{const m=createCustomPositionMigration({indexedDB:()=>{assert.fail('disposed manager accessed IDB')}});m.dispose();assert.equal((await m.initialize()).code,'STALE_LIFECYCLE');assert.equal((await m.confirmMigration({}, {confirmed:true,legacyWritersStopped:true})).code,'STALE_LIFECYCLE');assert.equal((await m.resume()).code,'DISPOSED');});

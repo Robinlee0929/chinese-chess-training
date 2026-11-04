@@ -52,6 +52,25 @@ try{
   }
   assert.fail('INCOMPLETE: no valid read-pending freeze within 8 attempts');
  });
+ await test('freeze-independent-witness-verifier',async()=>{
+  const attempts=[];
+  // Reuse the validated ACTIVE state from the preceding full-capacity case.
+  const fixture=await read(b),token=fixture.metadata.commits.at(-1).operation;
+  for(let attempt=1;attempt<=8;attempt++){
+   await ev(a,'poc.newScope()');await ev(b,'poc.newScope()');const from=h.events.length;
+   const pending=ev(a,`poc.verify(${JSON.stringify(token)})`);
+   const queued=await h.until(e=>e.sessionId===a.sessionId&&e.trace?.type==='reads-queued',5000,from);assert.ok(queued.trace);
+   const frozen=await h.freeze(a),phase=frozen.freezeEvent?.phases.find(p=>p.id===queued.trace.id);
+   const valid=phase?.phase==='read-pending'&&phase.requests.includes('pending')&&frozen.freezeEvent?.trusted===true&&frozen.probeDuringFreeze===null;
+   attempts.push({attempt,queued,frozen,valid});await h.save('verifier-freeze-attempt-'+attempt,attempts.at(-1));
+   if(!valid){await h.resume(a);await pending;continue;}
+   const t0=performance.now(),pipeline=(async()=>{const o=await start(b,'renamePosition',['seed-1','Verifier peer safe'],fixture),r=await outcome(b,o);const native=await h.until(e=>e.sessionId===b.sessionId&&e.trace?.type==='native-terminal'&&e.trace.operationId===o.operationId&&e.trace.n===2,5000);return{o,r,native,elapsedMs:native.externalPerf-t0};})();
+   const gate=await deadline(pipeline,5000);await h.save('verifier-freeze-gate',gate);assert.notEqual(gate.status,'DEADLINE_EXCEEDED');assert.equal(gate.r.status,'SUCCESS');assert.equal(gate.native.trace.terminal,'COMPLETE');assert.ok(gate.elapsedMs<=5000);
+   await h.resume(a);const observed=await pending;assert.equal(observed.status,'UNKNOWN');assert.equal((await read(b)).envelope.revision,fixture.envelope.revision+1);
+   return{attempts,gate,observed,final:await read(b)};
+  }
+  assert.fail('INCOMPLETE: no independent verifier read-pending capture in 8 attempts');
+ });
  const consoleErrors=h.events.filter(e=>e.method==='Runtime.exceptionThrown'||['page-error','unhandled-rejection'].includes(e.trace?.type));
  assert.deepEqual(consoleErrors,[],'no console exception or unhandled rejection');
  await h.save('summary',summary);

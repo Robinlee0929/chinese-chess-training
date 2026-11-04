@@ -1,5 +1,5 @@
-import { createCustomPositionIDB } from './custom-position-idb.js?v=41f7febf9d';
-import { createCustomPositionMigration } from './custom-position-migration.js?v=41f7febf9d';
+import { createCustomPositionIDB } from './custom-position-idb.js?v=09ebdb0d34';
+import { createCustomPositionMigration } from './custom-position-migration.js?v=09ebdb0d34';
 
 const unavailable = new Set(['IDB_UNAVAILABLE', 'OPEN_BLOCKED', 'SecurityError', 'UnknownError',
   'VersionError', 'QuotaExceededError', 'SUSPENDED', 'STALE_LIFECYCLE', 'DISPOSED']);
@@ -11,7 +11,8 @@ const classify = raw => raw.code === 'STORAGE_INSTANCE_CHANGED' ? 'UNKNOWN' : ra
         : unavailable.has(raw.code) ? 'UNAVAILABLE' : 'INVALID_DATA';
 
 /**
- * Standalone async boundary. No production UI imports this module in S3-B.
+ * Sole async storage boundary for the saved-position UI. Game/DOM actions
+ * remain in the host Session; this module never starts a game.
  *
  * createScope({uiGeneration, dialogIdentity, gameSessionIdentity, isCurrent})
  * owns UI intent, NOT persistence. Operations return a single-use handle:
@@ -35,7 +36,7 @@ export function createCustomPositionRepository({ indexedDB = () => globalThis.in
   storage = () => globalThis.localStorage, durability = 'default',
   randomUUID = () => globalThis.crypto.randomUUID(), now = () => new Date().toISOString() } = {}) {
   const options = { indexedDB, storage, durability, randomUUID, now };
-  const scopes = new Set(); let stopped = false, disposed = false, detach = null;
+  const scopes = new Set(), verifiers = new Set(); let stopped = false, disposed = false, detach = null;
   const newAdapter = () => createCustomPositionIDB({ ...options, initializeEmpty: false });
   const newMigration = () => createCustomPositionMigration(options);
 
@@ -223,12 +224,18 @@ export function createCustomPositionRepository({ indexedDB = () => globalThis.in
     scopes.add(scope); return scope;
   }
   async function verify(token, migration = false) {
+    if (stopped || disposed) return Object.freeze({ status: 'UNKNOWN', code: disposed ? 'DISPOSED' : 'SUSPENDED', nativeEvent: 'UNKNOWN' });
     if (!token) return Object.freeze({ status: 'UNKNOWN', code: 'NO_OPERATION_TOKEN', nativeEvent: 'UNKNOWN' });
-    const adapter = newAdapter();
+    const adapter = newAdapter(); verifiers.add(adapter);
     try { return await (migration ? adapter.verifyMigrationOutcome(token) : adapter.verifyOutcome(token)); }
-    finally { adapter.dispose(); }
+    finally { verifiers.delete(adapter); adapter.dispose(); }
   }
-  function suspend(reason = 'freeze') { stopped = true; for (const scope of [...scopes]) scope.close(reason); }
+  function suspend(reason = 'freeze') {
+    stopped = true; for (const scope of [...scopes]) scope.close(reason);
+    // Independent witness reads are also native transactions. They must not
+    // retain a readwrite lock in a frozen/departed document.
+    for (const adapter of verifiers) { adapter.suspend(reason); adapter.dispose(); }
+  }
   function resume() {
     if (disposed) return Promise.resolve(Object.freeze({ status: 'UNAVAILABLE', code: 'DISPOSED' }));
     stopped = false; const scope = createScope(), handle = scope.inspectMigration();
