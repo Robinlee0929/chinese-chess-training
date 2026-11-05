@@ -299,6 +299,9 @@ function harness({
   }
   const dialogNodes = new Map();
   const document = {
+    querySelector(selector) {
+      return selector === 'dialog[open]' ? [...dialogNodes.values()].find(node => node.open) ?? null : null;
+    },
     getElementById(id) {
       if (!dialogNodes.has(id)) dialogNodes.set(id, Object.assign(domNode(), {
         open: false, close() { this.open = false; },
@@ -529,6 +532,7 @@ function harness({
     authoringActive: () => false,
     libraryActive: () => false,
     normalUndoAvailable: () => false,
+    customRematchRequest: null,
     syncHumanSideUI() {},
     humanSide: RED,
     isAI: () => context.mode !== 'pvp',
@@ -643,7 +647,7 @@ function harness({
     'handleGameReviewAiResponse', 'requestGameReviewAiCandidate',
     'pauseLiveGameForGameRecords', 'restoreLiveGamePresentation',
     'enterGameRecordLibrary', 'showGameRecordLibrary', 'openPreparedGameReview', 'openGameReview',
-    'openGameTeachingReviewHandoff',
+    'openGameTeachingReviewHandoff', 'currentPositionSaveUnavailableReason',
     'openLastCompletedGameReview', 'openStoredGameReview', 'navigateGameReview',
     'deleteGameRecordFromLibrary', 'exitGameReview', 'exitGameRecordFlow', 'invalidateNormalAI',
     'enterGameAnalysis', 'returnToGameReview',

@@ -1,4 +1,5 @@
-import { createCustomGameRoot, createMutableCustomGamePosition, validateCustomPlayPosition } from './custom-position-play.js?v=23211d9340';
+import { createCustomGameRoot, createMutableCustomGamePosition, validateCustomPlayPosition } from './custom-position-play.js?v=89999c3f94';
+import { validateContinuationConfiguration } from './game-review-continuation.js?v=89999c3f94';
 
 export function savedPositionMessage(result = {}) {
   const code = result.code ?? result.status;
@@ -107,12 +108,13 @@ export function createAsyncSavedPositionSession({ repository, host, onChange = (
       isCurrent: () => active && dialog === ownDialog && contextMatches() });
     host.pause(); ready = refresh({ initialize: true }); return true;
   }
-  function openSave(position) {
+  function openSave(position, preferences = { humanSide: position?.sideToMove || 'red', difficulty: 'medium' }) {
     // Build the detached draft before open() captures its refresh ticket.
     const valid = validateCustomPlayPosition(position);
+    const settings = validateContinuationConfiguration(preferences);
     if (!open()) return false;
     cancelWork();
-    form = { kind: 'save', title: '', humanSide: position?.sideToMove || 'red', difficulty: 'medium',
+    form = { kind: 'save', title: '', ...settings,
       position: valid.ok ? { initialBoard: valid.position.board, sideToMove: valid.position.sideToMove } : null,
       error: valid.ok ? '' : valid.error.message, invalid: !valid.ok, stale: false, busy: false, fence: null };
     view = 'form'; ready = refresh({ initialize: true }); return true;

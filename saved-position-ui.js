@@ -1,4 +1,4 @@
-import { createAsyncSavedPositionSession } from './saved-position-async-session.js?v=23211d9340';
+import { createAsyncSavedPositionSession } from './saved-position-async-session.js?v=89999c3f94';
 
 export function createSavedPositionUI({ document, window, repository, host }) {
   const el = id => document.getElementById(id);
@@ -60,7 +60,7 @@ export function createSavedPositionUI({ document, window, repository, host }) {
       const settingsNeeded = ['save', 'challenge', 'preferences'].includes(form.kind);
       el('savedPositionFormTitle').textContent = ({ save: '儲存局面', rename: '重新命名', preferences: '偏好設定', delete: '確認刪除局面', challenge: '挑戰設定', load: '載入編輯器' })[form.kind];
       el('savedPositionSummary').textContent = form.kind === 'save'
-        ? '只儲存已確認的棋面與輪走方，不包含殺局答案或棋譜。'
+        ? '只儲存棋盤快照與輪走方，不保存完整對局進度、著法、悔棋或殺局答案。下次挑戰會建立獨立新局。'
         : `「${form.position.title}」 · ${side(form.position.sideToMove)}先行`;
       el('savedPositionTitleLabel').hidden = !titleNeeded;
       el('savedPositionTitle').required = titleNeeded;
@@ -140,6 +140,6 @@ export function createSavedPositionUI({ document, window, repository, host }) {
   document.addEventListener('resume', () => { void resume(); }, true); window.addEventListener('pageshow', () => { void resume(); }, true);
   return Object.freeze({
     open(button) { invoker = button; el('savedPositionMigrationConfirm').checked = false; return session.open(); },
-    openSave(position, button) { invoker = button; el('savedPositionMigrationConfirm').checked = false; return session.openSave(position); },
+    openSave(position, button, preferences) { invoker = button; el('savedPositionMigrationConfirm').checked = false; return session.openSave(position, preferences); },
   });
 }
