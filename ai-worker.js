@@ -1,5 +1,5 @@
 // AI 搜索在 Worker 執行，避免深層搜索卡住畫面
-import { findBestMove } from './ai.js?v=23211d9340';
+import { findBestMove } from './ai.js?v=89999c3f94';
 
 const SIDES = new Set(['red', 'black']);
 const LEVELS = new Set(['easy', 'medium', 'hard']);
