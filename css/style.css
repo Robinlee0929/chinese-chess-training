@@ -1547,6 +1547,8 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
 .card {
   position: relative;
   width: min(92vw, 440px);
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 18px;
@@ -1647,6 +1649,45 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
 .ovBtns .primary:hover { background: linear-gradient(180deg, #f7d17a, #e2ad4a); }
 
 /* ---------- 提示浮層 ---------- */
+#savedPositionsDialog {
+  margin: auto;
+  width: min(640px, calc(100vw - 24px)); max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 32px); overflow-y: auto; box-sizing: border-box;
+  padding: 18px; background: var(--panel); color: var(--text);
+  border: 1px solid var(--line); border-radius: 16px;
+  overflow-wrap: anywhere;
+}
+#savedPositionsDialog::backdrop { background: rgba(0, 0, 0, .7); }
+#savedPositionsDialog [hidden] { display: none !important; }
+#savedPositionsDialog button, #savedPositionsDialog select, #savedPositionTitle,
+#btnSavedPositions, #btnSaveCustomPosition { min-height: 44px; }
+#savedPositionsDialog button { white-space: normal; }
+.saved-positions-heading, .saved-position-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.saved-positions-heading { justify-content: space-between; }
+.saved-positions-privacy { font-size: 13px; line-height: 1.7; }
+#savedPositionsList { list-style: none; padding: 0; }
+#savedPositionsList li { border-top: 1px solid var(--line); padding: 14px 0; }
+#savedPositionsList h3 { margin: 4px 0; }
+#savedPositionForm label { display: block; margin: 10px 0; }
+#savedPositionSettings { min-width: 0; margin: 12px 0; border: 1px solid var(--line); }
+#savedPositionTitle, #savedPositionSettings select {
+  display: block; width: 100%; box-sizing: border-box; max-width: 100%;
+  background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 8px;
+}
+#savedPositionAcknowledgement { display: flex !important; align-items: center; gap: 8px; min-height: 44px; }
+#savedPositionAcknowledgement[hidden] { display: none !important; }
+#savedPositionAcknowledge { flex: 0 0 auto; width: 22px; height: 22px; }
+#savedPositionError, #savedPositionsStorageStatus { color: #f5ad9d; white-space: pre-line; }
+#savedPositionsDialog :focus-visible { outline: 2px solid #e5b85b; outline-offset: 3px; }
+#savedPositionMigration { border: 1px solid var(--line); padding: 12px; margin: 12px 0; }
+#savedPositionMigration label { display: flex; gap: 8px; align-items: flex-start; line-height: 1.6; margin-bottom: 12px; }
+#savedPositionMigrationConfirm { flex: 0 0 auto; width: 22px; height: 22px; }
+#savedPositionsNotice { white-space: pre-line; }
+@media (max-width: 400px) {
+  #savedPositionsDialog { padding: 12px; }
+  #savedPositionsDialog .saved-position-actions button { flex: 1 1 115px; }
+}
+
 #toast {
   position: fixed;
   left: 50%;

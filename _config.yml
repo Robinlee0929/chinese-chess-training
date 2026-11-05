@@ -1,0 +1,19 @@
+# Branch-based GitHub Pages uses Jekyll. Keep development entrypoints out of
+# the artifact; these exclusions are not applied by a raw static-file upload.
+exclude:
+  - tools
+  - staging
+  - coach-api
+  - "*.mjs"
+  - "**/*.mjs"
+  - node_modules
+  - Gemfile
+  - Gemfile.lock
+  - vendor/bundle
+  - vendor/cache
+  - vendor/gems
+  - vendor/ruby
+  - test-results
+  - playwright-report
+  - coverage
+  - demo-output

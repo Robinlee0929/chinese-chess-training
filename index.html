@@ -69,7 +69,7 @@
   "isBasedOn": "https://github.com/doggy8088/chinese-chess"
 }
 </script>
-<link rel="stylesheet" href="./css/style.css?v=533286807f">
+<link rel="stylesheet" href="./css/style.css?v=23211d9340">
 <script type="importmap">
 {
   "imports": {
@@ -107,6 +107,7 @@
       <button id="btnCustomRematch" type="button" class="hidden" aria-haspopup="dialog" aria-controls="customRematchDialog">重新挑戰</button>
       <button id="btnMore" type="button" aria-haspopup="true" aria-expanded="false" title="更多設定" aria-label="更多設定">⋯</button>
       <div id="hudMore">
+        <button id="btnSavedPositions" type="button" aria-haspopup="dialog" aria-controls="savedPositionsDialog">我的局面</button>
         <button id="btnGameRecords" type="button" aria-pressed="false">對局紀錄</button>
         <button id="btnTeachingMode" type="button" aria-pressed="false"
           aria-controls="gameTeachingCard">教學模式：關</button>
@@ -229,6 +230,7 @@
         <div id="recorderReady">
           <p class="editor-hint">錄製答案時，請在棋盤走出已知解法；選擇對弈則由電腦即時應戰。</p>
           <button id="btnRecorderStart" type="button" class="recorder-primary">開始錄製答案</button>
+          <button id="btnSaveCustomPosition" type="button" aria-haspopup="dialog" aria-controls="savedPositionsDialog">儲存局面</button>
           <button id="btnCustomPlay" type="button" class="game-review-continue"
             aria-haspopup="dialog" aria-controls="customPlayDialog">從此局面對弈</button>
           <dialog id="customPlayDialog" aria-labelledby="customPlayHeading" aria-describedby="customPlayDescription">
@@ -695,11 +697,11 @@
     </form>
   </dialog>
 
-  <div id="overlay" class="hidden">
+  <div id="overlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="ovTitle" aria-describedby="ovReason">
     <canvas id="confettiCv" aria-hidden="true"></canvas>
     <div class="card" id="ovCard">
       <div id="ovBadge">人機對弈 ・ 中等</div>
-      <h2 id="ovTitle">你贏了！</h2>
+      <h2 id="ovTitle" tabindex="-1">你贏了！</h2>
       <div id="ovStars" aria-hidden="true"></div>
       <p id="ovSub">精彩對弈！</p>
       <div id="ovStats">
@@ -714,13 +716,58 @@
         <button id="btnReviewGame" type="button" class="hidden">複盤本局</button>
         <button id="btnAgain" type="button">再來一局</button>
         <button id="btnCustomRematchEnd" type="button" class="hidden">重新挑戰</button>
+        <button id="btnSavedPositionsEnd" type="button" aria-haspopup="dialog" aria-controls="savedPositionsDialog">我的局面</button>
       </div>
     </div>
   </div>
 
+  <dialog id="savedPositionsDialog" aria-labelledby="savedPositionsHeading">
+    <div class="saved-positions-heading">
+      <h2 id="savedPositionsHeading" tabindex="-1">我的局面</h2>
+      <button id="savedPositionsClose" type="button">關閉</button>
+    </div>
+    <p class="saved-positions-privacy">局面只儲存在目前瀏覽器。清除網站資料可能造成遺失，沒有跨裝置同步；首版不支援 JSON 備份。</p>
+    <p id="savedPositionsStorageStatus" role="alert"></p>
+    <p id="savedPositionsNotice" role="status" aria-live="polite"></p>
+    <section id="savedPositionMigration" hidden aria-labelledby="savedPositionMigrationHeading">
+      <h3 id="savedPositionMigrationHeading">舊版局面轉移</h3>
+      <p id="savedPositionMigrationCount"></p>
+      <label><input id="savedPositionMigrationConfirm" type="checkbox">我已停止使用其他舊版分頁或視窗，確認轉移並保留舊資料。</label>
+      <button id="savedPositionMigrate" type="button">確認轉移</button>
+    </section>
+    <button id="savedPositionVerify" type="button" hidden>查證先前操作結果</button>
+    <button id="savedPositionsReload" type="button">重新載入最新資料</button>
+    <section id="savedPositionsListView">
+      <p id="savedPositionsEmpty">尚未儲存局面。請先建立並確認局面，再選擇「儲存局面」。</p>
+      <ul id="savedPositionsList"></ul>
+    </section>
+    <form id="savedPositionForm" hidden>
+      <h3 id="savedPositionFormTitle"></h3>
+      <p id="savedPositionSummary"></p>
+      <label id="savedPositionTitleLabel" for="savedPositionTitle">局面名稱（1–60 個字元）
+        <input id="savedPositionTitle" type="text" maxlength="120" autocomplete="off">
+      </label>
+      <fieldset id="savedPositionSettings">
+        <legend>此局面的對弈設定</legend>
+        <label for="savedPositionHumanSide">玩家棋色</label>
+        <select id="savedPositionHumanSide"><option value="red">紅方</option><option value="black">黑方</option></select>
+        <label for="savedPositionDifficulty">AI 難度</label>
+        <select id="savedPositionDifficulty"><option value="easy">簡單</option><option value="medium">中等</option><option value="hard">困難</option></select>
+        <p>開始挑戰會先儲存修改的設定；「僅本次挑戰」不儲存偏好。</p>
+      </fieldset>
+      <label id="savedPositionAcknowledgement"><input id="savedPositionAcknowledge" type="checkbox"><span id="savedPositionAcknowledgementText"></span></label>
+      <p id="savedPositionDeleteWarning">刪除後無法復原。正在進行的挑戰及其重新挑戰不受影響。</p>
+      <p id="savedPositionError" role="alert"></p>
+      <div class="saved-position-actions">
+        <button id="savedPositionBack" type="button">取消，返回清單</button>
+        <button id="savedPositionSubmit" type="submit">確認</button>
+        <button id="savedPositionOnce" type="button">僅本次挑戰</button>
+      </div>
+    </form>
+  </dialog>
   <div id="toast" class="hidden" role="status"></div>
 </div>
 
-<script type="module" src="./main.js?v=533286807f"></script>
+<script type="module" src="./main.js?v=23211d9340"></script>
 </body>
 </html>

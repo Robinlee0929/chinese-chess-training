@@ -37,7 +37,15 @@ python -m http.server 8000
 
 「開始錄製答案」仍用於錄下攻守雙方的一條將死解答，供儲存殺局與反覆練習；「從此局面對弈」則直接開始新的人機對局，AI 會即時搜尋回應，不需要預先錄製答案，也不要求後續一定形成將死。
 
-新對局從自訂局面建立獨立的歷史與重複局面紀錄，悔棋不會退到起點之前，未完成時不寫入完成棋譜。完成後沿用既有儲存與複盤格式；從複盤轉入編輯器也不會改寫來源棋譜。「新對局」仍建立標準開局。本功能沒有新增儲存自訂棋面或重玩同一殘局。
+新對局從自訂局面建立獨立的歷史與重複局面紀錄，悔棋不會退到起點之前，未完成時不寫入完成棋譜。完成後沿用既有儲存與複盤格式；從複盤轉入編輯器也不會改寫來源棋譜。自訂對弈可按「重新挑戰」，恢復該次對弈的原始棋盤、輪走方、玩家棋色與 AI 難度；不需要先儲存局面。進行中需確認放棄本局進度，終局後可直接重挑。「新對局」與「再來一局」仍建立標準開局。
+
+### 我的局面與本機儲存
+
+- 確認自訂棋面後可按「儲存局面」。在「我的局面」可重新命名、修改玩家棋色與 AI 難度偏好、刪除、載入編輯器或直接挑戰；也可選「僅本次挑戰」，不改變已存偏好。終局卡片亦提供「我的局面」入口。
+- 「我的局面」使用目前網站來源、瀏覽器與設定檔內的 **IndexedDB**。只保存初始棋盤、輪走方、名稱、時間與對弈偏好，不保存殺局答案或未完成對局的逐手進度。局面清單最多 **100 筆**，序列化 envelope 上限 **1 MiB（UTF-8）**；此上限不是整個 IndexedDB 的磁碟用量。
+- 偵測到舊版自訂局面的 localStorage 資料時，須先關閉仍可能寫入舊資料的分頁，再明確確認遷移。程式先驗證並暫存（STAGED），再啟用（ACTIVE），保留 Legacy 原文；取消不會刪除舊資料。來源改變或衝突時不自動覆寫，結果不明（UNKNOWN）時只查證，不自動重送。確認關閉舊分頁並非技術上的跨版本寫入鎖。
+- **「我的殺局」仍使用獨立的 localStorage 題庫**，保存錄製答案並支援既有 JSON 匯出／匯入；它與「我的局面」不是同一資料庫，殺局備份不包含自訂局面。
+- **清除網站資料或移除瀏覽器設定檔可能遺失已存局面。** 首版「我的局面」沒有 JSON 備份／匯入匯出，也沒有雲端、跨裝置或跨瀏覽器同步。重新整理可讀取已存局面；當次未儲存的編輯草稿與重新挑戰 root 則不會保留。
 
 ## 核心功能
 
@@ -313,6 +321,25 @@ fail closed，409 仍具最終權威，不會改寫使用者偏好或靜默切�
 
 `tools/game-analysis-browser-qa-hook.js` 可在本機測試伺服器注入固定 `.invalid` origin 與
 記憶體內 transport，以覆蓋 available／unavailable／timeout／409 等情境；不會呼叫外部網路。
+
+## GitHub Pages 發布資產檢查
+
+目前 Pages 從 `main /` 使用 Jekyll 建置；`_config.yml` 排除測試工具、staging、後端來源與 `.mjs` 測試，不改變正式 UI 模組。這項隔離依賴 Jekyll，不能用略過 Jekyll 的原始碼直接上傳取代。
+
+使用與 Pages 相容的 `github-pages` 建置環境（本次驗證版本 232／Jekyll 3.10.0），將產物輸出至 checkout 外的新目錄，再執行：
+
+```sh
+github-pages build --source . --destination /absolute/path/to/new-site
+node tools/check-pages-artifact.mjs /absolute/path/to/new-site
+```
+
+檢查器驗證完整正式資源及內容指紋，並拒絕含測試資產的產物。可用已安裝的 Playwright／Chrome 進一步測試產物的 `/chinese-chess-training/` 子路徑（`PLAYWRIGHT_MODULE` 可指定 Playwright 模組路徑，`CHROME_PATH` 可指定 Chrome）：
+
+```sh
+node tools/pages-artifact-smoke.mjs /absolute/path/to/new-site /absolute/path/to/new-evidence
+```
+
+上述命令只做本機建置與驗證，不部署網站；測試使用隔離瀏覽器與合成資料。不要直接在正式網站執行 `tools/` fixture。
 
 ## 授權
 

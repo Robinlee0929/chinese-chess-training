@@ -1,0 +1,12 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {tailProfile} from './tools/idb-tail-profile.mjs';
+import {integrityValid,unionMs,alignMarkers,summarizeTrace} from './tools/idb-tail-trace.mjs';
+const good={parsed:true,streamEOF:true,complete:{dataLossOccurred:false},bufferReports:[{percentFull:.1}]};
+test('tail transform preserves transaction scheduling and task sites',()=>{const source=readFileSync(new URL('./custom-position-idb.js',import.meta.url),'utf8'),changed=tailProfile(source);for(const word of ['await','setTimeout','setInterval','queueMicrotask','new Promise','tx.commit()','tx.abort()','store.get(','store.put('])assert.equal(changed.split(word).length,source.split(word).length,word);assert.match(changed,/loaded\(\); }; tailTick\('T3-reads-queued'/);});
+test('trace overflow, absent loss report, truncated stream and parse errors fail integrity',()=>{assert.equal(integrityValid(good),true);for(const bad of [{...good,complete:{dataLossOccurred:true}},{...good,complete:{}},{...good,streamEOF:false},{...good,parsed:false},{...good,bufferReports:[{percentFull:1}]}])assert.equal(integrityValid(bad),false);});
+test('GC nested slices must not be counted twice',()=>{assert.equal(unionMs([[0,1000],[200,800],[900,1500]],100,1400),1.3);});
+test('trace-page bridge uses monotonic marks, never epoch time',()=>{const metrics=[{name:'a',at:10},{name:'b',at:20}],trace={traceEvents:[{name:'a',ts:1010000,pid:1,tid:2},{name:'b',ts:1020000,pid:1,tid:2}]};assert.equal(alignMarkers(trace,metrics).offsetUs,1000000);assert.equal(alignMarkers(trace,metrics).valid,true);trace.traceEvents[1].ts+=1000;assert.equal(alignMarkers(trace,metrics).valid,false);});
+test('missing marks or mismatched renderer identity cannot support attribution',()=>{const metrics=[{name:'a',at:1},{name:'b',at:2}],trace={traceEvents:[{name:'a',ts:1000,pid:1,tid:2}]};assert.equal(alignMarkers(trace,metrics).valid,false);trace.traceEvents.push({name:'b',ts:2000,pid:2,tid:2});assert.equal(alignMarkers(trace,metrics).valid,false);});
+test('an incomplete trace cannot yield CPU or scheduling conclusions',()=>{assert.equal(summarizeTrace({traceEvents:[]},{...good,streamEOF:false},[],{}).usable,false);});

@@ -1,7 +1,7 @@
 import {
   createReviewCoachStagingCapability,
   installReviewCoachStagingCapability,
-} from './review-coach-connectivity.js?v=533286807f';
+} from './review-coach-connectivity.js?v=23211d9340';
 
 export function bootstrapReviewCoachStaging(config, dependencies, target = globalThis) {
   const capability = createReviewCoachStagingCapability(config, dependencies);
