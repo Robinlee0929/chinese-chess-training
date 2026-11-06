@@ -69,7 +69,7 @@
   "isBasedOn": "https://github.com/doggy8088/chinese-chess"
 }
 </script>
-<link rel="stylesheet" href="./css/style.css?v=89999c3f94">
+<link rel="stylesheet" href="./css/style.css?v=786025ac37">
 <script type="importmap">
 {
   "imports": {
@@ -107,6 +107,7 @@
       <button id="btnCustomRematch" type="button" class="hidden" aria-haspopup="dialog" aria-controls="customRematchDialog">重新挑戰</button>
       <button id="btnMore" type="button" aria-haspopup="true" aria-expanded="false" title="更多設定" aria-label="更多設定">⋯</button>
       <div id="hudMore">
+        <button id="btnBoardAppearance" type="button" disabled title="棋盤外觀載入中…" aria-haspopup="dialog" aria-controls="boardAppearanceDialog">棋盤外觀</button>
         <button id="btnSaveCurrentPosition" type="button" disabled aria-haspopup="dialog" aria-controls="savedPositionsDialog">儲存目前局面</button>
         <button id="btnSavedPositions" type="button" aria-haspopup="dialog" aria-controls="savedPositionsDialog">我的局面</button>
         <button id="btnGameRecords" type="button" aria-pressed="false">對局紀錄</button>
@@ -766,9 +767,44 @@
       </div>
     </form>
   </dialog>
+  <dialog id="boardAppearanceDialog" aria-labelledby="boardAppearanceHeading" aria-describedby="boardAppearancePrivacy">
+    <div class="appearance-heading">
+      <h2 id="boardAppearanceHeading">棋盤外觀</h2>
+      <button id="boardAppearanceClose" type="button">完成</button>
+    </div>
+    <p id="boardAppearancePrivacy">照片只在本機處理，不會自動上傳。戰績分享圖一律使用原始木紋，不包含你的照片。</p>
+    <div class="appearance-layout">
+      <canvas id="boardAppearancePreview" width="230" height="255" role="img" aria-label="棋盤照片與格線預覽"></canvas>
+      <div class="appearance-controls">
+        <button id="boardAppearanceChoose" type="button">上傳圖片</button>
+        <input id="boardAppearanceFile" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+        <p class="appearance-hint">JPEG、PNG、WebP 靜態圖片，最多 10 MiB、2,400 萬像素，單邊 8,192 像素。</p>
+        <fieldset id="boardAppearanceSettings" disabled>
+          <legend>照片顯示</legend>
+          <label for="boardAppearanceFit">顯示方式</label>
+          <select id="boardAppearanceFit"><option value="cover">填滿棋盤（裁切）</option><option value="contain">完整顯示</option></select>
+          <label for="boardAppearanceopacity">照片濃度 <output id="boardAppearanceopacityValue" for="boardAppearanceopacity">50%</output></label>
+          <input id="boardAppearanceopacity" type="range" min="0" max="100" value="50">
+          <label for="boardAppearancex">水平位置 <output id="boardAppearancexValue" for="boardAppearancex">50%</output></label>
+          <input id="boardAppearancex" type="range" min="0" max="100" value="50">
+          <label for="boardAppearancey">垂直位置 <output id="boardAppearanceyValue" for="boardAppearancey">50%</output></label>
+          <input id="boardAppearancey" type="range" min="0" max="100" value="50">
+          <p class="appearance-hint">位置依預覽的棋盤方向調整；填滿時裁去邊緣，完整顯示時保留整張照片。</p>
+        </fieldset>
+      </div>
+    </div>
+    <label class="appearance-remember"><input id="boardAppearanceRemember" type="checkbox" disabled>在此裝置記住照片</label>
+    <p class="appearance-hint">預設只供目前分頁使用。記住時僅保存縮小後的照片；清除網站資料可能使照片遺失，沒有跨裝置同步。</p>
+    <p id="boardAppearancePersistence" role="status"></p>
+    <p id="boardAppearanceStatus" role="status" aria-live="polite"></p>
+    <div class="appearance-actions">
+      <button id="boardAppearanceReset" type="button">恢復原始木紋</button>
+      <button id="boardAppearanceRetry" type="button" hidden>重試保存</button>
+    </div>
+  </dialog>
   <div id="toast" class="hidden" role="status"></div>
 </div>
 
-<script type="module" src="./main.js?v=89999c3f94"></script>
+<script type="module" src="./main.js?v=786025ac37"></script>
 </body>
 </html>

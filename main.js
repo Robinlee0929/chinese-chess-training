@@ -2,6 +2,9 @@
 // 中國象棋 3D —— Three.js 呈現 + 互動
 // ============================================================
 import * as THREE from 'three';
+// Required for the default wood/grid texture as well as photo rendering.
+// Unlike the optional UI/store below, failure of this core dependency is fatal.
+import { createBoardSurface } from './board-appearance.js?v=786025ac37';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
   normalizePieceGlyphOrientationMode,
@@ -14,20 +17,20 @@ import {
   ROWS, COLS, RED, BLACK,
   initialBoard, legalMoves, applyMove, inCheck,
   hasAnyLegalMove, name, notation, hashBoard, repetitionVerdict,
-} from './game.js?v=89999c3f94';
+} from './game.js?v=786025ac37';
 import {
   validateCustomPlayPosition, createCustomGameRoot, createMutableCustomGamePosition,
-} from './custom-position-play.js?v=89999c3f94';
-import { createGameRecord } from './game-record.js?v=89999c3f94';
-import { createCustomPositionRepository } from './custom-position-repository.js?v=89999c3f94';
-import { createSavedPositionUI } from './saved-position-ui.js?v=89999c3f94';
-import { attachTerminalOverlayFocus } from './terminal-overlay-focus.js?v=89999c3f94';
+} from './custom-position-play.js?v=786025ac37';
+import { createGameRecord } from './game-record.js?v=786025ac37';
+import { createCustomPositionRepository } from './custom-position-repository.js?v=786025ac37';
+import { createSavedPositionUI } from './saved-position-ui.js?v=786025ac37';
+import { attachTerminalOverlayFocus } from './terminal-overlay-focus.js?v=786025ac37';
 import {
   canStartGameFromReview, createReviewContinuationPosition,
   defaultContinuationDifficulty, defaultContinuationHumanSide,
   validateContinuationConfiguration,
-} from './game-review-continuation.js?v=89999c3f94';
-import { createGameRecordStore } from './game-record-store.js?v=89999c3f94';
+} from './game-review-continuation.js?v=786025ac37';
+import { createGameRecordStore } from './game-record-store.js?v=786025ac37';
 import {
   createGameReview,
   createGameRecordLibraryView,
@@ -36,15 +39,15 @@ import {
   nextGameReviewPly,
   lastGameReviewPly,
   selectGameReviewPly,
-} from './game-review.js?v=89999c3f94';
+} from './game-review.js?v=786025ac37';
 import {
   createGameReviewAiState,
   invalidateGameReviewAiState,
   beginGameReviewAiRequest,
   settleGameReviewAiResponse,
-} from './game-review-ai.js?v=89999c3f94';
-import { createGameReviewEvidence } from './game-review-evidence.js?v=89999c3f94';
-import { deriveGameReviewTeaching } from './game-review-teaching.js?v=89999c3f94';
+} from './game-review-ai.js?v=786025ac37';
+import { createGameReviewEvidence } from './game-review-evidence.js?v=786025ac37';
+import { deriveGameReviewTeaching } from './game-review-teaching.js?v=786025ac37';
 import {
   createGameTeachingModeState,
   setGameTeachingModeEnabled,
@@ -53,7 +56,7 @@ import {
   settleGameTeachingModeAnalysis,
   gameTeachingModeMatchesHistory,
   shouldScheduleGameTeachingMode,
-} from './game-teaching-mode.js?v=89999c3f94';
+} from './game-teaching-mode.js?v=786025ac37';
 import {
   createDisabledCoachState,
   createIdleCoachState,
@@ -62,28 +65,28 @@ import {
   settleCoachResponse,
   invalidateCoachState,
   selectCoachModelProfile,
-} from './game-review-coach.js?v=89999c3f94';
+} from './game-review-coach.js?v=786025ac37';
 import {
   readCoachModelProfilePreference,
   writeCoachModelProfilePreference,
-} from './coach-model-profile-preference.js?v=89999c3f94';
+} from './coach-model-profile-preference.js?v=786025ac37';
 import {
   readInstalledReviewCoachStagingCapability,
   isReviewCoachProfileAvailable,
-} from './review-coach-connectivity.js?v=89999c3f94';
+} from './review-coach-connectivity.js?v=786025ac37';
 import {
   createGameAnalysis,
   gameAnalysisLegalMoves,
   applyGameAnalysisMove,
   undoGameAnalysisMove,
   resetGameAnalysis,
-} from './game-analysis.js?v=89999c3f94';
-import { createGameReviewPuzzleHandoff } from './game-review-puzzle-handoff.js?v=89999c3f94';
+} from './game-analysis.js?v=786025ac37';
+import { createGameReviewPuzzleHandoff } from './game-review-puzzle-handoff.js?v=786025ac37';
 import {
   createGameLiveReviewHandoff,
   consumeGameLiveReviewHandoff,
   createGameLiveReviewAnalysis,
-} from './game-live-review-handoff.js?v=89999c3f94';
+} from './game-live-review-handoff.js?v=786025ac37';
 import {
   PuzzleEditorError,
   createEditorState,
@@ -93,7 +96,7 @@ import {
   setEditorSideToMove,
   confirmAuthoredPosition,
   exportAuthoredPosition,
-} from './puzzle-editor.js?v=89999c3f94';
+} from './puzzle-editor.js?v=786025ac37';
 import {
   PuzzleRecorderError,
   createRecorder,
@@ -103,7 +106,7 @@ import {
   finishRecording,
   exportRecorderBoard,
   exportRecordedResult,
-} from './puzzle-recorder.js?v=89999c3f94';
+} from './puzzle-recorder.js?v=786025ac37';
 import {
   PuzzlePracticeError,
   PRACTICE_HINT_MAX_LEVEL,
@@ -113,12 +116,12 @@ import {
   derivePracticeHint,
   restartPractice,
   exportPracticeSnapshot,
-} from './puzzle-practice.js?v=89999c3f94';
-import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=89999c3f94';
+} from './puzzle-practice.js?v=786025ac37';
+import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=786025ac37';
 import {
   PracticeAnalyticsError,
   createPracticeAnalyticsStore,
-} from './puzzle-analytics.js?v=89999c3f94';
+} from './puzzle-analytics.js?v=786025ac37';
 import {
   PUZZLE_TRANSFER_FORMAT,
   PUZZLE_TRANSFER_SCHEMA_VERSION,
@@ -126,7 +129,7 @@ import {
   PuzzleTransferError,
   serializePuzzleExport,
   parsePuzzleImport,
-} from './puzzle-transfer.js?v=89999c3f94';
+} from './puzzle-transfer.js?v=786025ac37';
 import {
   PHOTO_MAX_ZOOM,
   PHOTO_MIN_ZOOM,
@@ -140,7 +143,7 @@ import {
   validatePhotoMetadata,
   zoomPhotoIn,
   zoomPhotoOut,
-} from './puzzle-photo.js?v=89999c3f94';
+} from './puzzle-photo.js?v=786025ac37';
 import {
   CALIBRATION_CANONICAL_HEIGHT,
   CALIBRATION_CANONICAL_WIDTH,
@@ -156,7 +159,7 @@ import {
   setCorner,
   transformPoint,
   validateQuadrilateral,
-} from './puzzle-photo-calibration.js?v=89999c3f94';
+} from './puzzle-photo-calibration.js?v=786025ac37';
 import {
   PuzzlePhotoRecognitionError,
   RECOGNITION_OCCUPANCY_EMPTY,
@@ -168,7 +171,7 @@ import {
   isRecognitionTokenCurrent,
   recognizeIntersections,
   selectionKey,
-} from './puzzle-photo-recognition.js?v=89999c3f94';
+} from './puzzle-photo-recognition.js?v=786025ac37';
 import {
   addTemplate,
   createPieceTypeSessionToken,
@@ -178,13 +181,13 @@ import {
   normalizePiecePatch,
   removeTemplatesForSource,
   suggestUnresolvedPieceTypes,
-} from './puzzle-photo-piece-types.js?v=89999c3f94';
+} from './puzzle-photo-piece-types.js?v=786025ac37';
 import {
   UNREVIEWED, PuzzlePhotoReviewError,
   createReviewState, buildReviewQueue, selectReviewCandidate, confirmEmpty, confirmPiece,
   nextCandidate, previousCandidate, nextUnresolved, acceptHighConfidenceEmpty,
   undoBulkEmpty, resetReview, rescanReview, reviewProgress, confirmedSelections, buildReviewedBoard,
-} from './puzzle-photo-review.js?v=89999c3f94';
+} from './puzzle-photo-review.js?v=786025ac37';
 
 // ---------------- 常數 ----------------
 const CELL = 1;
@@ -261,85 +264,9 @@ rim.position.set(-8, 4, -6);
 scene.add(rim);
 
 // ---------------- 棋盘 ----------------
+const boardSurface = createBoardSurface(document.createElement('canvas'));
 function makeBoardTexture() {
-  const cell = 100, pad = 60;
-  const W = (COLS - 1) * cell + pad * 2, H = (ROWS - 1) * cell + pad * 2;
-  const cv = document.createElement('canvas');
-  cv.width = W; cv.height = H;
-  const g = cv.getContext('2d');
-
-  // 木紋底
-  const grd = g.createLinearGradient(0, 0, W, H);
-  grd.addColorStop(0, '#e0b884');
-  grd.addColorStop(0.5, '#d5a971');
-  grd.addColorStop(1, '#c99c64');
-  g.fillStyle = grd;
-  g.fillRect(0, 0, W, H);
-  for (let i = 0; i < 160; i++) {
-    g.strokeStyle = `rgba(118,78,38,${0.03 + Math.random() * 0.05})`;
-    g.lineWidth = 0.6 + Math.random() * 2.2;
-    const y = Math.random() * H;
-    g.beginPath();
-    g.moveTo(0, y);
-    g.bezierCurveTo(W * 0.3, y + (Math.random() * 16 - 8), W * 0.65, y + (Math.random() * 16 - 8), W, y + (Math.random() * 10 - 5));
-    g.stroke();
-  }
-
-  const P = (r, c) => ({ x: pad + c * cell, y: pad + r * cell });
-  const line = (a, b) => { g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke(); };
-
-  // 外框
-  g.strokeStyle = '#4a3320';
-  g.lineWidth = 5;
-  g.strokeRect(pad * 0.42, pad * 0.42, W - pad * 0.84, H - pad * 0.84);
-  g.lineWidth = 3;
-  g.strokeRect(pad, pad, W - pad * 2, H - pad * 2);
-
-  // 橫線
-  for (let r = 0; r < ROWS; r++) line(P(r, 0), P(r, COLS - 1));
-  // 縱線（中間被楚河漢界斷開，兩邊界線貫穿）
-  for (let c = 0; c < COLS; c++) {
-    if (c === 0 || c === COLS - 1) line(P(0, c), P(ROWS - 1, c));
-    else { line(P(0, c), P(4, c)); line(P(5, c), P(9, c)); }
-  }
-  // 九宮斜線
-  line(P(0, 3), P(2, 5)); line(P(0, 5), P(2, 3));
-  line(P(7, 3), P(9, 5)); line(P(7, 5), P(9, 3));
-
-  // 星位（炮位、兵位）
-  g.lineWidth = 2.5;
-  const star = (r, c) => {
-    const p = P(r, c), d = 12, o = 8;
-    for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
-      const x0 = p.x + sx * o, y0 = p.y + sy * o;
-      g.beginPath(); g.moveTo(x0, y0); g.lineTo(x0 + sx * d, y0); g.stroke();
-      g.beginPath(); g.moveTo(x0, y0); g.lineTo(x0, y0 + sy * d); g.stroke();
-    }
-  };
-  for (const [r, c] of [
-    [2, 1], [2, 7], [7, 1], [7, 7],
-    [3, 0], [3, 2], [3, 4], [3, 6], [3, 8],
-    [6, 0], [6, 2], [6, 4], [6, 6], [6, 8],
-  ]) star(r, c);
-
-  // 楚河 / 漢界 —— 直書：字沿河界縱向排列，且在預設視角下正立
-  // （貼圖相對於畫面旋轉了 90°：畫面上方 = 貼圖 +x，故字需旋轉 90° 並沿 x 排列）
-  g.fillStyle = 'rgba(74,51,32,0.8)';
-  g.font = '56px "Kaiti SC","STKaiti","KaiTi","Noto Serif TC",serif';
-  g.textAlign = 'center';
-  g.textBaseline = 'middle';
-  const ry = (4 + 5) / 2 * cell + pad;
-  const vChar = (ch, x) => {
-    g.save();
-    g.translate(x, ry);
-    g.rotate(Math.PI / 2);
-    g.fillText(ch, 0, 3);
-    g.restore();
-  };
-  vChar('楚', 264); vChar('河', 196);          // 畫面下方直書「楚河」
-  vChar('漢', W - 196); vChar('界', W - 264);  // 畫面上方直書「漢界」
-
-  const tex = new THREE.CanvasTexture(cv);
+  const tex = new THREE.CanvasTexture(boardSurface.canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
   return tex;
@@ -858,7 +785,7 @@ function currentAIRequest(request) {
 function startAIFallback(request) {
   if (!currentAIRequest(request) || request.settled || request.fallbackStarted) return;
   request.fallbackStarted = true;
-  (aiModule ??= import('./ai.js?v=89999c3f94')).then(({ findBestMove }) => {
+  (aiModule ??= import('./ai.js?v=786025ac37')).then(({ findBestMove }) => {
     if (!currentAIRequest(request) || request.settled) return;
     request.fallbackTimer = setTimeout(() => {
       if (!currentAIRequest(request) || request.settled) return;
@@ -887,7 +814,7 @@ function requestAIMove() {
     submitted: false, fallbackStarted: false, worker: null, moveTimer: null, fallbackTimer: null };
   aiRequest = request;
   try {
-    aiWorker ??= new Worker(new URL('./ai-worker.js?v=89999c3f94', import.meta.url), { type: 'module' });
+    aiWorker ??= new Worker(new URL('./ai-worker.js?v=786025ac37', import.meta.url), { type: 'module' });
     const worker = aiWorker;
     request.worker = worker;
     worker.onmessage = (event) => onAIResult(event.data, request, worker);
@@ -1066,7 +993,7 @@ function requestGameTeachingModeAnalysis(source) {
   renderGameTeachingMode();
   let worker;
   try {
-    worker = new Worker(new URL('./ai-worker.js?v=89999c3f94', import.meta.url), { type: 'module' });
+    worker = new Worker(new URL('./ai-worker.js?v=786025ac37', import.meta.url), { type: 'module' });
     gameTeachingModeWorker = worker;
     worker.onmessage = (event) => handleGameTeachingModeResponse(worker, event.data);
     worker.onerror = (event) => {
@@ -3212,7 +3139,7 @@ function handleGameReviewAiResponse(worker, response) {
 }
 
 function createGameReviewAiWorker() {
-  return new Worker(new URL('./ai-worker.js?v=89999c3f94', import.meta.url), { type: 'module' });
+  return new Worker(new URL('./ai-worker.js?v=786025ac37', import.meta.url), { type: 'module' });
 }
 
 function requestGameReviewAiCandidate() {
@@ -5777,11 +5704,15 @@ async function buildShareCard(res) {
   g.save();
   roundRectPath(g, bx, by, bw, bh, 22);
   g.clip();
-  renderer.render(scene, camera);
-  const shot = renderer.domElement;
-  const sc = Math.max(bw / shot.width, bh / shot.height);
-  const sw = bw / sc, sh = bh / sc;
-  g.drawImage(shot, (shot.width - sw) / 2, (shot.height - sh) / 2, sw, sh, bx, by, bw, bh);
+  boardSurface.withDefault(() => {
+    const shot = renderer.domElement;
+    const sc = Math.max(bw / shot.width, bh / shot.height);
+    const sw = bw / sc, sh = bh / sc;
+    g.drawImage(shot, (shot.width - sw) / 2, (shot.height - sh) / 2, sw, sh, bx, by, bw, bh);
+  }, () => {
+    boardMesh.material.map.needsUpdate = true;
+    renderer.render(scene, camera);
+  });
   g.restore();
   roundRectPath(g, bx, by, bw, bh, 22);
   g.strokeStyle = 'rgba(217,164,65,0.5)';
@@ -6221,6 +6152,47 @@ function closeHudMenu() {
   hudMore.classList.remove('open');
   btnMore.setAttribute('aria-expanded', 'false');
 }
+let boardAppearanceUI = null;
+let boardAppearanceGeneration = 0;
+let boardAppearancePageActive = true;
+let boardAppearanceLoading = false;
+async function loadBoardAppearanceUI() {
+  const button = document.getElementById('btnBoardAppearance');
+  if (!button || !boardAppearancePageActive || boardAppearanceLoading || boardAppearanceUI) return;
+  const generation = ++boardAppearanceGeneration;
+  boardAppearanceLoading = true;
+  button.disabled = true;
+  button.title = '棋盤外觀載入中…';
+  const current = () => boardAppearancePageActive && generation === boardAppearanceGeneration;
+  try {
+    // Do not await this from core startup. A missing UI/store or invalid module
+    // must leave the default board and all game controls working.
+    const { createBoardAppearanceUI } = await import('./board-appearance-ui.js?v=786025ac37');
+    if (!current()) return;
+    boardAppearanceUI = createBoardAppearanceUI({
+      surface: boardSurface,
+      changed: () => { boardMesh.material.map.needsUpdate = true; },
+      closeMenu: closeHudMenu,
+    });
+  } catch (error) {
+    if (!current()) return;
+    button.disabled = true;
+    button.title = '棋盤外觀暫時無法載入，請重新整理頁面再試。';
+    console.warn('棋盤外觀初始化失敗；主要對弈仍可使用。', error);
+  } finally {
+    if (generation === boardAppearanceGeneration) boardAppearanceLoading = false;
+  }
+}
+window.addEventListener('pagehide', event => {
+  boardAppearancePageActive = false;
+  boardAppearanceGeneration++;
+  boardAppearanceLoading = false;
+  if (!event.persisted) { boardAppearanceUI?.dispose(); boardAppearanceUI = null; }
+});
+window.addEventListener('pageshow', event => {
+  boardAppearancePageActive = true;
+  if (event.persisted && !boardAppearanceUI) void loadBoardAppearanceUI();
+});
 btnMore.addEventListener('click', () => {
   const open = hudMore.classList.toggle('open');
   btnMore.setAttribute('aria-expanded', String(open));
@@ -6230,6 +6202,7 @@ document.addEventListener('pointerdown', (e) => {
 });
 document.addEventListener('keydown', (e) => {
   // The modal owns Escape and navigation keys until confirmed or cancelled.
+  if (document.getElementById('boardAppearanceDialog')?.open) return;
   if (document.getElementById('gameReviewContinuationDialog').open
     || document.getElementById('savedPositionsDialog').open
     || document.getElementById('customPlayDialog').open
@@ -6461,3 +6434,4 @@ function tick(now) {
 renderer.setAnimationLoop(tick);
 
 newGame({ reconcileHumanSideCamera: false });
+void loadBoardAppearanceUI();

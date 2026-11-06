@@ -1649,6 +1649,35 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
 .ovBtns .primary:hover { background: linear-gradient(180deg, #f7d17a, #e2ad4a); }
 
 /* ---------- 提示浮層 ---------- */
+#boardAppearanceDialog {
+  margin: auto; box-sizing: border-box; width: min(660px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px); max-height: calc(100dvh - 32px); overflow: auto;
+  padding: 18px; border: 1px solid var(--line); border-radius: 16px;
+  color: var(--text); background: var(--panel); overflow-wrap: anywhere;
+}
+#boardAppearanceDialog::backdrop { background: rgba(0, 0, 0, .7); }
+#boardAppearanceDialog [hidden] { display: none !important; }
+#boardAppearanceDialog button, #boardAppearanceDialog select, #boardAppearanceDialog input[type="range"] { min-height: 44px; }
+#boardAppearanceDialog :focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+.appearance-heading, .appearance-actions { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.appearance-heading h2 { margin: 0; }
+.appearance-layout { display: grid; grid-template-columns: minmax(120px, 230px) minmax(0, 1fr); gap: 18px; align-items: start; }
+#boardAppearancePreview { width: 100%; height: auto; border-radius: 8px; }
+.appearance-controls { min-width: 0; }
+#boardAppearanceSettings { min-width: 0; margin: 12px 0 0; padding: 10px; border: 1px solid var(--line); }
+#boardAppearanceSettings label { display: flex; justify-content: space-between; gap: 8px; margin-top: 6px; }
+#boardAppearanceSettings input, #boardAppearanceSettings select { width: 100%; box-sizing: border-box; }
+#boardAppearanceSettings select { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; }
+.appearance-remember { display: flex; gap: 10px; align-items: center; min-height: 44px; margin-top: 12px; }
+.appearance-remember input { flex: 0 0 auto; width: 22px; height: 22px; }
+.appearance-hint, #boardAppearancePrivacy { font-size: 13px; line-height: 1.6; }
+.appearance-hint { color: var(--muted); }
+.appearance-error { color: #f5ad9d; }
+@media (max-width: 520px) {
+  .appearance-layout { grid-template-columns: 1fr; }
+  #boardAppearancePreview { width: min(100%, 184px); justify-self: center; }
+  #boardAppearanceDialog { padding: 14px; }
+}
 #savedPositionsDialog {
   margin: auto;
   width: min(640px, calc(100vw - 24px)); max-width: calc(100vw - 24px);
