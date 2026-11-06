@@ -10,7 +10,7 @@ import {
   hasAnyLegalMove,
   hashBoard,
   repetitionVerdict,
-} from './game.js?v=e8a9f5c59a';
+} from './game.js?v=786025ac37';
 
 export const GAME_RECORD_SCHEMA_VERSION = 1;
 

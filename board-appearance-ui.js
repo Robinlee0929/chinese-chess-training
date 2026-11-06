@@ -1,5 +1,5 @@
-import { createBoardAppearanceController } from './board-appearance.js?v=e8a9f5c59a';
-import { createBoardAppearanceStore } from './board-appearance-store.js?v=e8a9f5c59a';
+import { createBoardAppearanceController } from './board-appearance.js?v=786025ac37';
+import { createBoardAppearanceStore } from './board-appearance-store.js?v=786025ac37';
 
 export function createBoardAppearanceUI({ surface, changed, closeMenu, doc = document }) {
   const el = id => doc.getElementById(id);
@@ -98,6 +98,10 @@ export function createBoardAppearanceUI({ surface, changed, closeMenu, doc = doc
   // Stop existing document-level shortcuts, including when the dialog closes on Esc.
   dialog.addEventListener('keydown', event => event.stopPropagation());
   render(controller.state()); void controller.restore();
+  // HTML starts disabled so stale JS or an incomplete module load cannot leave
+  // an apparently usable button with no working UI. Preflight failures stay disabled.
+  el('btnBoardAppearance').disabled = false;
+  el('btnBoardAppearance').removeAttribute('title');
   return {
     dispose() {
       if (disposed) return;

@@ -67,6 +67,9 @@ python -m http.server 8000
 - 照片只在本機處理，**不自動上傳**，不加入棋譜、題庫、自訂局面或 JSON 匯出。
   **戰績分享圖一律使用原始木紋，不含自訂照片**；擷取後立即還原目前外觀。
 - 「匯入棋盤照片」仍是獨立的殺局參考／校正／辨識功能，不會改變這裡的背景設定。
+- 外觀 UI／儲存模組在核心棋盤啟動後才非同步載入。載入失敗時停用「棋盤外觀」，原始木紋、走棋、悔棋及 AI 仍可使用；不清除已記住的照片，資源恢復後重新整理即可再試。
+  頁面離開會使未完成的初始化失效；從瀏覽器返回快取頁面時可重新初始化尚未載入的 UI。
+- 可用性邊界：`board-appearance.js` 的 `createBoardSurface()` 也負責預設木紋及格線，因此仍是核心靜態依賴；它本身、`main.js` 或 Three.js 載入失敗不在上述安全降級範圍內。
 
 新增驗證：`node --test board-appearance-test.mjs`。實際 Chrome 測試可沿用已安裝的 Playwright：
 
@@ -76,6 +79,9 @@ python -m http.server 8000
 $env:BOARD_APPEARANCE_EVIDENCE_DIR = 'C:\Temp\board-appearance-evidence'
 node tools/board-appearance-browser-test.mjs
 ```
+
+模組失敗回歸：設定 checkout 外的 `BOARD_APPEARANCE_LOADING_EVIDENCE_DIR`，執行
+`node tools/board-appearance-loading-browser-test.mjs`。可另傳入已建置的 Jekyll 產物目錄，驗證實際發布檔案；測試涵蓋網路／語法錯誤、舊 HTML／JS、延遲初始化與頁面離開、資料保留及核心依賴邊界。
 
 瀏覽器套件涵蓋桌面／手機尺寸、分享排除照片、原生 IndexedDB 與故障注入、載入競態及 100 次換圖／還原。
 手機尺寸模擬不等於 Android／iPhone 真機驗收；效能數字只適用於實際執行測試的裝置。

@@ -1,6 +1,6 @@
-import { hashBoard } from './game.js?v=e8a9f5c59a';
-import { validateCustomPlayPosition } from './custom-position-play.js?v=e8a9f5c59a';
-import { validateContinuationConfiguration } from './game-review-continuation.js?v=e8a9f5c59a';
+import { hashBoard } from './game.js?v=786025ac37';
+import { validateCustomPlayPosition } from './custom-position-play.js?v=786025ac37';
+import { validateContinuationConfiguration } from './game-review-continuation.js?v=786025ac37';
 
 export const CUSTOM_POSITION_STORAGE_KEY = 'chinese-chess-training:custom-positions:v1';
 export const CUSTOM_POSITION_STORAGE_VERSION = 1;
