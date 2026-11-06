@@ -1,7 +1,7 @@
 import {
   GAME_REVIEW_COACH_MODEL_PROFILES,
   GAME_REVIEW_COACH_DEFAULT_PROFILE,
-} from './game-review-coach.js?v=89999c3f94';
+} from './game-review-coach.js?v=e8a9f5c59a';
 
 export const COACH_MODEL_PROFILE_STORAGE_KEY = 'chinese-chess-training:coach-model-profile:v1';
 

@@ -2250,7 +2250,8 @@ function clickSourceHandler(ctx, id) {
 test('photo canvas inventory covers every persistent photo-bearing HTML canvas', () => {
   const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
   const ids = [...html.matchAll(/<canvas id="([^"]+)"/g)].map((match) => match[1]);
-  assert.deepEqual(ids.filter((id) => id !== 'confettiCv').sort(), [...photoCanvasNames].sort());
+  // Appearance has its own session/reset/dispose lifecycle, independent of editor exit.
+  assert.deepEqual(ids.filter((id) => id !== 'confettiCv').sort(), [...photoCanvasNames, 'boardAppearancePreview'].sort());
 });
 
 for (const action of ['remove', 'exitEditor', 'enterEditor', 'enterLibrary', 'btnEditorClear', 'btnEditorStandard']) {
