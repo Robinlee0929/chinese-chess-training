@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 // Required for the default wood/grid texture as well as photo rendering.
 // Unlike the optional UI/store below, failure of this core dependency is fatal.
-import { createBoardSurface } from './board-appearance.js?v=786025ac37';
+import { createBoardSurface } from './board-appearance.js?v=5c54c31039';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
   normalizePieceGlyphOrientationMode,
@@ -17,20 +17,20 @@ import {
   ROWS, COLS, RED, BLACK,
   initialBoard, legalMoves, applyMove, inCheck,
   hasAnyLegalMove, name, notation, hashBoard, repetitionVerdict,
-} from './game.js?v=786025ac37';
+} from './game.js?v=5c54c31039';
 import {
   validateCustomPlayPosition, createCustomGameRoot, createMutableCustomGamePosition,
-} from './custom-position-play.js?v=786025ac37';
-import { createGameRecord } from './game-record.js?v=786025ac37';
-import { createCustomPositionRepository } from './custom-position-repository.js?v=786025ac37';
-import { createSavedPositionUI } from './saved-position-ui.js?v=786025ac37';
-import { attachTerminalOverlayFocus } from './terminal-overlay-focus.js?v=786025ac37';
+} from './custom-position-play.js?v=5c54c31039';
+import { createSessionGameRecord as createGameRecord, replaySessionGameRecord } from './game-record.js?v=5c54c31039';
+import { createCustomPositionRepository } from './custom-position-repository.js?v=5c54c31039';
+import { createSavedPositionUI } from './saved-position-ui.js?v=5c54c31039';
+import { attachTerminalOverlayFocus } from './terminal-overlay-focus.js?v=5c54c31039';
 import {
   canStartGameFromReview, createReviewContinuationPosition,
   defaultContinuationDifficulty, defaultContinuationHumanSide,
-  validateContinuationConfiguration,
-} from './game-review-continuation.js?v=786025ac37';
-import { createGameRecordStore } from './game-record-store.js?v=786025ac37';
+  validateRuntimeContinuationConfiguration as validateContinuationConfiguration,
+} from './game-review-continuation.js?v=5c54c31039';
+import { createGameRecordStore } from './game-record-store.js?v=5c54c31039';
 import {
   createGameReview,
   createGameRecordLibraryView,
@@ -39,15 +39,15 @@ import {
   nextGameReviewPly,
   lastGameReviewPly,
   selectGameReviewPly,
-} from './game-review.js?v=786025ac37';
+} from './game-review.js?v=5c54c31039';
 import {
   createGameReviewAiState,
   invalidateGameReviewAiState,
   beginGameReviewAiRequest,
   settleGameReviewAiResponse,
-} from './game-review-ai.js?v=786025ac37';
-import { createGameReviewEvidence } from './game-review-evidence.js?v=786025ac37';
-import { deriveGameReviewTeaching } from './game-review-teaching.js?v=786025ac37';
+} from './game-review-ai.js?v=5c54c31039';
+import { createGameReviewEvidence } from './game-review-evidence.js?v=5c54c31039';
+import { deriveGameReviewTeaching } from './game-review-teaching.js?v=5c54c31039';
 import {
   createGameTeachingModeState,
   setGameTeachingModeEnabled,
@@ -56,7 +56,7 @@ import {
   settleGameTeachingModeAnalysis,
   gameTeachingModeMatchesHistory,
   shouldScheduleGameTeachingMode,
-} from './game-teaching-mode.js?v=786025ac37';
+} from './game-teaching-mode.js?v=5c54c31039';
 import {
   createDisabledCoachState,
   createIdleCoachState,
@@ -65,28 +65,28 @@ import {
   settleCoachResponse,
   invalidateCoachState,
   selectCoachModelProfile,
-} from './game-review-coach.js?v=786025ac37';
+} from './game-review-coach.js?v=5c54c31039';
 import {
   readCoachModelProfilePreference,
   writeCoachModelProfilePreference,
-} from './coach-model-profile-preference.js?v=786025ac37';
+} from './coach-model-profile-preference.js?v=5c54c31039';
 import {
   readInstalledReviewCoachStagingCapability,
   isReviewCoachProfileAvailable,
-} from './review-coach-connectivity.js?v=786025ac37';
+} from './review-coach-connectivity.js?v=5c54c31039';
 import {
   createGameAnalysis,
   gameAnalysisLegalMoves,
   applyGameAnalysisMove,
   undoGameAnalysisMove,
   resetGameAnalysis,
-} from './game-analysis.js?v=786025ac37';
-import { createGameReviewPuzzleHandoff } from './game-review-puzzle-handoff.js?v=786025ac37';
+} from './game-analysis.js?v=5c54c31039';
+import { createGameReviewPuzzleHandoff } from './game-review-puzzle-handoff.js?v=5c54c31039';
 import {
   createGameLiveReviewHandoff,
   consumeGameLiveReviewHandoff,
   createGameLiveReviewAnalysis,
-} from './game-live-review-handoff.js?v=786025ac37';
+} from './game-live-review-handoff.js?v=5c54c31039';
 import {
   PuzzleEditorError,
   createEditorState,
@@ -96,7 +96,7 @@ import {
   setEditorSideToMove,
   confirmAuthoredPosition,
   exportAuthoredPosition,
-} from './puzzle-editor.js?v=786025ac37';
+} from './puzzle-editor.js?v=5c54c31039';
 import {
   PuzzleRecorderError,
   createRecorder,
@@ -106,7 +106,7 @@ import {
   finishRecording,
   exportRecorderBoard,
   exportRecordedResult,
-} from './puzzle-recorder.js?v=786025ac37';
+} from './puzzle-recorder.js?v=5c54c31039';
 import {
   PuzzlePracticeError,
   PRACTICE_HINT_MAX_LEVEL,
@@ -116,12 +116,12 @@ import {
   derivePracticeHint,
   restartPractice,
   exportPracticeSnapshot,
-} from './puzzle-practice.js?v=786025ac37';
-import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=786025ac37';
+} from './puzzle-practice.js?v=5c54c31039';
+import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=5c54c31039';
 import {
   PracticeAnalyticsError,
   createPracticeAnalyticsStore,
-} from './puzzle-analytics.js?v=786025ac37';
+} from './puzzle-analytics.js?v=5c54c31039';
 import {
   PUZZLE_TRANSFER_FORMAT,
   PUZZLE_TRANSFER_SCHEMA_VERSION,
@@ -129,7 +129,7 @@ import {
   PuzzleTransferError,
   serializePuzzleExport,
   parsePuzzleImport,
-} from './puzzle-transfer.js?v=786025ac37';
+} from './puzzle-transfer.js?v=5c54c31039';
 import {
   PHOTO_MAX_ZOOM,
   PHOTO_MIN_ZOOM,
@@ -143,7 +143,7 @@ import {
   validatePhotoMetadata,
   zoomPhotoIn,
   zoomPhotoOut,
-} from './puzzle-photo.js?v=786025ac37';
+} from './puzzle-photo.js?v=5c54c31039';
 import {
   CALIBRATION_CANONICAL_HEIGHT,
   CALIBRATION_CANONICAL_WIDTH,
@@ -159,7 +159,7 @@ import {
   setCorner,
   transformPoint,
   validateQuadrilateral,
-} from './puzzle-photo-calibration.js?v=786025ac37';
+} from './puzzle-photo-calibration.js?v=5c54c31039';
 import {
   PuzzlePhotoRecognitionError,
   RECOGNITION_OCCUPANCY_EMPTY,
@@ -171,7 +171,7 @@ import {
   isRecognitionTokenCurrent,
   recognizeIntersections,
   selectionKey,
-} from './puzzle-photo-recognition.js?v=786025ac37';
+} from './puzzle-photo-recognition.js?v=5c54c31039';
 import {
   addTemplate,
   createPieceTypeSessionToken,
@@ -181,13 +181,13 @@ import {
   normalizePiecePatch,
   removeTemplatesForSource,
   suggestUnresolvedPieceTypes,
-} from './puzzle-photo-piece-types.js?v=786025ac37';
+} from './puzzle-photo-piece-types.js?v=5c54c31039';
 import {
   UNREVIEWED, PuzzlePhotoReviewError,
   createReviewState, buildReviewQueue, selectReviewCandidate, confirmEmpty, confirmPiece,
   nextCandidate, previousCandidate, nextUnresolved, acceptHighConfidenceEmpty,
   undoBulkEmpty, resetReview, rescanReview, reviewProgress, confirmedSelections, buildReviewedBoard,
-} from './puzzle-photo-review.js?v=786025ac37';
+} from './puzzle-photo-review.js?v=5c54c31039';
 
 // ---------------- 常數 ----------------
 const CELL = 1;
@@ -686,6 +686,17 @@ const puzzleBoardActive = () => recorderBoardActive() || practiceActive();
 
 // ---------------- 對弈模式 / AI ----------------
 let mode = 'medium';   // 'pvp' | 'easy' | 'medium' | 'hard'
+// HTML fails closed. Only this initialized runtime can authorize B; neither
+// a selected option nor a saved-position UI module grants that capability.
+let experimentalOpponentReady = false;
+function experimentalOpponentAvailable() {
+  return experimentalOpponentReady;
+}
+function allowExperimentalOpponent() {
+  if (experimentalOpponentAvailable()) return true;
+  toast('實驗對手 B 尚未準備完成，請重新整理後再試。');
+  return false;
+}
 let humanSide = RED;
 const aiSide = () => humanSide === RED ? BLACK : RED;
 const isAI = () => mode !== 'pvp';
@@ -699,6 +710,8 @@ const gameRecordIdFactory = () => {
   return `game-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 };
 let normalGameRecordSession = null;
+let normalGameModeRevision = 0;
+let normalGameRecordError = null;
 // Only the exact live session owns this memory-only root, including while paused.
 let customGameContext = null;
 let customRematchRequest = null;
@@ -757,13 +770,16 @@ const gameReviewCoachUnavailableProfiles = new Set();
 let aiWorker = null;
 let aiModule = null;   // Worker 不可用時的主執行緒後備
 let aiRequest = null;
+let experimentalAIFailure = null;
 
 function invalidateNormalAI() {
   aiToken++;
   aiThinking = false;
+  experimentalAIFailure = null;
   if (aiRequest) {
     clearTimeout(aiRequest.moveTimer);
     clearTimeout(aiRequest.fallbackTimer);
+    clearTimeout(aiRequest.watchdog);
   }
   aiRequest = null;
   const worker = aiWorker;
@@ -775,6 +791,14 @@ function invalidateNormalAI() {
   }
 }
 
+function failExperimentalAI(request) {
+  if (request !== aiRequest || request.token !== aiToken) return;
+  invalidateNormalAI();
+  experimentalAIFailure = normalGameRecordSession;
+  refreshHUD();
+  toast('實驗對手 B 暫時無法行棋；棋局已保留。可重試，或從模式選單改選困難級開新局。');
+}
+
 function currentAIRequest(request) {
   return !!request && request === aiRequest && request.token === aiToken
     && request.session === normalGameRecordSession && !request.submitted
@@ -784,8 +808,9 @@ function currentAIRequest(request) {
 
 function startAIFallback(request) {
   if (!currentAIRequest(request) || request.settled || request.fallbackStarted) return;
+  if (request.payload.level === 'experimental-b') { failExperimentalAI(request); return; }
   request.fallbackStarted = true;
-  (aiModule ??= import('./ai.js?v=786025ac37')).then(({ findBestMove }) => {
+  (aiModule ??= import('./ai.js?v=5c54c31039')).then(({ findBestMove }) => {
     if (!currentAIRequest(request) || request.settled) return;
     request.fallbackTimer = setTimeout(() => {
       if (!currentAIRequest(request) || request.settled) return;
@@ -814,12 +839,18 @@ function requestAIMove() {
     submitted: false, fallbackStarted: false, worker: null, moveTimer: null, fallbackTimer: null };
   aiRequest = request;
   try {
-    aiWorker ??= new Worker(new URL('./ai-worker.js?v=786025ac37', import.meta.url), { type: 'module' });
+    aiWorker ??= new Worker(new URL('./ai-worker.js?v=5c54c31039', import.meta.url), { type: 'module' });
     const worker = aiWorker;
     request.worker = worker;
-    worker.onmessage = (event) => onAIResult(event.data, request, worker);
-    worker.onerror = () => {
+    worker.onmessage = (event) => {
+      if (request.payload.level === 'experimental-b' && (!event.data || typeof event.data !== 'object')) {
+        failExperimentalAI(request); return;
+      }
+      onAIResult(event.data, request, worker);
+    };
+    worker.onerror = (event) => {
       if (request !== aiRequest || token !== aiToken || worker !== aiWorker) return;
+      if (request.payload.level === 'experimental-b') event?.preventDefault();
       worker.onmessage = null;
       worker.onerror = null;
       worker.terminate();
@@ -829,6 +860,13 @@ function requestAIMove() {
       // the next turn, but never start another search for that settled request.
       if (!request.settled) startAIFallback(request);
     };
+    if (mode === 'experimental-b') {
+      // Includes cold module loading; this is a watchdog, not extra search time.
+      request.watchdog = setTimeout(() => {
+        if (currentAIRequest(request) && !request.settled) failExperimentalAI(request);
+      }, 7000);
+      worker.onmessageerror = () => failExperimentalAI(request);
+    }
     worker.postMessage(payload);
   } catch {
     if (aiWorker) {
@@ -843,6 +881,8 @@ function requestAIMove() {
 }
 
 function maybeAIMove() {
+  if (mode === 'experimental-b' && !experimentalOpponentAvailable()) return;
+  if (mode === 'experimental-b' && experimentalAIFailure === normalGameRecordSession) return;
   if (!normalGameActive() || !isAI() || over || busy || customRematchRequest
     || turn !== aiSide() || aiThinking) return;
   aiThinking = true;
@@ -856,7 +896,16 @@ function onAIResult({ token, result, error }, request = aiRequest, worker = null
   if (!currentAIRequest(request) || request.settled
     || (worker && (worker !== aiWorker || worker !== request.worker))) return;
   request.settled = true;
+  clearTimeout(request.watchdog);
+  if (request.payload.level === 'experimental-b' && worker) {
+    worker.onmessage = null;
+    worker.onerror = null;
+    worker.onmessageerror = null;
+    worker.terminate();
+    aiWorker = null;
+  }
   if (error || !result) {
+    if (request.payload.level === 'experimental-b') { failExperimentalAI(request); return; }
     request.submitted = true;
     aiThinking = false;
     refreshHUD();
@@ -875,6 +924,7 @@ function onAIResult({ token, result, error }, request = aiRequest, worker = null
     const ok = p && to && p.side === turn &&
       legalMoves(board, from.r, from.c).some((m) => m.r === to.r && m.c === to.c);
     if (!ok) {
+      if (request.payload.level === 'experimental-b') { failExperimentalAI(request); return; }
       refreshHUD();
       toast('AI 無法完成行棋，請開新對局重試。');
       return;
@@ -901,7 +951,7 @@ function gameTeachingReviewCtaReady() {
 }
 
 function renderGameTeachingMode() {
-  const available = normalGameActive() && isAI();
+  const available = normalGameActive() && isAI() && mode !== 'experimental-b';
   const message = available && gameTeachingModeState.enabled
     ? gameTeachingModeState.message
     : null;
@@ -979,6 +1029,7 @@ function handleGameTeachingModeResponse(worker, response) {
 }
 
 function requestGameTeachingModeAnalysis(source) {
+  if (mode === 'experimental-b') return false;
   if (!source || !normalGameActive() || !isAI() || !gameTeachingModeState.enabled) return false;
   let started;
   try {
@@ -993,7 +1044,7 @@ function requestGameTeachingModeAnalysis(source) {
   renderGameTeachingMode();
   let worker;
   try {
-    worker = new Worker(new URL('./ai-worker.js?v=786025ac37', import.meta.url), { type: 'module' });
+    worker = new Worker(new URL('./ai-worker.js?v=5c54c31039', import.meta.url), { type: 'module' });
     gameTeachingModeWorker = worker;
     worker.onmessage = (event) => handleGameTeachingModeResponse(worker, event.data);
     worker.onerror = (event) => {
@@ -1039,6 +1090,7 @@ window.__chess = {
   get normalGameRecordSession() {
     return normalGameRecordSession ? structuredClone(normalGameRecordSession) : null;
   },
+  get normalGameRecordError() { return normalGameRecordError; },
   get lastCompletedGameRecord() {
     return lastCompletedGameRecord ? createGameRecord(lastCompletedGameRecord) : null;
   },
@@ -1128,7 +1180,7 @@ window.__chess = {
   get pieceTypeSuggestions() {
     return recognitionSession ? structuredClone(recognitionSession.typeSuggestions) : null;
   },
-  setMode(m) { mode = m; const el = document.getElementById('modeSel'); if (el) el.value = m; },
+  setMode: changeNormalGameMode,
   setHumanSide: changeHumanSide,
   canHumanMove,
   get lastResult() { return lastResult; },
@@ -1359,6 +1411,11 @@ const recognitionPalettes = [...document.querySelectorAll('.recognition-palette'
 const btnRecognitionApply = document.getElementById('btnRecognitionApply');
 
 function refreshHUD() {
+  const experimentalNotice = document.getElementById('experimentalNotice');
+  if (experimentalNotice) experimentalNotice.hidden = mode !== 'experimental-b';
+  const retryExperimental = document.getElementById('btnRetryExperimental');
+  if (retryExperimental) retryExperimental.hidden = !(normalGameActive() && mode === 'experimental-b'
+    && experimentalAIFailure === normalGameRecordSession && !over);
   const showSide = appState === APP_STATE.GAME_REVIEW
     ? gameReviewSession.snapshot.sideToMove
     : appState === APP_STATE.GAME_ANALYSIS
@@ -2551,6 +2608,7 @@ const GAME_RECORD_MODE_LABELS = Object.freeze({
   easy: '人機・簡單',
   medium: '人機・中等',
   hard: '人機・困難',
+  'experimental-b': '實驗對手 B（僅本次工作階段）',
 });
 const GAME_RECORD_REASON_LABELS = Object.freeze({
   checkmate: '將死',
@@ -3139,7 +3197,7 @@ function handleGameReviewAiResponse(worker, response) {
 }
 
 function createGameReviewAiWorker() {
-  return new Worker(new URL('./ai-worker.js?v=786025ac37', import.meta.url), { type: 'module' });
+  return new Worker(new URL('./ai-worker.js?v=5c54c31039', import.meta.url), { type: 'module' });
 }
 
 function requestGameReviewAiCandidate() {
@@ -3238,6 +3296,7 @@ function startNormalGameFromReview(review, configuration) {
 
 // Both entry points validate and detach their position before committing here.
 function startConfiguredNormalGame(position, settings, { sourceRecordId = null, customGameRoot = null } = {}) {
+  if (settings.difficulty === 'experimental-b' && !allowExperimentalOpponent()) return false;
   invalidateGameReviewAi();
   clearGameAnalysisSelection();
   gameReviewContinuationSource = null;
@@ -3345,6 +3404,7 @@ function renderGameReview() {
   renderGameReviewContinuation();
   gameReviewMeta.replaceChildren();
   appendGameReviewMeta('模式', gameRecordModeLabel(review.record.mode));
+  if (review.record.mode === 'experimental-b') appendGameReviewMeta('保存', '僅記憶體；重新整理後消失');
   if (review.sourceKind === 'live-teaching') {
     appendGameReviewMeta('開始時間', formatGameRecordCompletedAt(review.record.createdAt));
     appendGameReviewMeta('狀態', '進行中的本機對局');
@@ -3392,8 +3452,9 @@ function renderGameReview() {
   btnGameReviewLast.disabled = review.atLast;
   btnGameReviewAnalyze.disabled = !!review.snapshot.terminal;
   btnGameReviewAnalyze.title = review.snapshot.terminal ? '終局位置不可開始分析' : '';
-  btnGameReviewCreatePuzzle.disabled = !!review.snapshot.terminal;
-  btnGameReviewCreatePuzzle.title = review.snapshot.terminal ? '終局位置不可建立殺局題，請先返回較早著數' : '';
+  btnGameReviewCreatePuzzle.disabled = !!review.snapshot.terminal || review.record.mode === 'experimental-b';
+  btnGameReviewCreatePuzzle.title = review.record.mode === 'experimental-b' ? '實驗棋譜不匯出至殺局題庫'
+    : review.snapshot.terminal ? '終局位置不可建立殺局題，請先返回較早著數' : '';
   renderGameReviewAi();
   btnGameReviewBack.classList.toggle('hidden', gameReviewReturnState !== APP_STATE.GAME_RECORD_LIBRARY);
   btnGameReviewDelete.classList.toggle('hidden', !gameReviewStored);
@@ -3777,6 +3838,7 @@ function enterEditor() {
 }
 
 function createPuzzleFromGameReview(invoker = btnGameReviewCreatePuzzle) {
+  if (gameReviewSession?.record.mode === 'experimental-b') return false;
   if (appState !== APP_STATE.GAME_REVIEW || !gameReviewSession || gameReviewSession.snapshot.terminal) {
     return false;
   }
@@ -4091,6 +4153,7 @@ function cancelCustomPositionPlay() {
 }
 
 function startCustomPositionPlay(configuration) {
+  if (configuration?.difficulty === 'experimental-b' && !allowExperimentalOpponent()) return false;
   if (appState !== APP_STATE.PUZZLE_CONFIRMED || !customPlaySource
     || customPlaySource.editor !== editorState || customPlaySource.position !== confirmedPosition) return false;
   const validation = validateCustomPlayPosition(confirmedPosition);
@@ -5059,6 +5122,7 @@ function changeHumanSide(nextSide) {
 }
 
 function currentPositionSaveUnavailableReason() {
+  if (mode === 'experimental-b') return '實驗對手 B 僅供本次試玩，不保存目前局面或偏好。';
   if (!normalGameActive() || !isAI()) return '只支援正常人機對弈。';
   if (over) return '已終局，無法儲存為可挑戰局面。';
   if (busy || aiThinking) return '請等待 AI 思考及棋步動畫完成。';
@@ -5123,6 +5187,22 @@ function initializeNormalGamePosition(startBoard, startTurn, { sourceRecordId = 
   logEmpty.style.display = '';
   syncLastMoveMark();
   buildScene();
+}
+
+function changeNormalGameMode(nextMode) {
+  // Disabled controls can still dispatch synthetic events. Reject before any
+  // mutation, so a pending challenge keeps its original, valid intent.
+  if (!normalGameActive() || document.querySelector('dialog[open]')
+    || !['easy', 'medium', 'hard', 'pvp', 'experimental-b'].includes(nextMode)
+    || (nextMode === 'experimental-b' && !allowExperimentalOpponent())) {
+    modeSel.value = mode;
+    return false;
+  }
+  mode = nextMode;
+  modeSel.value = mode;
+  // Synchronous transition: no awaited work between admission and new session.
+  newGame();
+  return true;
 }
 
 function newGame({ resetHumanSide = true, reconcileHumanSideCamera = true } = {}) {
@@ -5251,6 +5331,8 @@ function cloneNormalGameRecordBoard(source) {
 
 function beginNormalGameRecordSession({ sourceRecordId = null } = {}) {
   const createdAt = gameRecordNow();
+  normalGameModeRevision++;
+  normalGameRecordError = null;
   normalGameRecordSession = Object.freeze({
     id: gameRecordIdFactory(),
     createdAt,
@@ -5259,6 +5341,7 @@ function beginNormalGameRecordSession({ sourceRecordId = null } = {}) {
       sideToMove: turn,
     }),
     mode,
+    modeRevision: normalGameModeRevision,
     ...(isAI() ? { humanSide } : {}),
     ...(sourceRecordId ? { sourceRecordId } : {}),
   });
@@ -5274,11 +5357,29 @@ function normalGameRecordTerminationReason(endReason) {
   throw new Error(`Unsupported normal-game termination reason: ${endReason}`);
 }
 
+function normalGameRecordMatches(session) {
+  return !!session && session === normalGameRecordSession && session.mode === mode
+    && session.modeRevision === normalGameModeRevision;
+}
+
+function failNormalGameRecord(code, session) {
+  // Latch this session's error. Restoring a mode value cannot make an already
+  // suspect game safe to persist; only a new game clears the failure.
+  normalGameRecordError = Object.freeze({ code, sessionId: session?.id ?? null,
+    runtimeMode: mode, sessionMode: session?.mode ?? null });
+  lastCompletedGameRecord = null;
+  toast('棋譜狀態不一致，本局未保存；請重新開局。');
+  return null;
+}
+
 function finalizeNormalGameRecord(endReason) {
   const session = normalGameRecordSession;
-  if (!over || !session || completedGameRecordSessionId === session.id) {
+  if (!over || !session) {
     return lastCompletedGameRecord;
   }
+  if (normalGameRecordError?.sessionId === session.id) return null;
+  if (!normalGameRecordMatches(session)) return failNormalGameRecord('GAME_RECORD_SESSION_MISMATCH', session);
+  if (completedGameRecordSessionId === session.id) return lastCompletedGameRecord;
   const observedCompletedAt = gameRecordNow();
   const completedAt = observedCompletedAt < session.createdAt
     ? session.createdAt
@@ -5301,12 +5402,21 @@ function finalizeNormalGameRecord(endReason) {
         terminationReason: normalGameRecordTerminationReason(endReason),
       },
     });
-  } catch {
-    return null;
+    const finalPosition = replaySessionGameRecord(record, record.moves.length);
+    if (hashBoard(finalPosition.board) !== hashBoard(board) || finalPosition.sideToMove !== turn) {
+      return failNormalGameRecord('GAME_RECORD_POSITION_MISMATCH', session);
+    }
+  } catch (error) {
+    return failNormalGameRecord(error.code || 'GAME_RECORD_VALIDATION_FAILED', session);
   }
 
+  // Recheck at the publication boundary; neither an in-memory record nor a
+  // persistent one may borrow the identity of another live game.
+  if (!normalGameRecordMatches(session)) return failNormalGameRecord('GAME_RECORD_SESSION_MISMATCH', session);
   completedGameRecordSessionId = session.id;
   lastCompletedGameRecord = record;
+  // Session records never enter the legacy store, even after a delayed end UI.
+  if (record.mode === 'experimental-b') return record;
   try {
     gameRecordStore.saveGameRecord(record, { preserveRecordId: session.sourceRecordId });
   } catch {
@@ -5466,6 +5576,7 @@ renderer.domElement.addEventListener('click', (e) => {
 // ---------------- 終局畫面 / 彩帶 / 分享 ----------------
 const SITE_URL = 'https://robinlee0929.github.io/chinese-chess-training/';
 const DIFF = {
+  'experimental-b': { label: '實驗對手 B', stars: 0, winTitle: '對局完成！', winSub: '本次試玩獲勝；棋力尚未證明高於困難級。' },
   easy:   { label: '簡單', stars: 1, winTitle: '旗開得勝！', winSub: '小試身手就拿下 AI，好的開始！' },
   medium: { label: '中等', stars: 2, winTitle: '運籌帷幄！', winSub: '攻守有度，中等 AI 也不是你的對手！' },
   hard:   { label: '困難', stars: 3, winTitle: '棋壇霸主！', winSub: '深算遠謀，最強 AI 也俯首稱臣！' },
@@ -5566,7 +5677,7 @@ function showGameOver(endReason) {
   ovBadge.textContent = badge;
   ovTitle.textContent = title;
   ovSub.textContent = sub;
-  if (d && !draw) {
+  if (d && !draw && mode !== 'experimental-b') {
     ovStars.innerHTML = [1, 2, 3].map((i) =>
       `<span class="${i <= d.stars ? 'on' : ''}" style="animation-delay:${0.2 + i * 0.14}s">★</span>`
     ).join('');
@@ -5586,7 +5697,12 @@ function showGameOver(endReason) {
       : (celebrate ? `以「${reasonChars}」取勝` : `遭「${reasonChars}」落敗`);
   ovCard.classList.toggle('win', celebrate);
   ovCard.classList.toggle('lose', !celebrate && !draw);
-  btnShare.style.display = celebrate ? '' : 'none';
+  btnShare.style.display = celebrate && mode !== 'experimental-b' ? '' : 'none';
+  if (normalGameRecordError?.sessionId === normalGameRecordSession?.id) {
+    ovReason.textContent += '；棋譜狀態不一致，本局未保存，請重新開局。';
+    btnShare.style.display = 'none';
+    lastResult = null;
+  }
   btnReviewGame.classList.toggle('hidden', !lastCompletedGameRecord);
   overlay.classList.remove('hidden');
   if (celebrate) {
@@ -5773,6 +5889,7 @@ async function buildShareCard(res) {
 }
 
 async function shareResult() {
+  if (mode === 'experimental-b') { toast('實驗對局僅限本次工作階段，不提供戰績分享。'); return; }
   if (!lastResult) return;
   btnShare.disabled = true;
   const orig = btnShare.textContent;
@@ -5827,9 +5944,13 @@ document.getElementById('gameReviewContinuationForm').addEventListener('submit',
 
 // ---------------- 按鈕 ----------------
 mode = modeSel.value;
+document.getElementById('btnRetryExperimental')?.addEventListener('click', () => {
+  if (mode !== 'experimental-b' || !normalGameActive() || experimentalAIFailure !== normalGameRecordSession) return;
+  invalidateNormalAI();
+  maybeAIMove();
+});
 modeSel.addEventListener('change', () => {
-  mode = modeSel.value;
-  newGame(); // 換對手就開新局，避免局中切換造成混亂
+  changeNormalGameMode(modeSel.value);
 });
 for (const input of humanSideInputs) {
   input.addEventListener('change', () => {
@@ -6086,14 +6207,16 @@ const savedPositionsUI = createSavedPositionUI({
   document, window,
   repository: createCustomPositionRepository({ indexedDB: () => window.indexedDB, storage: () => window.localStorage }),
   host: {
+    experimentalOpponentAvailable,
     canOpen: () => !busy && !document.querySelector('dialog[open]')
       && (appState === APP_STATE.NORMAL_GAME || authoringActive()),
-    context: () => ({ session: normalGameRecordSession, appState, editor: editorState,
+    context: () => ({ session: normalGameRecordSession, mode, modeRevision: normalGameModeRevision, appState, editor: editorState,
       confirmed: confirmedPosition, hasProgress: !over && !!normalGameRecordSession }),
     pause: () => { invalidateNormalAI(); invalidateTeachingModeFeedback(); closeHudMenu(); },
     resume: () => { refreshHUD(); presentNormalGameTerminal(); maybeAIMove(); },
     refresh: refreshHUD,
     start: (root, position) => {
+      if (root.settings.difficulty === 'experimental-b' && !allowExperimentalOpponent()) return;
       if (puzzleFlowActive()) discardPuzzleEditor();
       startConfiguredNormalGame(position, root.settings, { customGameRoot: root, sourceRecordId: root.sourceRecordId });
     },
@@ -6167,7 +6290,7 @@ async function loadBoardAppearanceUI() {
   try {
     // Do not await this from core startup. A missing UI/store or invalid module
     // must leave the default board and all game controls working.
-    const { createBoardAppearanceUI } = await import('./board-appearance-ui.js?v=786025ac37');
+    const { createBoardAppearanceUI } = await import('./board-appearance-ui.js?v=5c54c31039');
     if (!current()) return;
     boardAppearanceUI = createBoardAppearanceUI({
       surface: boardSurface,
@@ -6434,4 +6557,12 @@ function tick(now) {
 renderer.setAnimationLoop(tick);
 
 newGame({ reconcileHumanSideCamera: false });
+// Run last, after the core board, storage boundary and all input handlers exist.
+// Missing options in old HTML are harmless. The saved-position UI separately
+// requires this capability AND a once-only challenge before enabling its option.
+experimentalOpponentReady = true;
+for (const id of ['modeSel', 'customPlayDifficulty', 'gameReviewContinuationDifficulty']) {
+  const option = document.getElementById(id)?.querySelector('[value="experimental-b"]');
+  if (option) option.disabled = false;
+}
 void loadBoardAppearanceUI();

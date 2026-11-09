@@ -1,8 +1,8 @@
 // AI 搜索在 Worker 執行，避免深層搜索卡住畫面
-import { findBestMove } from './ai.js?v=786025ac37';
+import { findBestMove } from './ai.js?v=5c54c31039';
 
 const SIDES = new Set(['red', 'black']);
-const LEVELS = new Set(['easy', 'medium', 'hard']);
+const LEVELS = new Set(['easy', 'medium', 'hard', 'experimental-b']);
 const PIECES = new Set(['K', 'A', 'B', 'N', 'R', 'C', 'P']);
 
 function validBoard(board) {
@@ -38,6 +38,19 @@ function unsupportedRequest(message) {
   if (Number.isInteger(message?.token)) response.token = message.token;
   if (Number.isInteger(message?.revision)) response.revision = message.revision;
   self.postMessage(response);
+}
+
+let experimentalPending = false;
+function searchExperimental(message, startedAt) {
+  if (experimentalPending) { unsupportedRequest(message); return; }
+  experimentalPending = true;
+  // Only the Worker imports this frozen engine. Its hard preset remains 4500ms.
+  import('./ai-experimental-b.js?v=5c54c31039').then(candidate => {
+    const result = candidate.findBestMove(message.board, message.side, 'hard', message.recent);
+    self.postMessage({ token: message.token, result, timeMs: Date.now() - startedAt, metrics: candidate.metrics() });
+  }).catch(() => {
+    self.postMessage({ token: message.token, error: 'search-failed' });
+  }).finally(() => { experimentalPending = false; });
 }
 
 self.onmessage = (e) => {
@@ -80,6 +93,7 @@ self.onmessage = (e) => {
     return;
   }
   const { board, side, level, token, recent } = message;
+  if (level === 'experimental-b') { searchExperimental(message, t0); return; }
   try {
     result = findBestMove(board, side, level, recent);
   } catch (err) {

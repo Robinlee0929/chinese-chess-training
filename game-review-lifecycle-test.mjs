@@ -171,6 +171,7 @@ function domNode(initiallyHidden = false, tagName = 'div') {
 function teachingCtaHarness({ enabled = true, accepted = true, hasMessage = true,
   hasHandoff = true, active = true, ai = true } = {}) {
   const context = vm.createContext({
+    mode: 'medium',
     gameTeachingModeState: Object.freeze({
       enabled,
       status: hasMessage ? 'ready' : 'idle',

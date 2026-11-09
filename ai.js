@@ -7,7 +7,7 @@
 import {
   ROWS, COLS, RED, BLACK,
   getMoves, legalMoves, kingsFacing, kingPos, inCheck, hashBoard, repetitionVerdict,
-} from './game.js?v=786025ac37';
+} from './game.js?v=5c54c31039';
 
 const INF = 1e9;
 const MATE = 100000;

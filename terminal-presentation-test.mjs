@@ -23,14 +23,14 @@ function harness() {
     playPreferences: { humanSide: 'red', difficulty: 'medium' } };
   const { repository } = repositoryDouble([position]);
   const ctx = vm.createContext({
-    normalGameRecordSession: Object.freeze({ id: 'completed', sourceRecordId: 'source' }),
+    normalGameRecordSession: Object.freeze({ id: 'completed', sourceRecordId: 'source' }), mode: 'medium', normalGameModeRevision: 1,
     normalGameTerminalPresentation: null, gameOverTimer: null, aiToken: 10,
     over: true, busy: false, appState: 'NORMAL_GAME', editorState: null, confirmedPosition: null,
     APP_STATE: { NORMAL_GAME: 'NORMAL_GAME' }, overlayVisible: false,
     normalGameActive: () => ctx.appState === 'NORMAL_GAME' && !modal,
     authoringActive: () => false, puzzleFlowActive: () => false,
     invalidateNormalAI() { ctx.aiToken++; }, invalidateTeachingModeFeedback() {}, closeHudMenu() {},
-    refreshHUD() {}, maybeAIMove() {},
+    refreshHUD() {}, maybeAIMove() {}, experimentalOpponentAvailable: () => false,
     showGameOver(reason) { ctx.overlayVisible = true; displays.push({ reason, session: ctx.normalGameRecordSession }); },
     startConfiguredNormalGame() {
       ctx.normalGameRecordSession = Object.freeze({ id: 'new' });

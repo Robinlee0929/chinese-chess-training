@@ -4,7 +4,7 @@ import { createAsyncSavedPositionSession } from './saved-position-async-session.
 import { repositoryDouble, testPosition } from './tools/saved-position-session-double.mjs';
 import { readFileSync } from 'node:fs';
 function harness(options = {}) {
-  const db = repositoryDouble(), context = { session: {}, appState: 'NORMAL_GAME', editor: null, confirmed: null, hasProgress: false };
+  const db = repositoryDouble(), context = { session: {}, mode: 'medium', modeRevision: 1, appState: 'NORMAL_GAME', editor: null, confirmed: null, hasProgress: false };
   const host = { context: () => context, canOpen: () => true, pauses: 0, resumes: 0, starts: [], drafts: [],
     pause() { this.pauses++; }, resume() { this.resumes++; }, start(root, position) { this.starts.push({ root, position }); context.session = {}; }, loadEditor(position) { this.drafts.push(position); } };
   const session = createAsyncSavedPositionSession({ repository: db.repository, host, ...options });
@@ -71,6 +71,26 @@ test('late committed preference result does not retain consent to start',async()
 test('origin game replacement rejects late callback',async()=>{
   const h=harness();await h.open();h.session.select('challenge','saved');const gate=latch();h.controls.after=type=>type==='getPosition'&&gate.block();
   const p=h.session.submit();await gate.seen;h.context.session={};gate.release();await p;assert.equal(h.host.starts.length,0);h.session.close();assert.equal(h.host.resumes,0);
+});
+
+for (const change of ['mode','modeRevision']) test(`late challenge rejects changed origin ${change} even if session object is retained`,async()=>{
+  const h=harness();await h.open();h.session.select('challenge','saved');const gate=latch();
+  h.controls.after=type=>type==='getPosition'&&gate.block();
+  const before=JSON.stringify(h.db.snapshot),pending=h.session.submit({once:true});await gate.seen;
+  h.context[change]=change==='mode'?'hard':2;gate.release();assert.equal(await pending,false);
+  assert.equal(h.host.starts.length,0);assert.equal(JSON.stringify(h.db.snapshot),before);
+});
+
+test('committed preferences remain verifiable after origin mode revision changes, without retry',async()=>{
+  const h=harness();await h.open();h.session.select('challenge','saved');h.session.edit({difficulty:'hard'});
+  const gate=latch();h.controls.after=type=>type==='updatePlayPreferences'&&gate.block();
+  const pending=h.session.submit();await gate.seen;h.context.modeRevision++;
+  gate.release();assert.equal(await pending,false);assert.equal(h.host.starts.length,0);
+  assert.equal(h.db.snapshot.envelope.positions[0].playPreferences.difficulty,'hard');
+  h.session.close();h.controls.after=null;await h.open();assert.equal(h.session.state().canVerify,true);
+  const writes=h.calls.filter(x=>x.type==='updatePlayPreferences').length;
+  await h.session.verifyPending();assert.match(h.session.state().notice,/已提交/);
+  assert.equal(h.calls.filter(x=>x.type==='updatePlayPreferences').length,writes);assert.equal(h.host.starts.length,0);
 });
 test('UNKNOWN verification never replays or starts a game',async()=>{
   const h=harness();await h.open();h.session.select('rename','saved');h.controls.result={status:'UNKNOWN',persistence:{status:'UNKNOWN'}};await h.session.submit();h.controls.result=null;

@@ -1945,3 +1945,7 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
 }
 
 #btnCustomPlay { margin-top: 10px; }
+
+/* Session-only opponent notice stays visible on desktop and small screens. */
+.experimental-notice { margin: 6px 12px; font-size: 12px; line-height: 1.5; color: #f2c14e; flex: none; }
+.experimental-notice[hidden], #btnRetryExperimental[hidden] { display: none; }

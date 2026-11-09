@@ -10,7 +10,7 @@ import {
   hasAnyLegalMove,
   hashBoard,
   repetitionVerdict,
-} from './game.js?v=786025ac37';
+} from './game.js?v=5c54c31039';
 
 export const GAME_RECORD_SCHEMA_VERSION = 1;
 
@@ -76,6 +76,20 @@ export function replayGameRecord(input, ply) {
   return replayCanonical(record, ply);
 }
 
+// Session-only records use the same rules/replay validation, but cannot pass
+// createGameRecord(), the unchanged persistence boundary used by the store.
+export function createSessionGameRecord(input) {
+  const record = canonicalRecord(input, true);
+  replayCanonical(record, record.moves.length);
+  return freezeRecord(record);
+}
+
+export function replaySessionGameRecord(input, ply) {
+  const record = canonicalRecord(input, true);
+  validateReplayPly(ply, record.moves.length);
+  return replayCanonical(record, ply);
+}
+
 // An in-memory, non-persistent move timeline. It deliberately is not a
 // GameRecord: live games do not have completion metadata or a result yet.
 export function createGameTimeline(input) {
@@ -90,7 +104,7 @@ export function replayGameTimeline(input, ply) {
   return replayTimelineCanonical(timeline, ply, false);
 }
 
-function canonicalRecord(input) {
+function canonicalRecord(input, sessionOnly = false) {
   requirePlainObject(input, 'INVALID_RECORD', 'GameRecord must be an object.', 'record');
   requireExactFields(input, ROOT_FIELDS, 'record');
 
@@ -113,7 +127,7 @@ function canonicalRecord(input) {
     fail('INVALID_MOVES', 'GameRecord moves must be an array.', { path: 'moves' });
   }
   const moves = input.moves.map((move, index) => canonicalMove(move, index));
-  if (!MODES.has(input.mode)) {
+  if (!MODES.has(input.mode) && !(sessionOnly && input.mode === 'experimental-b')) {
     fail('UNSUPPORTED_MODE', 'GameRecord mode is unsupported.', { path: 'mode' });
   }
   const result = canonicalResult(input.result);
@@ -140,7 +154,7 @@ function canonicalTimeline(input) {
     fail('INVALID_MOVES', 'Game timeline moves must be an array.', { path: 'moves' });
   }
   const moves = input.moves.map((move, index) => canonicalMove(move, index));
-  if (!MODES.has(input.mode)) {
+  if (!MODES.has(input.mode) && input.mode !== 'experimental-b') {
     fail('UNSUPPORTED_MODE', 'Game timeline mode is unsupported.', { path: 'mode' });
   }
   return { id, createdAt, initialPosition, moves, mode: input.mode };
