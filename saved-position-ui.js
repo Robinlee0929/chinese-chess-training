@@ -1,4 +1,4 @@
-import { createAsyncSavedPositionSession } from './saved-position-async-session.js?v=66a2321529';
+import { createAsyncSavedPositionSession } from './saved-position-async-session.js?v=5c54c31039';
 
 export function createSavedPositionUI({ document, window, repository, host }) {
   const el = id => document.getElementById(id);
@@ -75,14 +75,22 @@ export function createSavedPositionUI({ document, window, repository, host }) {
       el('savedPositionSubmit').textContent = state.busy ? '處理中…' : ({ save: '儲存局面', rename: '儲存名稱', preferences: '儲存偏好', delete: '確認刪除', challenge: '開始挑戰', load: '載入獨立草稿' })[form.kind];
       el('savedPositionSubmit').disabled = state.busy || form.stale || form.invalid || !state.writable;
       const experimental = form.difficulty === 'experimental-b';
+      const experimentalAvailable = host.experimentalOpponentAvailable?.() === true;
       if (experimental) {
         el('savedPositionSubmit').disabled = true;
-        el('savedPositionError').textContent = form.error || '實驗對手 B 不保存偏好，只能「僅本次挑戰」。';
+        el('savedPositionError').textContent = form.error || (experimentalAvailable
+          ? '實驗對手 B 不保存偏好，只能「僅本次挑戰」。' : '實驗對手 B 尚未準備完成，請重新整理後再試。');
       }
       const experimentalOption = el('savedPositionDifficulty').querySelector('[value="experimental-b"]');
-      if (experimentalOption) experimentalOption.disabled = form.kind !== 'challenge';
+      const experimentalDisabled = !experimentalAvailable || form.kind !== 'challenge';
+      if (experimentalOption) experimentalOption.disabled = experimentalDisabled;
+      // A pre-fix UI can toggle option.disabled; it cannot unlock this HTML
+      // optgroup. Only a host that explicitly supports B can unlock both.
+      const experimentalGroup = el('savedPositionExperimentalGroup');
+      if (experimentalGroup) experimentalGroup.disabled = experimentalDisabled;
       el('savedPositionOnce').hidden = form.kind !== 'challenge';
-      el('savedPositionOnce').disabled = state.busy || form.stale || form.invalid || !state.writable;
+      el('savedPositionOnce').disabled = state.busy || form.stale || form.invalid || !state.writable
+        || (experimental && !experimentalAvailable);
       el('savedPositionDeleteWarning').hidden = form.kind !== 'delete';
       if (viewKey !== key) {
         el('savedPositionTitle').value = form.title;
@@ -140,7 +148,7 @@ export function createSavedPositionUI({ document, window, repository, host }) {
     suspended = false; const captured = ++lifecycle, origin = resumeContext; await repository.resume();
     // Only restore the same in-memory game; repository recovery never starts one.
     if (!suspended && lifecycle === captured && origin
-      && ['session', 'appState', 'editor', 'confirmed'].every(key => host.context()[key] === origin[key])) {
+      && ['session', 'mode', 'modeRevision', 'appState', 'editor', 'confirmed'].every(key => host.context()[key] === origin[key])) {
       resumeContext = null; host.refresh?.(); host.resume?.(origin);
     }
   };

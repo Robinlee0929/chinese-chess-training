@@ -4,8 +4,8 @@ import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import vm from 'node:vm';
-import { initialBoard, legalMoves } from './game.js';
-import { createGameRecord, createSessionGameRecord, createGameTimeline } from './game-record.js';
+import { initialBoard, legalMoves, hashBoard } from './game.js';
+import { createGameRecord, createSessionGameRecord, createGameTimeline, replaySessionGameRecord } from './game-record.js';
 import { createGameReview, firstGameReviewPly, createGameRecordLibraryView } from './game-review.js';
 import { createGameRecordStore } from './game-record-store.js';
 import { createCustomPositionStore, validateCustomPositionEnvelope } from './custom-position-store.js';
@@ -70,9 +70,9 @@ test('all persistent stores and IDB preparation reject B without writing', () =>
   assert.equal(validateRuntimeContinuationConfiguration(input.playPreferences).difficulty,'experimental-b');
 });
 
-function sessionHarness() {
+function sessionHarness(availability = () => true) {
   const db=repositoryDouble(), context={session:{},appState:'NORMAL_GAME',editor:null,confirmed:null,hasProgress:false}, starts=[];
-  const session=createAsyncSavedPositionSession({repository:db.repository,host:{context:()=>context,canOpen:()=>true,pause(){},resume(){},start:root=>starts.push(root),loadEditor(){}}});
+  const session=createAsyncSavedPositionSession({repository:db.repository,host:{experimentalOpponentAvailable:availability,context:()=>context,canOpen:()=>true,pause(){},resume(){},start:root=>starts.push(root),loadEditor(){}}});
   return {...db,session,starts,async open(){session.open(); await session.whenReady();}};
 }
 for(const kind of ['save','preferences','challenge']) test(`B ${kind} cannot enter a persistence operation`,async()=>{
@@ -91,27 +91,69 @@ test('existing saved position can challenge B once, without changing preference 
   assert.equal(h.starts[0].settings.humanSide,'black');assert.equal(JSON.stringify(h.snapshot),before);
   assert.equal(h.calls.some(c=>c.type==='updatePlayPreferences'),false);
 });
+for (const availability of [null, () => false]) test(`B once-only challenge rejects ${availability ? 'unready' : 'legacy'} host before repository access`, async () => {
+  const h = sessionHarness(availability); await h.open();
+  h.session.select('challenge', 'saved'); h.session.edit({difficulty:'experimental-b'});
+  const before = JSON.stringify(h.snapshot), calls = h.calls.length;
+  assert.equal(await h.session.submit({once:true}), false);
+  assert.match(h.session.state().form.error, /尚未準備/);
+  assert.equal(h.starts.length, 0); assert.equal(h.calls.length, calls);
+  assert.equal(JSON.stringify(h.snapshot), before);
+});
+test('B once-only challenge rechecks host availability after asynchronous reads', async () => {
+  let checks = 0;
+  const h = sessionHarness(() => ++checks === 1); await h.open();
+  h.session.select('challenge', 'saved'); h.session.edit({difficulty:'experimental-b'});
+  const before = JSON.stringify(h.snapshot);
+  assert.equal(await h.session.submit({once:true}), false);
+  assert.equal(checks, 2); assert.equal(h.starts.length, 0);
+  assert.equal(JSON.stringify(h.snapshot), before);
+  assert.equal(h.calls.some(c => c.type === 'updatePlayPreferences'), false);
+});
+test('all four HTML B options fail closed, including the legacy saved-position option unlock', () => {
+  const html = read('index.html');
+  for (const id of ['modeSel', 'customPlayDifficulty', 'gameReviewContinuationDifficulty', 'savedPositionDifficulty']) {
+    const select = html.match(new RegExp(`<select[^>]*id="${id}"[^]*?</select>`))[0];
+    assert.match(select, /<option value="experimental-b" disabled>/);
+    for (const mode of ['easy', 'medium', 'hard']) {
+      const option = select.match(new RegExp(`<option value="${mode}"[^>]*>`))[0];
+      assert.doesNotMatch(option, /disabled/);
+    }
+  }
+  assert.match(html, /<optgroup id="savedPositionExperimentalGroup"[^>]* disabled>/);
+});
 
 const source=read('main.js');
 const functionSource=name=>source.match(new RegExp(`^function ${name}\\([^]*?^}`, 'm'))[0].replaceAll('import.meta.url',JSON.stringify(new URL('main.js',root).href));
 function aiHarness(failure) {
   const workers=[],timers=new Map(),moves=[];let n=0;
-  const ctx=vm.createContext({board:initialBoard(),turn:'black',mode:'experimental-b',posHistory:[],aiToken:0,aiRequest:null,aiWorker:null,aiModule:null,experimentalAIFailure:null,normalGameRecordSession:{id:'session'},customRematchRequest:null,over:false,busy:false,aiThinking:false,aiMoveStart:0,normalGameActive:()=>true,isAI:()=>true,aiSide:()=> 'black',legalMoves,performance:{now:()=>100},URL,refreshHUD(){},toast(){},setTimeout:f=>{timers.set(++n,f);return n;},clearTimeout:id=>timers.delete(id),doMove:(from,to)=>moves.push({from,to}),Worker:class{constructor(){if(failure==='constructor')throw Error('unavailable');workers.push(this);}postMessage(p){this.payload=p;if(failure==='post')throw Error('post');}terminate(){this.terminated=true;}}});
+  const ctx=vm.createContext({experimentalOpponentAvailable:()=>true,board:initialBoard(),turn:'black',mode:'experimental-b',posHistory:[],aiToken:0,aiRequest:null,aiWorker:null,aiModule:null,experimentalAIFailure:null,normalGameRecordSession:{id:'session'},customRematchRequest:null,over:false,busy:false,aiThinking:false,aiMoveStart:0,normalGameActive:()=>true,isAI:()=>true,aiSide:()=> 'black',legalMoves,performance:{now:()=>100},URL,refreshHUD(){},toast(){},setTimeout:f=>{timers.set(++n,f);return n;},clearTimeout:id=>timers.delete(id),doMove:(from,to)=>moves.push({from,to}),Worker:class{constructor(){if(failure==='constructor')throw Error('unavailable');workers.push(this);}postMessage(p){this.payload=p;if(failure==='post')throw Error('post');}terminate(){this.terminated=true;}}});
   for(const name of ['invalidateNormalAI','currentAIRequest','failExperimentalAI','startAIFallback','requestAIMove','maybeAIMove','onAIResult'])vm.runInContext(functionSource(name),ctx);
   const result={from:{r:6,c:0},to:{r:5,c:0}};
   return {ctx,workers,timers,moves,result,flush(){const callbacks=[...timers.values()];timers.clear();callbacks.forEach(f=>f());}};
 }
-for(const failure of ['constructor','post','error','timeout','search-error','illegal']) test(`B ${failure}: retain board, stop worker, never start synchronous fallback`,()=>{
+for(const failure of ['constructor','post','error','timeout','search-error','old-worker','illegal']) test(`B ${failure}: retain board, stop worker, never start synchronous fallback`,()=>{
   const h=aiHarness(failure),before=JSON.stringify(h.ctx.board);h.ctx.maybeAIMove();
   const w=h.workers[0];
   if(failure==='error')w.onerror({preventDefault(){}});
   if(failure==='timeout')h.flush();
   if(failure==='search-error')w.onmessage({data:{token:h.ctx.aiToken,error:'search-failed'}});
+  if(failure==='old-worker')w.onmessage({data:{kind:'worker-error',token:h.ctx.aiToken,error:'unsupported-request'}});
   if(failure==='illegal'){w.onmessage({data:{token:h.ctx.aiToken,result:{from:{r:0,c:0},to:{r:9,c:8}}}});h.flush();}
   assert.equal(h.ctx.aiModule,null);assert.equal(h.ctx.aiThinking,false);assert.equal(h.moves.length,0);
   assert.equal(JSON.stringify(h.ctx.board),before);assert.equal(h.ctx.experimentalAIFailure,h.ctx.normalGameRecordSession);
   const count=h.workers.length;h.ctx.maybeAIMove();assert.equal(h.workers.length,count,'failure must not retry itself');
   assert.ok(h.workers.every(w=>w.terminated));
+});
+test('unready B runtime cannot search or replace a configured game even if UI is bypassed', () => {
+  const h = aiHarness(); h.ctx.experimentalOpponentAvailable = () => false;
+  h.ctx.maybeAIMove(); assert.equal(h.workers.length, 0); assert.equal(h.ctx.aiThinking, false);
+  h.ctx.allowExperimentalOpponent = () => false;
+  for (const name of ['startConfiguredNormalGame', 'startCustomPositionPlay']) vm.runInContext(functionSource(name), h.ctx);
+  const before = JSON.stringify(h.ctx.board);
+  assert.equal(h.ctx.startConfiguredNormalGame({}, {difficulty:'experimental-b'}), false);
+  assert.equal(h.ctx.startCustomPositionPlay({difficulty:'experimental-b'}), false);
+  assert.equal(JSON.stringify(h.ctx.board), before); assert.equal(h.ctx.mode, 'experimental-b');
 });
 test('single B request, duplicate replies and cancellation cannot create competing or stale moves',()=>{
   const h=aiHarness();h.ctx.maybeAIMove();h.ctx.maybeAIMove();assert.equal(h.workers.length,1);
@@ -121,10 +163,63 @@ test('single B request, duplicate replies and cancellation cannot create competi
   reply({data:{token,result:h.result}});assert.equal(h.moves.length,1);
   h.ctx.invalidateNormalAI();h.flush();assert.equal(h.moves.length,1);
 });
-test('terminal B finalization never calls the persistent writer',()=>{
-  let writes=0;const r=record();
-  const ctx=vm.createContext({normalGameRecordSession:{...r},over:true,completedGameRecordSessionId:null,lastCompletedGameRecord:null,gameRecordNow:()=>r.completedAt,history:r.moves,winner:'red',createGameRecord:input=>createSessionGameRecord(JSON.parse(JSON.stringify(input))),gameRecordStore:{saveGameRecord(){writes++;}}});
-  for(const name of ['normalGameRecordTerminationReason','finalizeNormalGameRecord'])vm.runInContext(functionSource(name),ctx);
-  assert.equal(ctx.finalizeNormalGameRecord('將死').mode,'experimental-b');ctx.finalizeNormalGameRecord('將死');assert.equal(writes,0);
-  ctx.normalGameRecordSession=record('hard');ctx.completedGameRecordSessionId=null;ctx.finalizeNormalGameRecord('將死');assert.equal(writes,1);
+function recordHarness(sessionMode, runtimeMode = sessionMode) {
+  const r = record(sessionMode), values = new Map(), notices = [];
+  const store = createGameRecordStore({storage:{getItem:k=>values.get(k)??null,setItem:(k,v)=>values.set(k,v)}});
+  store.saveGameRecord(record('hard'));
+  const final = replaySessionGameRecord(r, r.moves.length);
+  const ctx = vm.createContext({mode:runtimeMode,normalGameModeRevision:1,normalGameRecordError:null,
+    normalGameRecordSession:{...r,modeRevision:1},board:structuredClone(final.board),turn:final.sideToMove,
+    over:true,completedGameRecordSessionId:null,lastCompletedGameRecord:null,gameRecordNow:()=>r.completedAt,
+    history:r.moves,winner:'red',hashBoard,toast:message=>notices.push(message),
+    createGameRecord:input=>createSessionGameRecord(JSON.parse(JSON.stringify(input))),replaySessionGameRecord,
+    gameRecordStore:store});
+  for (const name of ['normalGameRecordTerminationReason','normalGameRecordMatches','failNormalGameRecord','finalizeNormalGameRecord']) vm.runInContext(functionSource(name),ctx);
+  return {ctx,notices,values,bytes:()=>JSON.stringify([...values])};
+}
+
+for (const mode of ['easy','medium','hard','pvp','experimental-b']) test(`valid ${mode} finalization preserves its record identity and storage policy`,()=>{
+  const h=recordHarness(mode),before=h.bytes();
+  h.ctx.normalGameRecordSession.id='new-'+mode;
+  assert.equal(h.ctx.finalizeNormalGameRecord('將死').mode,mode);
+  const once=h.bytes();h.ctx.finalizeNormalGameRecord('將死');assert.equal(h.bytes(),once);
+  assert.equal(h.ctx.normalGameRecordError,null);
+  if(mode==='experimental-b')assert.equal(h.bytes(),before);else assert.notEqual(h.bytes(),before);
+});
+
+for (const [sessionMode,runtimeMode] of [['hard','experimental-b'],['experimental-b','hard'],['easy','medium']]) test(`mismatched ${sessionMode}/${runtimeMode} record fails closed and stays latched`,()=>{
+  const h=recordHarness(sessionMode,runtimeMode),before=h.bytes();
+  assert.equal(h.ctx.finalizeNormalGameRecord('將死'),null);
+  assert.equal(h.ctx.normalGameRecordError.code,'GAME_RECORD_SESSION_MISMATCH');assert.equal(h.bytes(),before);
+  assert.equal(h.ctx.lastCompletedGameRecord,null);assert.equal(h.notices.length,1);
+  h.ctx.mode=sessionMode;assert.equal(h.ctx.finalizeNormalGameRecord('將死'),null);assert.equal(h.bytes(),before);
+});
+
+for (const fault of ['revision','board','session-replaced-during-validation']) test(`record boundary rejects ${fault}`,()=>{
+  const h=recordHarness('hard'),before=h.bytes();
+  if(fault==='revision')h.ctx.normalGameModeRevision++;
+  if(fault==='board')h.ctx.board[0][4]=null;
+  if(fault==='session-replaced-during-validation'){
+    const create=h.ctx.createGameRecord;h.ctx.createGameRecord=input=>{const r=create(input);h.ctx.normalGameRecordSession={...h.ctx.normalGameRecordSession};return r;};
+  }
+  assert.equal(h.ctx.finalizeNormalGameRecord('將死'),null);assert.equal(h.bytes(),before);assert.ok(h.ctx.normalGameRecordError);
+});
+
+test('mode change rejects modal/non-game/unknown/unready input before any state mutation',()=>{
+  let active=true,modal=false,available=true,starts=0;
+  const ctx=vm.createContext({mode:'hard',modeSel:{value:'hard'},normalGameRecordSession:{mode:'hard'},
+    normalGameActive:()=>active,document:{querySelector:()=>modal?{}:null},allowExperimentalOpponent:()=>available,
+    newGame(){starts++;ctx.normalGameRecordSession={mode:ctx.mode};}});
+  vm.runInContext(functionSource('changeNormalGameMode'),ctx);
+  for(const fault of ['modal','non-game','unknown','unready']){
+    modal=fault==='modal';active=fault!=='non-game';available=fault!=='unready';
+    const session=ctx.normalGameRecordSession;ctx.modeSel.value=fault==='unknown'?'invalid':'experimental-b';
+    assert.equal(ctx.changeNormalGameMode(ctx.modeSel.value),false);assert.equal(ctx.modeSel.value,'hard');
+    assert.equal(ctx.mode,'hard');assert.equal(ctx.normalGameRecordSession,session);assert.equal(starts,0);
+  }
+  active=true;modal=false;available=true;
+  for(const mode of ['experimental-b','easy','medium','hard','pvp']){
+    assert.equal(ctx.changeNormalGameMode(mode),true);assert.equal(ctx.mode,ctx.normalGameRecordSession.mode);assert.equal(ctx.modeSel.value,mode);
+  }
+  assert.equal(starts,5);
 });

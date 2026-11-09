@@ -13,7 +13,7 @@ import * as transfer from './puzzle-transfer.js';
 import * as analytics from './puzzle-analytics.js';
 import { createGameReviewPuzzleHandoff } from './game-review-puzzle-handoff.js';
 import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js';
-import { createGameRecord, validateGameRecord } from './game-record.js';
+import { createGameRecord, validateGameRecord, replaySessionGameRecord } from './game-record.js';
 import { GameRecordStoreError, createGameRecordStore } from './game-record-store.js';
 import { createGameReview, selectGameReviewPly } from './game-review.js';
 import * as continuation from './game-review-continuation.js';
@@ -144,7 +144,7 @@ function harness(options = {}) {
     ...continuation, validateCustomPlayPosition, createCustomGameRoot, createMutableCustomGamePosition,
     PuzzleStoreError,
     createGameRecord: (record) => createGameRecord(structuredClone(record)),
-    validateGameRecord,
+    validateGameRecord, replaySessionGameRecord,
     GameRecordStoreError, createGameRecordStore, Blob,
     scene, Y0: 0.18, pieces: [], tweens: [], clock: 0, timers: [], shownResults: [],
     board: game.initialBoard(), turn: game.RED, history: [],
@@ -153,7 +153,7 @@ function harness(options = {}) {
     repHistory: [{ key: game.hashBoard(game.initialBoard()) + '|red', mover: null, check: false }],
     busy: false, over: false, winner: null, aiToken: 0, aiThinking: false, undoCount: 0,
     mode: options.mode ?? 'pvp', humanSide: game.RED, normalGameRecordSession: null,
-    completedGameRecordSessionId: null, lastCompletedGameRecord: null,
+    completedGameRecordSessionId: null, lastCompletedGameRecord: null, normalGameModeRevision: 0, normalGameRecordError: null,
     customGameContext: null, customRematchRequest: null, customRematchLock: null,
     customRematchUnlockTimer: null, gameOverTimer: null, normalGameTerminalPresentation: null, aiRequest: null,
     gameRecordStore, gameRecordStorage, gameRecordNow, gameRecordIdFactory,
@@ -298,7 +298,7 @@ function harness(options = {}) {
     'customRematchAvailable', 'syncCustomRematchUI', 'requestCustomRematch',
     'cancelCustomRematch', 'confirmCustomRematch', 'performCustomRematch',
     'animateCapture', 'doMove', 'finishMove', 'scheduleNormalGameTerminal', 'presentNormalGameTerminal', 'cloneNormalGameRecordBoard',
-    'beginNormalGameRecordSession', 'normalGameRecordTerminationReason',
+    'beginNormalGameRecordSession', 'normalGameRecordTerminationReason', 'normalGameRecordMatches', 'failNormalGameRecord',
     'finalizeNormalGameRecord', 'normalUndoAvailable', 'undoPly', 'undo', 'newGame', 'resetTo',
     'initializeNormalGamePosition', 'startNormalGameFromReview', 'startConfiguredNormalGame', 'canHumanMove',
     'discardPuzzleEditor', 'confirmEditorPosition', 'openCustomPositionPlay', 'cancelCustomPositionPlay',

@@ -1,5 +1,5 @@
-import { createCustomGameRoot, createMutableCustomGamePosition, validateCustomPlayPosition } from './custom-position-play.js?v=66a2321529';
-import { validateContinuationConfiguration } from './game-review-continuation.js?v=66a2321529';
+import { createCustomGameRoot, createMutableCustomGamePosition, validateCustomPlayPosition } from './custom-position-play.js?v=5c54c31039';
+import { validateContinuationConfiguration } from './game-review-continuation.js?v=5c54c31039';
 
 export function savedPositionMessage(result = {}) {
   const code = result.code ?? result.status;
@@ -25,7 +25,7 @@ export function createAsyncSavedPositionSession({ repository, host, onChange = (
   let view = 'list', form = null, snapshot = null, storageState = 'UNAVAILABLE', storageMessage = '';
   let plan = null, busy = false, notice = '', inflight = null, ready = Promise.resolve(false);
   const unresolved = new Map(); // Includes cancelled committed/unknown intents; never resubmitted.
-  const contextMatches = () => origin && ['session', 'appState', 'editor', 'confirmed']
+  const contextMatches = () => origin && ['session', 'mode', 'modeRevision', 'appState', 'editor', 'confirmed']
     .every(key => host.context()[key] === origin[key]);
   const state = () => ({ active, view, form, snapshot, storageState, storageMessage, busy, notice,
     migrationCount: plan?.count ?? 0, canMigrate: !!plan && ['MIGRATION_REQUIRED', 'STAGED'].includes(storageState),
@@ -159,6 +159,9 @@ export function createAsyncSavedPositionSession({ repository, host, onChange = (
     if (settings.difficulty === 'experimental-b' && !(f.kind === 'challenge' && once)) {
       f.error = '實驗對手 B 不保存偏好，請選「僅本次挑戰」。'; emit(); return false;
     }
+    if (settings.difficulty === 'experimental-b' && host.experimentalOpponentAvailable?.() !== true) {
+      f.error = '實驗對手 B 尚未準備完成，請重新整理後再試。'; emit(); return false;
+    }
     if ((f.requiresAcknowledgement || f.replacesEditor) && !f.acknowledged) { f.error = '請先確認放棄目前進度或取代編輯草稿。'; emit(); return false; }
     const current = begin();
     try {
@@ -176,6 +179,9 @@ export function createAsyncSavedPositionSession({ repository, host, onChange = (
         handle = scope.getPosition(f.id, expected); result = await receive(handle, current); if (!result) return false;
         if (result.status !== 'SUCCESS') return failed(result, handle);
         if (!current() || !scope.canApply(handle, result)) return false;
+        if (settings.difficulty === 'experimental-b' && host.experimentalOpponentAvailable?.() !== true) {
+          f.error = '實驗對手 B 尚未準備完成，請重新整理後再試。'; emit(); return false;
+        }
         const root = createCustomGameRoot(result.position, settings, { savedPositionId: result.position.id });
         const mutable = createMutableCustomGamePosition(root);
         close(false); if (f.kind === 'challenge') host.start(root, mutable); else host.loadEditor(mutable);
