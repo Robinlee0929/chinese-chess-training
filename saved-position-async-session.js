@@ -1,5 +1,5 @@
-import { createCustomGameRoot, createMutableCustomGamePosition, validateCustomPlayPosition } from './custom-position-play.js?v=786025ac37';
-import { validateContinuationConfiguration } from './game-review-continuation.js?v=786025ac37';
+import { createCustomGameRoot, createMutableCustomGamePosition, validateCustomPlayPosition } from './custom-position-play.js?v=66a2321529';
+import { validateContinuationConfiguration } from './game-review-continuation.js?v=66a2321529';
 
 export function savedPositionMessage(result = {}) {
   const code = result.code ?? result.status;
@@ -156,6 +156,9 @@ export function createAsyncSavedPositionSession({ repository, host, onChange = (
   async function submit({ once = false } = {}) {
     if (!active || busy || !form || form.stale || form.invalid || storageState !== 'ACTIVE' || !contextMatches()) return false;
     const f = form, settings = { humanSide: f.humanSide, difficulty: f.difficulty };
+    if (settings.difficulty === 'experimental-b' && !(f.kind === 'challenge' && once)) {
+      f.error = '實驗對手 B 不保存偏好，請選「僅本次挑戰」。'; emit(); return false;
+    }
     if ((f.requiresAcknowledgement || f.replacesEditor) && !f.acknowledged) { f.error = '請先確認放棄目前進度或取代編輯草稿。'; emit(); return false; }
     const current = begin();
     try {

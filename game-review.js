@@ -1,9 +1,10 @@
 import {
   createGameRecord,
-  replayGameRecord,
+  createSessionGameRecord,
+  replaySessionGameRecord,
   createGameTimeline,
   replayGameTimeline,
-} from './game-record.js?v=786025ac37';
+} from './game-record.js?v=66a2321529';
 
 export const GAME_REVIEW_INITIAL_PLY = 'last';
 
@@ -28,7 +29,7 @@ export function createGameRecordLibraryView(loadResult) {
 }
 
 export function createGameReview(record, { selectedPly = GAME_REVIEW_INITIAL_PLY } = {}) {
-  const canonicalRecord = createGameRecord(record);
+  const canonicalRecord = createSessionGameRecord(record);
   const initialPly = resolveInitialPly(selectedPly, canonicalRecord.moves.length);
   return buildReview(canonicalRecord, initialPly, 'completed', null);
 }
@@ -85,7 +86,7 @@ function resolveInitialPly(selectedPly, totalPlies) {
 function buildReview(record, selectedPly, sourceKind, teachingTarget) {
   const snapshot = sourceKind === 'live-teaching'
     ? replayGameTimeline(record, selectedPly)
-    : replayGameRecord(record, selectedPly);
+    : replaySessionGameRecord(record, selectedPly);
   const currentMove = selectedPly === 0 ? null : snapshot.moveMetadata[selectedPly - 1];
   return Object.freeze({
     record,

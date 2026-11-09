@@ -15,13 +15,13 @@ function functionSource(name) {
 }
 
 function install(name, values) {
-  const context = vm.createContext({ RED, BLACK, customRematchRequest: null, ...values });
+  const context = vm.createContext({ RED, BLACK, mode: 'medium', experimentalAIFailure: null, customRematchRequest: null, ...values });
   vm.runInContext(functionSource(name), context);
   return context;
 }
 
 function installMany(names, values) {
-  const context = vm.createContext({ RED, BLACK, customRematchRequest: null, ...values });
+  const context = vm.createContext({ RED, BLACK, mode: 'medium', experimentalAIFailure: null, clearTimeout() {}, customRematchRequest: null, ...values });
   vm.runInContext(names.map(functionSource).join('\n'), context);
   return context;
 }

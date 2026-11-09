@@ -1,5 +1,5 @@
-import { createCustomPositionIDB } from './custom-position-idb.js?v=786025ac37';
-import { validateCustomPositionEnvelope, CUSTOM_POSITION_STORAGE_KEY, CUSTOM_POSITION_MAX_BYTES } from './custom-position-store.js?v=786025ac37';
+import { createCustomPositionIDB } from './custom-position-idb.js?v=66a2321529';
+import { validateCustomPositionEnvelope, CUSTOM_POSITION_STORAGE_KEY, CUSTOM_POSITION_MAX_BYTES } from './custom-position-store.js?v=66a2321529';
 
 const frozen = value => { if (value && typeof value === 'object' && !Object.isFrozen(value)) {
   Object.values(value).forEach(frozen); Object.freeze(value); } return value; };

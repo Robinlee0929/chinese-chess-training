@@ -1,4 +1,4 @@
-import { BOARD_PHOTO_STORED_BYTES, validateBoardAppearanceSettings } from './board-appearance.js?v=786025ac37';
+import { BOARD_PHOTO_STORED_BYTES, validateBoardAppearanceSettings } from './board-appearance.js?v=66a2321529';
 
 export const BOARD_APPEARANCE_DATABASE = 'chinese-chess-training:board-appearance';
 const STORE = 'appearance', KEY = 'current';

@@ -380,6 +380,16 @@ node tools/pages-artifact-smoke.mjs /absolute/path/to/new-site /absolute/path/to
 
 上述命令只做本機建置與驗證，不部署網站；測試使用隔離瀏覽器與合成資料。不要直接在正式網站執行 `tools/` fixture。
 
+## 實驗對手 B（本機原型）
+
+實驗對手 B 使用不同搜尋排序，棋力尚未證明高於困難級。保留原有 easy／medium／hard／pvp 行為；B 只在 Web Worker 執行，搜尋預算維持 4,500ms。Worker 無法啟動、失敗或超過 7 秒外部 watchdog 時保留棋局並提供重試，不在主執行緒搜尋，也不自動改用其他對手。
+
+B 對局只保留記憶體棋譜供當次複盤，重新整理後消失，不進入對局紀錄儲存區。既有局面選擇 B 時僅允許「僅本次挑戰」；儲存目前局面、保存 B 偏好、戰績分享與由 B 棋譜建立殺局題均停用。沒有新資料庫、資料遷移或新持久化格式。
+
+`ai-experimental-b.js` 來自凍結候選 SHA-256 `aaad56881956a3ba25c0a4ab75bbc9123ce5e54efac8beab65805b2656ce7495`。整合僅由快取工具更新其 `game.js` 引用版本；測試將引用還原為原版本後核對完整雜湊，並確認相對原引擎僅有兩項排序變更及實驗兩版共有的唯讀 `metrics()` getter。不得藉此宣稱大師級棋力。
+
+針對性測試：`node --test experimental-opponent-test.mjs`。瀏覽器測試使用既有 Playwright／Chrome，設定 `PLAYWRIGHT_MODULE` 與工作樹外全新 `EXPERIMENTAL_B_EVIDENCE_DIR`，執行 `node tools/experimental-opponent-browser-test.mjs /absolute/path/to/built-site`；它使用隔離瀏覽器、合成局面，並在同一測試 origin 切換 baseline 程式驗證回滾讀寫。手機尺寸模擬不代表 Android／iPhone 真機驗收。
+
 ## 授權
 
 [MIT License](LICENSE) © Will 保哥

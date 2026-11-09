@@ -1,4 +1,4 @@
-import { createAsyncSavedPositionSession } from './saved-position-async-session.js?v=786025ac37';
+import { createAsyncSavedPositionSession } from './saved-position-async-session.js?v=66a2321529';
 
 export function createSavedPositionUI({ document, window, repository, host }) {
   const el = id => document.getElementById(id);
@@ -74,6 +74,13 @@ export function createSavedPositionUI({ document, window, repository, host }) {
       el('savedPositionError').textContent = form.error;
       el('savedPositionSubmit').textContent = state.busy ? '處理中…' : ({ save: '儲存局面', rename: '儲存名稱', preferences: '儲存偏好', delete: '確認刪除', challenge: '開始挑戰', load: '載入獨立草稿' })[form.kind];
       el('savedPositionSubmit').disabled = state.busy || form.stale || form.invalid || !state.writable;
+      const experimental = form.difficulty === 'experimental-b';
+      if (experimental) {
+        el('savedPositionSubmit').disabled = true;
+        el('savedPositionError').textContent = form.error || '實驗對手 B 不保存偏好，只能「僅本次挑戰」。';
+      }
+      const experimentalOption = el('savedPositionDifficulty').querySelector('[value="experimental-b"]');
+      if (experimentalOption) experimentalOption.disabled = form.kind !== 'challenge';
       el('savedPositionOnce').hidden = form.kind !== 'challenge';
       el('savedPositionOnce').disabled = state.busy || form.stale || form.invalid || !state.writable;
       el('savedPositionDeleteWarning').hidden = form.kind !== 'delete';
@@ -97,6 +104,7 @@ export function createSavedPositionUI({ document, window, repository, host }) {
     session.edit({ title: el('savedPositionTitle').value,
       humanSide: el('savedPositionHumanSide').value, difficulty: el('savedPositionDifficulty').value,
       acknowledged: el('savedPositionAcknowledge').checked });
+    render(session.state());
   }
   el('savedPositionForm').addEventListener('input', readInputs);
   el('savedPositionForm').addEventListener('change', readInputs);

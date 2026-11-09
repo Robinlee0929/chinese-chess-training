@@ -1,10 +1,18 @@
-import { RED, BLACK } from './game.js?v=786025ac37';
-import { createGameTimeline } from './game-record.js?v=786025ac37';
+import { RED, BLACK } from './game.js?v=66a2321529';
+import { createGameTimeline } from './game-record.js?v=66a2321529';
 
 const DIFFICULTIES = new Set(['easy', 'medium', 'hard']);
 
 export function defaultContinuationDifficulty(mode) {
-  return DIFFICULTIES.has(mode) ? mode : 'medium';
+  return DIFFICULTIES.has(mode) || mode === 'experimental-b' ? mode : 'medium';
+}
+
+// Runtime only. Persistent custom-position preferences must continue to call
+// validateContinuationConfiguration, whose allowlist deliberately excludes B.
+export function validateRuntimeContinuationConfiguration(configuration) {
+  if (configuration.difficulty !== 'experimental-b') return validateContinuationConfiguration(configuration);
+  defaultContinuationHumanSide(configuration.humanSide);
+  return { difficulty: configuration.difficulty, humanSide: configuration.humanSide };
 }
 
 export function defaultContinuationHumanSide(sideToMove) {
