@@ -174,7 +174,7 @@ test('side changes restart cleanly while new games reconcile the current-side ca
   assert.deepEqual(calls, [['new', false]]);
   assert.match(functionSource('newGame'), /if \(resetHumanSide\) humanSide = RED;/u);
   assert.match(functionSource('newGame'), /if \(reconcileHumanSideCamera\) showPlayerPerspective\(humanSide\);/u);
-  assert.match(functionSource('showPlayerPerspective'), /side === BLACK \? 1 : 0/u);
+  assert.match(functionSource('showPlayerPerspective'), /side === BLACK \? 4 : 2/u);
   assert.match(source, /newGame\(\{ reconcileHumanSideCamera: false \}\);/u);
 });
 

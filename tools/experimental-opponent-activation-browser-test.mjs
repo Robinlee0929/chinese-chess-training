@@ -182,7 +182,7 @@ try{
    for(const id of ids.slice(0,3))assert.equal((await states(p))[id].effectivelyDisabled,false);
    await p.locator('#modeSel').selectOption('experimental-b');await move(p);
    await p.waitForFunction(()=>__chess.history.length===2&&!__chess.aiThinking&&!__chess.busy);
-   assert.match(await p.locator('#experimentalNotice').innerText(),/棋力尚未證明高於困難級/);
+   assert.match(await p.locator('#experimentalNotice').innerText(),/不保證比困難級強/);
    await toolbar(p,'#btnUndo');await p.waitForFunction(()=>__chess.history.length===0);await p.locator('#btnNew').click();
    await seed(p);const before=await storage(p);await challenge(p);
    await p.locator('#savedPositionDifficulty').selectOption('experimental-b');
