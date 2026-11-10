@@ -69,7 +69,7 @@
   "isBasedOn": "https://github.com/doggy8088/chinese-chess"
 }
 </script>
-<link rel="stylesheet" href="./css/style.css?v=5c54c31039">
+<link rel="stylesheet" href="./css/style.css?v=b1355bbc48">
 <script type="importmap">
 {
   "imports": {
@@ -91,7 +91,7 @@
         <option value="easy">人機・簡單</option>
         <option value="medium" selected>人機・中等</option>
         <option value="hard">人機・困難</option>
-        <option value="experimental-b" disabled>實驗對手 B</option>
+        <option value="experimental-b" disabled>挑戰級（試玩）</option>
         <option value="pvp">雙人對弈</option>
       </select>
       <fieldset id="sideChooser" class="side-chooser">
@@ -132,7 +132,7 @@
       </div>
     </div>
   </header>
-    <p id="experimentalNotice" class="experimental-notice" hidden>實驗對手 B 使用不同搜尋排序，棋力尚未證明高於困難級。棋譜僅供本次複盤，重新整理後消失，不保存局面或偏好。 <button id="btnRetryExperimental" type="button" hidden>重試 B 行棋</button></p>
+    <p id="experimentalNotice" class="experimental-notice" hidden>挑戰級使用不同的思考方式，不保證比困難級強。完整棋譜不會永久保存。 <button id="btnRetryExperimental" type="button" hidden>重試挑戰級行棋</button></p>
 
   <main>
     <aside id="left">
@@ -244,7 +244,7 @@
               <p id="customPlayDescription">以已確認棋面開始新對局。玩家棋色與輪走方分開設定；輪到電腦時，電腦會先走。原本尚未完成的對局將被取代。</p>
               <label for="customPlayDifficulty">AI 難度</label>
               <select id="customPlayDifficulty">
-                <option value="easy">簡單</option><option value="medium">中等</option><option value="hard">困難</option><option value="experimental-b" disabled>實驗對手 B（僅本次）</option>
+                <option value="easy">簡單</option><option value="medium">中等</option><option value="hard">困難</option><option value="experimental-b" disabled>挑戰級（試玩）（僅本次）</option>
               </select>
               <label for="customPlayHumanSide">玩家棋色</label>
               <select id="customPlayHumanSide">
@@ -572,7 +572,7 @@
             <p>重複局面紀錄會從此處重新計算。</p>
             <label for="gameReviewContinuationDifficulty">AI 難度</label>
             <select id="gameReviewContinuationDifficulty">
-              <option value="easy">簡單</option><option value="medium">中等</option><option value="hard">困難</option><option value="experimental-b" disabled>實驗對手 B（僅本次）</option>
+              <option value="easy">簡單</option><option value="medium">中等</option><option value="hard">困難</option><option value="experimental-b" disabled>挑戰級（試玩）（僅本次）</option>
             </select>
             <label for="gameReviewContinuationHumanSide">你的棋色（本盤新選擇）</label>
             <select id="gameReviewContinuationHumanSide">
@@ -756,7 +756,7 @@
         <label for="savedPositionHumanSide">玩家棋色</label>
         <select id="savedPositionHumanSide"><option value="red">紅方</option><option value="black">黑方</option></select>
         <label for="savedPositionDifficulty">AI 難度</label>
-        <select id="savedPositionDifficulty"><option value="easy">簡單</option><option value="medium">中等</option><option value="hard">困難</option><optgroup id="savedPositionExperimentalGroup" label="僅本次試玩" disabled><option value="experimental-b" disabled>實驗對手 B（僅本次）</option></optgroup></select>
+        <select id="savedPositionDifficulty"><option value="easy">簡單</option><option value="medium">中等</option><option value="hard">困難</option><optgroup id="savedPositionExperimentalGroup" label="僅本次試玩" disabled><option value="experimental-b" disabled>挑戰級（試玩）（僅本次）</option></optgroup></select>
         <p>開始挑戰會先儲存修改的設定；「僅本次挑戰」不儲存偏好。</p>
       </fieldset>
       <label id="savedPositionAcknowledgement"><input id="savedPositionAcknowledge" type="checkbox"><span id="savedPositionAcknowledgementText"></span></label>
@@ -807,6 +807,6 @@
   <div id="toast" class="hidden" role="status"></div>
 </div>
 
-<script type="module" src="./main.js?v=5c54c31039"></script>
+<script type="module" src="./main.js?v=b1355bbc48"></script>
 </body>
 </html>

@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 // Required for the default wood/grid texture as well as photo rendering.
 // Unlike the optional UI/store below, failure of this core dependency is fatal.
-import { createBoardSurface } from './board-appearance.js?v=5c54c31039';
+import { createBoardSurface } from './board-appearance.js?v=b1355bbc48';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
   normalizePieceGlyphOrientationMode,
@@ -17,20 +17,20 @@ import {
   ROWS, COLS, RED, BLACK,
   initialBoard, legalMoves, applyMove, inCheck,
   hasAnyLegalMove, name, notation, hashBoard, repetitionVerdict,
-} from './game.js?v=5c54c31039';
+} from './game.js?v=b1355bbc48';
 import {
   validateCustomPlayPosition, createCustomGameRoot, createMutableCustomGamePosition,
-} from './custom-position-play.js?v=5c54c31039';
-import { createSessionGameRecord as createGameRecord, replaySessionGameRecord } from './game-record.js?v=5c54c31039';
-import { createCustomPositionRepository } from './custom-position-repository.js?v=5c54c31039';
-import { createSavedPositionUI } from './saved-position-ui.js?v=5c54c31039';
-import { attachTerminalOverlayFocus } from './terminal-overlay-focus.js?v=5c54c31039';
+} from './custom-position-play.js?v=b1355bbc48';
+import { createSessionGameRecord as createGameRecord, replaySessionGameRecord } from './game-record.js?v=b1355bbc48';
+import { createCustomPositionRepository } from './custom-position-repository.js?v=b1355bbc48';
+import { createSavedPositionUI } from './saved-position-ui.js?v=b1355bbc48';
+import { attachTerminalOverlayFocus } from './terminal-overlay-focus.js?v=b1355bbc48';
 import {
   canStartGameFromReview, createReviewContinuationPosition,
   defaultContinuationDifficulty, defaultContinuationHumanSide,
   validateRuntimeContinuationConfiguration as validateContinuationConfiguration,
-} from './game-review-continuation.js?v=5c54c31039';
-import { createGameRecordStore } from './game-record-store.js?v=5c54c31039';
+} from './game-review-continuation.js?v=b1355bbc48';
+import { createGameRecordStore } from './game-record-store.js?v=b1355bbc48';
 import {
   createGameReview,
   createGameRecordLibraryView,
@@ -39,15 +39,15 @@ import {
   nextGameReviewPly,
   lastGameReviewPly,
   selectGameReviewPly,
-} from './game-review.js?v=5c54c31039';
+} from './game-review.js?v=b1355bbc48';
 import {
   createGameReviewAiState,
   invalidateGameReviewAiState,
   beginGameReviewAiRequest,
   settleGameReviewAiResponse,
-} from './game-review-ai.js?v=5c54c31039';
-import { createGameReviewEvidence } from './game-review-evidence.js?v=5c54c31039';
-import { deriveGameReviewTeaching } from './game-review-teaching.js?v=5c54c31039';
+} from './game-review-ai.js?v=b1355bbc48';
+import { createGameReviewEvidence } from './game-review-evidence.js?v=b1355bbc48';
+import { deriveGameReviewTeaching } from './game-review-teaching.js?v=b1355bbc48';
 import {
   createGameTeachingModeState,
   setGameTeachingModeEnabled,
@@ -56,7 +56,7 @@ import {
   settleGameTeachingModeAnalysis,
   gameTeachingModeMatchesHistory,
   shouldScheduleGameTeachingMode,
-} from './game-teaching-mode.js?v=5c54c31039';
+} from './game-teaching-mode.js?v=b1355bbc48';
 import {
   createDisabledCoachState,
   createIdleCoachState,
@@ -65,28 +65,28 @@ import {
   settleCoachResponse,
   invalidateCoachState,
   selectCoachModelProfile,
-} from './game-review-coach.js?v=5c54c31039';
+} from './game-review-coach.js?v=b1355bbc48';
 import {
   readCoachModelProfilePreference,
   writeCoachModelProfilePreference,
-} from './coach-model-profile-preference.js?v=5c54c31039';
+} from './coach-model-profile-preference.js?v=b1355bbc48';
 import {
   readInstalledReviewCoachStagingCapability,
   isReviewCoachProfileAvailable,
-} from './review-coach-connectivity.js?v=5c54c31039';
+} from './review-coach-connectivity.js?v=b1355bbc48';
 import {
   createGameAnalysis,
   gameAnalysisLegalMoves,
   applyGameAnalysisMove,
   undoGameAnalysisMove,
   resetGameAnalysis,
-} from './game-analysis.js?v=5c54c31039';
-import { createGameReviewPuzzleHandoff } from './game-review-puzzle-handoff.js?v=5c54c31039';
+} from './game-analysis.js?v=b1355bbc48';
+import { createGameReviewPuzzleHandoff } from './game-review-puzzle-handoff.js?v=b1355bbc48';
 import {
   createGameLiveReviewHandoff,
   consumeGameLiveReviewHandoff,
   createGameLiveReviewAnalysis,
-} from './game-live-review-handoff.js?v=5c54c31039';
+} from './game-live-review-handoff.js?v=b1355bbc48';
 import {
   PuzzleEditorError,
   createEditorState,
@@ -96,7 +96,7 @@ import {
   setEditorSideToMove,
   confirmAuthoredPosition,
   exportAuthoredPosition,
-} from './puzzle-editor.js?v=5c54c31039';
+} from './puzzle-editor.js?v=b1355bbc48';
 import {
   PuzzleRecorderError,
   createRecorder,
@@ -106,7 +106,7 @@ import {
   finishRecording,
   exportRecorderBoard,
   exportRecordedResult,
-} from './puzzle-recorder.js?v=5c54c31039';
+} from './puzzle-recorder.js?v=b1355bbc48';
 import {
   PuzzlePracticeError,
   PRACTICE_HINT_MAX_LEVEL,
@@ -116,12 +116,12 @@ import {
   derivePracticeHint,
   restartPractice,
   exportPracticeSnapshot,
-} from './puzzle-practice.js?v=5c54c31039';
-import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=5c54c31039';
+} from './puzzle-practice.js?v=b1355bbc48';
+import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=b1355bbc48';
 import {
   PracticeAnalyticsError,
   createPracticeAnalyticsStore,
-} from './puzzle-analytics.js?v=5c54c31039';
+} from './puzzle-analytics.js?v=b1355bbc48';
 import {
   PUZZLE_TRANSFER_FORMAT,
   PUZZLE_TRANSFER_SCHEMA_VERSION,
@@ -129,7 +129,7 @@ import {
   PuzzleTransferError,
   serializePuzzleExport,
   parsePuzzleImport,
-} from './puzzle-transfer.js?v=5c54c31039';
+} from './puzzle-transfer.js?v=b1355bbc48';
 import {
   PHOTO_MAX_ZOOM,
   PHOTO_MIN_ZOOM,
@@ -143,7 +143,7 @@ import {
   validatePhotoMetadata,
   zoomPhotoIn,
   zoomPhotoOut,
-} from './puzzle-photo.js?v=5c54c31039';
+} from './puzzle-photo.js?v=b1355bbc48';
 import {
   CALIBRATION_CANONICAL_HEIGHT,
   CALIBRATION_CANONICAL_WIDTH,
@@ -159,7 +159,7 @@ import {
   setCorner,
   transformPoint,
   validateQuadrilateral,
-} from './puzzle-photo-calibration.js?v=5c54c31039';
+} from './puzzle-photo-calibration.js?v=b1355bbc48';
 import {
   PuzzlePhotoRecognitionError,
   RECOGNITION_OCCUPANCY_EMPTY,
@@ -171,7 +171,7 @@ import {
   isRecognitionTokenCurrent,
   recognizeIntersections,
   selectionKey,
-} from './puzzle-photo-recognition.js?v=5c54c31039';
+} from './puzzle-photo-recognition.js?v=b1355bbc48';
 import {
   addTemplate,
   createPieceTypeSessionToken,
@@ -181,13 +181,13 @@ import {
   normalizePiecePatch,
   removeTemplatesForSource,
   suggestUnresolvedPieceTypes,
-} from './puzzle-photo-piece-types.js?v=5c54c31039';
+} from './puzzle-photo-piece-types.js?v=b1355bbc48';
 import {
   UNREVIEWED, PuzzlePhotoReviewError,
   createReviewState, buildReviewQueue, selectReviewCandidate, confirmEmpty, confirmPiece,
   nextCandidate, previousCandidate, nextUnresolved, acceptHighConfidenceEmpty,
   undoBulkEmpty, resetReview, rescanReview, reviewProgress, confirmedSelections, buildReviewedBoard,
-} from './puzzle-photo-review.js?v=5c54c31039';
+} from './puzzle-photo-review.js?v=b1355bbc48';
 
 // ---------------- 常數 ----------------
 const CELL = 1;
@@ -211,10 +211,10 @@ scene.fog = new THREE.Fog(0x171310, 20, 46);
 
 const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
 
-// 預設機位：以注視點為圓心，向左旋轉 90°（方位角 -90°）、向下翻轉 45°（極角 45°）
+// 首次使用的機位與 CAMERA_VIEWS[2]（紅方在下）一致。
 const HOME_DIST = 14.8;
-const HOME_AZIMUTH = -90;
-const HOME_POLAR = 45;
+const HOME_AZIMUTH = 0;
+const HOME_POLAR = 55;
 const HOME_TGT = new THREE.Vector3(0, -0.1, 0.2);
 const HOME = {
   tgt: HOME_TGT,
@@ -694,7 +694,7 @@ function experimentalOpponentAvailable() {
 }
 function allowExperimentalOpponent() {
   if (experimentalOpponentAvailable()) return true;
-  toast('實驗對手 B 尚未準備完成，請重新整理後再試。');
+  toast('挑戰級（試玩） 尚未準備完成，請重新整理後再試。');
   return false;
 }
 let humanSide = RED;
@@ -796,7 +796,7 @@ function failExperimentalAI(request) {
   invalidateNormalAI();
   experimentalAIFailure = normalGameRecordSession;
   refreshHUD();
-  toast('實驗對手 B 暫時無法行棋；棋局已保留。可重試，或從模式選單改選困難級開新局。');
+  toast('挑戰級（試玩） 暫時無法行棋；棋局已保留。可重試，或從模式選單改選困難級開新局。');
 }
 
 function currentAIRequest(request) {
@@ -810,7 +810,7 @@ function startAIFallback(request) {
   if (!currentAIRequest(request) || request.settled || request.fallbackStarted) return;
   if (request.payload.level === 'experimental-b') { failExperimentalAI(request); return; }
   request.fallbackStarted = true;
-  (aiModule ??= import('./ai.js?v=5c54c31039')).then(({ findBestMove }) => {
+  (aiModule ??= import('./ai.js?v=b1355bbc48')).then(({ findBestMove }) => {
     if (!currentAIRequest(request) || request.settled) return;
     request.fallbackTimer = setTimeout(() => {
       if (!currentAIRequest(request) || request.settled) return;
@@ -839,7 +839,7 @@ function requestAIMove() {
     submitted: false, fallbackStarted: false, worker: null, moveTimer: null, fallbackTimer: null };
   aiRequest = request;
   try {
-    aiWorker ??= new Worker(new URL('./ai-worker.js?v=5c54c31039', import.meta.url), { type: 'module' });
+    aiWorker ??= new Worker(new URL('./ai-worker.js?v=b1355bbc48', import.meta.url), { type: 'module' });
     const worker = aiWorker;
     request.worker = worker;
     worker.onmessage = (event) => {
@@ -1044,7 +1044,7 @@ function requestGameTeachingModeAnalysis(source) {
   renderGameTeachingMode();
   let worker;
   try {
-    worker = new Worker(new URL('./ai-worker.js?v=5c54c31039', import.meta.url), { type: 'module' });
+    worker = new Worker(new URL('./ai-worker.js?v=b1355bbc48', import.meta.url), { type: 'module' });
     gameTeachingModeWorker = worker;
     worker.onmessage = (event) => handleGameTeachingModeResponse(worker, event.data);
     worker.onerror = (event) => {
@@ -2608,7 +2608,7 @@ const GAME_RECORD_MODE_LABELS = Object.freeze({
   easy: '人機・簡單',
   medium: '人機・中等',
   hard: '人機・困難',
-  'experimental-b': '實驗對手 B（僅本次工作階段）',
+  'experimental-b': '挑戰級（試玩）（僅本次工作階段）',
 });
 const GAME_RECORD_REASON_LABELS = Object.freeze({
   checkmate: '將死',
@@ -3197,7 +3197,7 @@ function handleGameReviewAiResponse(worker, response) {
 }
 
 function createGameReviewAiWorker() {
-  return new Worker(new URL('./ai-worker.js?v=5c54c31039', import.meta.url), { type: 'module' });
+  return new Worker(new URL('./ai-worker.js?v=b1355bbc48', import.meta.url), { type: 'module' });
 }
 
 function requestGameReviewAiCandidate() {
@@ -3453,7 +3453,7 @@ function renderGameReview() {
   btnGameReviewAnalyze.disabled = !!review.snapshot.terminal;
   btnGameReviewAnalyze.title = review.snapshot.terminal ? '終局位置不可開始分析' : '';
   btnGameReviewCreatePuzzle.disabled = !!review.snapshot.terminal || review.record.mode === 'experimental-b';
-  btnGameReviewCreatePuzzle.title = review.record.mode === 'experimental-b' ? '實驗棋譜不匯出至殺局題庫'
+  btnGameReviewCreatePuzzle.title = review.record.mode === 'experimental-b' ? '挑戰級棋譜不匯出至殺局題庫'
     : review.snapshot.terminal ? '終局位置不可建立殺局題，請先返回較早著數' : '';
   renderGameReviewAi();
   btnGameReviewBack.classList.toggle('hidden', gameReviewReturnState !== APP_STATE.GAME_RECORD_LIBRARY);
@@ -5122,11 +5122,13 @@ function changeHumanSide(nextSide) {
 }
 
 function currentPositionSaveUnavailableReason() {
-  if (mode === 'experimental-b') return '實驗對手 B 僅供本次試玩，不保存目前局面或偏好。';
   if (!normalGameActive() || !isAI()) return '只支援正常人機對弈。';
   if (over) return '已終局，無法儲存為可挑戰局面。';
   if (busy || aiThinking) return '請等待 AI 思考及棋步動畫完成。';
   if (!normalGameRecordSession || !history.length) return '請先完成至少一手棋。';
+  if (!normalGameRecordMatches(normalGameRecordSession)
+    || normalGameRecordSession.humanSide !== humanSide
+    || normalGameRecordError) return '棋局狀態不一致，無法儲存局面；請重新開局。';
   if (customRematchRequest || document.querySelector('dialog[open]')) return '請先關閉目前的設定視窗。';
   return '';
 }
@@ -5140,12 +5142,19 @@ function saveCurrentGamePosition(button) {
   const capturedTurn = turn;
   const valid = validateCustomPlayPosition({ initialBoard: board, sideToMove: capturedTurn });
   if (!valid.ok) { toast(valid.error.message); return false; }
-  const preferences = { humanSide, difficulty: mode };
+  const experimentalSnapshot = mode === 'experimental-b';
+  const preferences = { humanSide, difficulty: experimentalSnapshot ? 'hard' : mode };
+  const capturedBoard = hashBoard(board), capturedHistoryLength = history.length;
+  // This callback stays in memory. An expired or inconsistent source must not
+  // authorize a write after the modal's asynchronous storage preparation.
+  const isCurrent = () => normalGameRecordMatches(session) && !normalGameRecordError
+    && session.humanSide === humanSide && hashBoard(board) === capturedBoard
+    && turn === capturedTurn && history.length === capturedHistoryLength && !over;
   if (normalGameRecordSession !== session || currentPositionSaveUnavailableReason()) return false;
   // openSave captures this same originating session before its first await.
   return savedPositionsUI.openSave({
     initialBoard: valid.position.board, sideToMove: valid.position.sideToMove,
-  }, button, preferences);
+  }, button, preferences, { experimentalSnapshot, isCurrent });
 }
 
 function canHumanMove() {
@@ -5500,7 +5509,9 @@ function pick(event) {
         const d2 = dx * dx + dz * dz;
         if (d2 < bestD) { bestD = d2; best = { r, c }; }
       }
-    if (best) return best;
+    // A ray exactly on a mesh seam can miss its triangles (notably the centre
+    // file from Black's bottom view). Resolve the occupied board intersection.
+    if (best) return pieceAt(best.r, best.c) || best;
   }
   return null;
 }
@@ -5576,7 +5587,7 @@ renderer.domElement.addEventListener('click', (e) => {
 // ---------------- 終局畫面 / 彩帶 / 分享 ----------------
 const SITE_URL = 'https://robinlee0929.github.io/chinese-chess-training/';
 const DIFF = {
-  'experimental-b': { label: '實驗對手 B', stars: 0, winTitle: '對局完成！', winSub: '本次試玩獲勝；棋力尚未證明高於困難級。' },
+  'experimental-b': { label: '挑戰級（試玩）', stars: 0, winTitle: '對局完成！', winSub: '本次試玩獲勝；棋力尚未證明高於困難級。' },
   easy:   { label: '簡單', stars: 1, winTitle: '旗開得勝！', winSub: '小試身手就拿下 AI，好的開始！' },
   medium: { label: '中等', stars: 2, winTitle: '運籌帷幄！', winSub: '攻守有度，中等 AI 也不是你的對手！' },
   hard:   { label: '困難', stars: 3, winTitle: '棋壇霸主！', winSub: '深算遠謀，最強 AI 也俯首稱臣！' },
@@ -5889,7 +5900,7 @@ async function buildShareCard(res) {
 }
 
 async function shareResult() {
-  if (mode === 'experimental-b') { toast('實驗對局僅限本次工作階段，不提供戰績分享。'); return; }
+  if (mode === 'experimental-b') { toast('挑戰級對局僅限本次工作階段，不提供戰績分享。'); return; }
   if (!lastResult) return;
   btnShare.disabled = true;
   const orig = btnShare.textContent;
@@ -6290,7 +6301,7 @@ async function loadBoardAppearanceUI() {
   try {
     // Do not await this from core startup. A missing UI/store or invalid module
     // must leave the default board and all game controls working.
-    const { createBoardAppearanceUI } = await import('./board-appearance-ui.js?v=5c54c31039');
+    const { createBoardAppearanceUI } = await import('./board-appearance-ui.js?v=b1355bbc48');
     if (!current()) return;
     boardAppearanceUI = createBoardAppearanceUI({
       surface: boardSurface,
@@ -6397,7 +6408,7 @@ const CAMERA_VIEWS = [
   { label: '俯視', dist: 14.2, polar: 8, azimuth: -90, tgt: new THREE.Vector3(0, 0, 0.2) },
   { label: '黑方在下', dist: 14.8, polar: 55, azimuth: 180, tgt: new THREE.Vector3(0, -0.1, -0.2) },
 ];
-let viewIdx = 0;
+let viewIdx = 2;
 function syncSnappedBoardOrientation() {
   const next = updateSnappedBoardOrientation({
     liveAngleDeg: getLiveBoardAzimuthDeg(camera.position, controls.target),
@@ -6410,7 +6421,10 @@ function syncSnappedBoardOrientation() {
   saveViewPrefs();
 }
 function cameraViewerSide() {
-  return viewIdx === 0 ? RED : viewIdx === 1 ? BLACK : null;
+  const angle = getLiveBoardAzimuthDeg(camera.position, controls.target);
+  if (angle === null) return null;
+  const forward = Math.cos(THREE.MathUtils.degToRad(angle));
+  return Math.abs(forward) < 1e-6 ? null : forward > 0 ? RED : BLACK;
 }
 function activateCameraView(index, { announce = true } = {}) {
   viewIdx = ((index % CAMERA_VIEWS.length) + CAMERA_VIEWS.length) % CAMERA_VIEWS.length;
@@ -6422,7 +6436,8 @@ function activateCameraView(index, { announce = true } = {}) {
   if (announce) toast(`視角：${v.label}`);
 }
 function showPlayerPerspective(side) {
-  activateCameraView(side === BLACK ? 1 : 0, { announce: false });
+  if (viewLocked) return;
+  activateCameraView(side === BLACK ? 4 : 2, { announce: false });
 }
 document.getElementById('btnView').addEventListener('click', () => {
   activateCameraView(viewIdx + 1);
@@ -6539,6 +6554,11 @@ function resize() {
   const w = container.clientWidth, h = container.clientHeight;
   if (w === 0 || h === 0) return;
   camera.aspect = w / h;
+  // Keep the existing bottom-side presets usable on narrow screens. Changing
+  // projection on resize preserves the user's camera position and zoom intent.
+  camera.fov = Math.max(38, THREE.MathUtils.radToDeg(2 * Math.atan(
+    Math.tan(THREE.MathUtils.degToRad(55 / 2)) / camera.aspect,
+  )));
   camera.updateProjectionMatrix();
   renderer.setSize(w, h);
 }

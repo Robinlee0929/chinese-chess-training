@@ -87,7 +87,7 @@ try{
   await page.goto(url);await ready(page);assert.ok(await page.title());
   await check('desktop four modes: real moves, red/black, undo and new game',async()=>{
     for(const mode of ['easy','medium','hard','experimental-b']){await fresh(page,mode);await move(page,{r:3,c:4},{r:4,c:4});await page.waitForFunction(()=>__chess.history.length===2&&!__chess.busy&&!__chess.aiThinking);assert.equal(await page.evaluate(()=>__chess.mode),mode);}
-    assert.equal(await page.locator('#btnSaveCurrentPosition').isDisabled(),true);
+    assert.equal(await page.locator('#btnSaveCurrentPosition').isDisabled(),false);
     await toolbar(page,'#btnUndo');await page.waitForFunction(()=>__chess.history.length===0);
     await page.locator('label[for="humanSideBlack"]').click();await page.waitForFunction(()=>__chess.history.length===1&&!__chess.busy&&!__chess.aiThinking);await page.waitForTimeout(1100);
     await move(page,{r:6,c:4},{r:5,c:4});await page.waitForFunction(()=>__chess.history.length===3&&!__chess.busy&&!__chess.aiThinking);
@@ -118,7 +118,7 @@ try{
     assert.equal(await page.evaluate(()=>__chess.mode),'experimental-b');await page.waitForTimeout(1100);
     await move(page,{r:2,c:3},{r:2,c:4});
     await page.waitForFunction(id=>__chess.lastCompletedGameRecord?.id!==id&&__chess.lastCompletedGameRecord?.mode==='experimental-b',savedRematchId);
-    await page.locator('#btnReviewGame').click();await page.locator('#btnGameReviewFirst').click();assert.match(await page.locator('#gameReviewMeta').innerText(),/實驗對手 B/);
+    await page.locator('#btnReviewGame').click();await page.locator('#btnGameReviewFirst').click();assert.match(await page.locator('#gameReviewMeta').innerText(),/挑戰級（試玩）/);
     assert.equal(await page.locator('#btnGameReviewCreatePuzzle').isDisabled(),true);await page.locator('#btnGameReviewLast').click();
     await page.screenshot({path:path.join(out,'session-review.png')});
     // Continue from a memory-only B record with the AI playing Red; it must

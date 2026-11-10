@@ -1,4 +1,4 @@
-import { createAsyncSavedPositionSession } from './saved-position-async-session.js?v=5c54c31039';
+import { createAsyncSavedPositionSession } from './saved-position-async-session.js?v=b1355bbc48';
 
 export function createSavedPositionUI({ document, window, repository, host }) {
   const el = id => document.getElementById(id);
@@ -60,13 +60,15 @@ export function createSavedPositionUI({ document, window, repository, host }) {
       const settingsNeeded = ['save', 'challenge', 'preferences'].includes(form.kind);
       el('savedPositionFormTitle').textContent = ({ save: '儲存局面', rename: '重新命名', preferences: '偏好設定', delete: '確認刪除局面', challenge: '挑戰設定', load: '載入編輯器' })[form.kind];
       el('savedPositionSummary').textContent = form.kind === 'save'
-        ? '只儲存棋盤快照與輪走方，不保存完整對局進度、著法、悔棋或殺局答案。下次挑戰會建立獨立新局。'
+        ? form.experimentalSnapshot
+          ? '只儲存棋盤局面，保留玩家棋色，下次預設為困難級。若要挑戰級，請重新選擇「挑戰級（試玩）」及「僅本次挑戰」。'
+          : '只儲存棋盤快照與輪走方，不保存完整對局進度、著法、悔棋或殺局答案。下次挑戰會建立獨立新局。'
         : `「${form.position.title}」 · ${side(form.position.sideToMove)}先行`;
       el('savedPositionTitleLabel').hidden = !titleNeeded;
       el('savedPositionTitle').required = titleNeeded;
       el('savedPositionTitle').disabled = !titleNeeded || form.busy;
       el('savedPositionSettings').hidden = !settingsNeeded;
-      for (const id of ['savedPositionHumanSide', 'savedPositionDifficulty']) el(id).disabled = !settingsNeeded || form.busy;
+      for (const id of ['savedPositionHumanSide', 'savedPositionDifficulty']) el(id).disabled = !settingsNeeded || form.busy || form.experimentalSnapshot === true;
       el('savedPositionAcknowledgement').hidden = !(form.requiresAcknowledgement || form.replacesEditor);
       el('savedPositionAcknowledgementText').textContent = form.requiresAcknowledgement
         ? '我確認放棄目前尚未完成的對局進度。' : '我確認取代目前的編輯草稿。';
@@ -79,7 +81,7 @@ export function createSavedPositionUI({ document, window, repository, host }) {
       if (experimental) {
         el('savedPositionSubmit').disabled = true;
         el('savedPositionError').textContent = form.error || (experimentalAvailable
-          ? '實驗對手 B 不保存偏好，只能「僅本次挑戰」。' : '實驗對手 B 尚未準備完成，請重新整理後再試。');
+          ? '挑戰級（試玩） 不保存偏好，只能「僅本次挑戰」。' : '挑戰級（試玩） 尚未準備完成，請重新整理後再試。');
       }
       const experimentalOption = el('savedPositionDifficulty').querySelector('[value="experimental-b"]');
       const experimentalDisabled = !experimentalAvailable || form.kind !== 'challenge';
@@ -156,6 +158,6 @@ export function createSavedPositionUI({ document, window, repository, host }) {
   document.addEventListener('resume', () => { void resume(); }, true); window.addEventListener('pageshow', () => { void resume(); }, true);
   return Object.freeze({
     open(button) { invoker = button; el('savedPositionMigrationConfirm').checked = false; return session.open(); },
-    openSave(position, button, preferences) { invoker = button; el('savedPositionMigrationConfirm').checked = false; return session.openSave(position, preferences); },
+    openSave(position, button, preferences, options) { invoker = button; el('savedPositionMigrationConfirm').checked = false; return session.openSave(position, preferences, options); },
   });
 }

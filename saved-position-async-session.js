@@ -1,5 +1,5 @@
-import { createCustomGameRoot, createMutableCustomGamePosition, validateCustomPlayPosition } from './custom-position-play.js?v=5c54c31039';
-import { validateContinuationConfiguration } from './game-review-continuation.js?v=5c54c31039';
+import { createCustomGameRoot, createMutableCustomGamePosition, validateCustomPlayPosition } from './custom-position-play.js?v=b1355bbc48';
+import { validateContinuationConfiguration } from './game-review-continuation.js?v=b1355bbc48';
 
 export function savedPositionMessage(result = {}) {
   const code = result.code ?? result.status;
@@ -26,7 +26,8 @@ export function createAsyncSavedPositionSession({ repository, host, onChange = (
   let plan = null, busy = false, notice = '', inflight = null, ready = Promise.resolve(false);
   const unresolved = new Map(); // Includes cancelled committed/unknown intents; never resubmitted.
   const contextMatches = () => origin && ['session', 'mode', 'modeRevision', 'appState', 'editor', 'confirmed']
-    .every(key => host.context()[key] === origin[key]);
+    .every(key => host.context()[key] === origin[key])
+    && (form?.kind !== 'save' || form.isCurrent?.() !== false);
   const state = () => ({ active, view, form, snapshot, storageState, storageMessage, busy, notice,
     migrationCount: plan?.count ?? 0, canMigrate: !!plan && ['MIGRATION_REQUIRED', 'STAGED'].includes(storageState),
     canVerify: unresolved.size > 0, writable: storageState === 'ACTIVE' && !!snapshot });
@@ -108,13 +109,17 @@ export function createAsyncSavedPositionSession({ repository, host, onChange = (
       isCurrent: () => active && dialog === ownDialog && contextMatches() });
     host.pause(); ready = refresh({ initialize: true }); return true;
   }
-  function openSave(position, preferences = { humanSide: position?.sideToMove || 'red', difficulty: 'medium' }) {
+  function openSave(position, preferences = { humanSide: position?.sideToMove || 'red', difficulty: 'medium' }, options = {}) {
     // Build the detached draft before open() captures its refresh ticket.
     const valid = validateCustomPlayPosition(position);
     const settings = validateContinuationConfiguration(preferences);
+    if (options.isCurrent?.() === false) return false;
+    if (options.experimentalSnapshot && settings.difficulty !== 'hard') return false;
     if (!open()) return false;
     cancelWork();
     form = { kind: 'save', title: '', ...settings,
+      experimentalSnapshot: options.experimentalSnapshot === true,
+      savePreferences: Object.freeze({ ...settings }), isCurrent: options.isCurrent,
       position: valid.ok ? { initialBoard: valid.position.board, sideToMove: valid.position.sideToMove } : null,
       error: valid.ok ? '' : valid.error.message, invalid: !valid.ok, stale: false, busy: false, fence: null };
     view = 'form'; ready = refresh({ initialize: true }); return true;
@@ -134,7 +139,10 @@ export function createAsyncSavedPositionSession({ repository, host, onChange = (
   }
   function edit(values) {
     if (!form || busy) return;
-    for (const key of ['title', 'humanSide', 'difficulty', 'acknowledged']) if (Object.hasOwn(values, key)) form[key] = values[key];
+    for (const key of ['title', 'humanSide', 'difficulty', 'acknowledged']) {
+      if (form.experimentalSnapshot && ['humanSide', 'difficulty'].includes(key)) continue;
+      if (Object.hasOwn(values, key)) form[key] = values[key];
+    }
   }
   function back() { if (!active) return; cancelWork(); view = 'list'; form = null; ready = refresh(); }
   function reload() { if (!active || busy) return false; ready = refresh({ explicit: true, initialize: storageState === 'UNINITIALIZED' }); return ready; }
@@ -155,12 +163,12 @@ export function createAsyncSavedPositionSession({ repository, host, onChange = (
   }
   async function submit({ once = false } = {}) {
     if (!active || busy || !form || form.stale || form.invalid || storageState !== 'ACTIVE' || !contextMatches()) return false;
-    const f = form, settings = { humanSide: f.humanSide, difficulty: f.difficulty };
+    const f = form, settings = f.experimentalSnapshot ? f.savePreferences : { humanSide: f.humanSide, difficulty: f.difficulty };
     if (settings.difficulty === 'experimental-b' && !(f.kind === 'challenge' && once)) {
-      f.error = '實驗對手 B 不保存偏好，請選「僅本次挑戰」。'; emit(); return false;
+      f.error = '挑戰級（試玩） 不保存偏好，請選「僅本次挑戰」。'; emit(); return false;
     }
     if (settings.difficulty === 'experimental-b' && host.experimentalOpponentAvailable?.() !== true) {
-      f.error = '實驗對手 B 尚未準備完成，請重新整理後再試。'; emit(); return false;
+      f.error = '挑戰級（試玩） 尚未準備完成，請重新整理後再試。'; emit(); return false;
     }
     if ((f.requiresAcknowledgement || f.replacesEditor) && !f.acknowledged) { f.error = '請先確認放棄目前進度或取代編輯草稿。'; emit(); return false; }
     const current = begin();
@@ -180,7 +188,7 @@ export function createAsyncSavedPositionSession({ repository, host, onChange = (
         if (result.status !== 'SUCCESS') return failed(result, handle);
         if (!current() || !scope.canApply(handle, result)) return false;
         if (settings.difficulty === 'experimental-b' && host.experimentalOpponentAvailable?.() !== true) {
-          f.error = '實驗對手 B 尚未準備完成，請重新整理後再試。'; emit(); return false;
+          f.error = '挑戰級（試玩） 尚未準備完成，請重新整理後再試。'; emit(); return false;
         }
         const root = createCustomGameRoot(result.position, settings, { savedPositionId: result.position.id });
         const mutable = createMutableCustomGamePosition(root);
@@ -195,6 +203,9 @@ export function createAsyncSavedPositionSession({ repository, host, onChange = (
       unresolved.delete(handle); snapshot = result.latestSnapshot ?? result.snapshot;
       notice = f.kind === 'save' ? result.created ? `已儲存「${result.position.title}」。` : `此棋面已存在：「${result.position.title}」，名稱與偏好未變更。`
         : f.kind === 'delete' ? '已刪除局面。' : '已完成更新。';
+      if (f.experimentalSnapshot && result.created) {
+        notice = '已儲存棋盤局面；下次預設為困難級。若要挑戰級，請重新選擇「挑戰級（試玩）」及「僅本次挑戰」。';
+      }
       busy = false; form = null; view = 'list'; emit(); return true;
     } catch (error) { if (current()) { f.error = savedPositionMessage(error); notice = f.error; } return false; }
     finally { finish(current); }
