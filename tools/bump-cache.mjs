@@ -11,7 +11,7 @@
 //   node tools/bump-cache.mjs           # 依內容重算並改寫版本號
 //   node tools/bump-cache.mjs --check   # 只檢查是否需要更新（CI／hook 用）
 // ============================================================
-import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -19,8 +19,15 @@ import { dirname, join } from 'node:path';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 // 參與雜湊的本地檔案（內容任一變動 → 版本號改變）
-// Include the integrated puzzle module graph, not only the original game entry points.
-const MODULES = readdirSync(root).filter((name) => name.endsWith('.js')).sort();
+// Include the dedicated transfer Worker graph, while keeping tools/test directories excluded.
+function transferModules(directory) {
+  if (!existsSync(join(root, directory))) return [];
+  return readdirSync(join(root, directory), { withFileTypes: true }).flatMap(entry => {
+    const path = `${directory}/${entry.name}`;
+    return entry.isDirectory() ? transferModules(path) : entry.isFile() && entry.name.endsWith('.js') ? [path] : [];
+  });
+}
+const MODULES = [...readdirSync(root).filter(name => name.endsWith('.js')), ...transferModules('game-transfer')].sort();
 const ASSETS = ['css/style.css', ...MODULES];
 
 // 去掉既有 ?v= 後再計算雜湊 → 同內容重複執行不會改寫（冪等）
@@ -37,7 +44,7 @@ const RULES = [
     [/((?:href|src)="\.\/(?:css\/style\.css|main\.js))(\?v=[0-9a-f]+)?"/g, `$1${V}"`],
   ]],
   ...MODULES.map((file) => [file, [
-    [/(\.\/[\w-]+\.js)(\?v=[0-9a-f]+)?(?=['"])/g, `$1${V}`],
+    [/(\.{1,2}\/[\w./-]+\.js)(\?v=[0-9a-f]+)?(?=['"])/g, `$1${V}`],
   ]]),
 ];
 

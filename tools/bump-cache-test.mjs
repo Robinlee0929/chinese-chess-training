@@ -7,7 +7,7 @@ import { basename, dirname, join } from 'node:path';
 import test from 'node:test';
 
 const toolSource = readFileSync(new URL('./bump-cache.mjs', import.meta.url), 'utf8');
-// Deliberately create modules out of order. Only root JS and the stylesheet are hashed.
+// Deliberately create modules out of order. Unrelated nested directories stay excluded.
 const files = {
   'z.js': "export const label = '棋盤';\n",
   'main.js': "import './a.js?v=deadbeef00';\n",
@@ -82,3 +82,37 @@ for (const eol of ['LF', 'CRLF', 'CR', 'MIXED']) {
     assert.deepEqual(snapshot(), changed, 'a failing --check must also remain read-only');
   });
 }
+
+test('transfer subdirectory, Worker URLs and parent imports share the content cache version', (t) => {
+  const fixtureRoot = mkdtempSync(join(tmpdir(), 'chess-cache-transfer-'));
+  t.after(() => {
+    const target = realpathSync(fixtureRoot);
+    assert.equal(dirname(target), realpathSync(tmpdir()));
+    assert.match(basename(target), /^chess-cache-transfer-/);
+    rmSync(target, { recursive: true, force: true });
+  });
+  const fixtureFiles = { ...files,
+    'main.js': "void import('./game-transfer/ui.js');\n",
+    'game-transfer/ui.js': "new Worker(new URL('./validation-worker.js', import.meta.url), {type:'module'});\n",
+    'game-transfer/validation-worker.js': "import '../a.js';\nimport './core/parser.js';\n",
+    'game-transfer/core/parser.js': "export const version = 1;\n",
+  };
+  for (const [file, text] of Object.entries(fixtureFiles)) {
+    mkdirSync(dirname(join(fixtureRoot, file)), { recursive: true });
+    writeFileSync(join(fixtureRoot, file), text);
+  }
+  mkdirSync(join(fixtureRoot, 'tools'));
+  writeFileSync(join(fixtureRoot, 'tools/bump-cache.mjs'), toolSource);
+  const run = (...args) => spawnSync(process.execPath, [join(fixtureRoot, 'tools/bump-cache.mjs'), ...args], { encoding:'utf8' });
+  assert.equal(run().status, 0); assert.equal(run('--check').status, 0);
+  const version = readFileSync(join(fixtureRoot, 'index.html'), 'utf8').match(/\?v=([a-f0-9]+)/)[1];
+  for (const file of ['main.js','game-transfer/ui.js','game-transfer/validation-worker.js']) {
+    const text=readFileSync(join(fixtureRoot,file),'utf8');
+    assert.ok([...text.matchAll(/\.{1,2}\/[^'"\s]+\.js\?v=([a-f0-9]+)/g)].every(match=>match[1]===version));
+    assert.doesNotMatch(text,/\.js['"]/);
+  }
+  writeFileSync(join(fixtureRoot,'game-transfer/core/parser.js'), 'export const version = 2;\n');
+  assert.equal(run('--check').status,1);assert.equal(run().status,0);
+  assert.notEqual(readFileSync(join(fixtureRoot,'index.html'),'utf8').match(/\?v=([a-f0-9]+)/)[1],version);
+  assert.equal(readFileSync(join(fixtureRoot,'nested/ignored.js'),'utf8'),files['nested/ignored.js']);
+});

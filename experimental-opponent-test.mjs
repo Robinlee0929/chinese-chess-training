@@ -169,12 +169,13 @@ function recordHarness(sessionMode, runtimeMode = sessionMode) {
   store.saveGameRecord(record('hard'));
   const final = replaySessionGameRecord(r, r.moves.length);
   const ctx = vm.createContext({mode:runtimeMode,normalGameModeRevision:1,normalGameRecordError:null,
+    gameExportRevision:0,gameExportUI:null,
     normalGameRecordSession:{...r,modeRevision:1},board:structuredClone(final.board),turn:final.sideToMove,
     over:true,completedGameRecordSessionId:null,lastCompletedGameRecord:null,gameRecordNow:()=>r.completedAt,
     history:r.moves,winner:'red',hashBoard,toast:message=>notices.push(message),
     createGameRecord:input=>createSessionGameRecord(JSON.parse(JSON.stringify(input))),replaySessionGameRecord,
     gameRecordStore:store});
-  for (const name of ['normalGameRecordTerminationReason','normalGameRecordMatches','failNormalGameRecord','finalizeNormalGameRecord']) vm.runInContext(functionSource(name),ctx);
+  for (const name of ['invalidateGameExport','normalGameRecordTerminationReason','normalGameRecordMatches','failNormalGameRecord','finalizeNormalGameRecord']) vm.runInContext(functionSource(name),ctx);
   return {ctx,notices,values,bytes:()=>JSON.stringify([...values])};
 }
 

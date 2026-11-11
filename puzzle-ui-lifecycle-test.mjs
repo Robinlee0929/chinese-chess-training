@@ -140,6 +140,7 @@ function harness(options = {}) {
   const scene = { children: [], add(mesh) { this.children.push(mesh); mesh.parent = this; },
     remove(mesh) { this.children = this.children.filter((entry) => entry !== mesh); mesh.parent = null; } };
   const context = vm.createContext({
+    gameExportRevision: 0, gameExportUI: null,
     ...game, ...editor, ...recorder, ...practice, ...review, ...photo, ...pieceTypes, ...transfer, ...analytics,
     ...continuation, validateCustomPlayPosition, createCustomGameRoot, createMutableCustomGamePosition,
     PuzzleStoreError,
@@ -298,7 +299,7 @@ function harness(options = {}) {
     'customRematchAvailable', 'syncCustomRematchUI', 'requestCustomRematch',
     'cancelCustomRematch', 'confirmCustomRematch', 'performCustomRematch',
     'animateCapture', 'doMove', 'finishMove', 'scheduleNormalGameTerminal', 'presentNormalGameTerminal', 'cloneNormalGameRecordBoard',
-    'beginNormalGameRecordSession', 'normalGameRecordTerminationReason', 'normalGameRecordMatches', 'failNormalGameRecord',
+    'invalidateGameExport', 'beginNormalGameRecordSession', 'normalGameRecordTerminationReason', 'normalGameRecordMatches', 'failNormalGameRecord',
     'finalizeNormalGameRecord', 'normalUndoAvailable', 'undoPly', 'undo', 'newGame', 'resetTo',
     'initializeNormalGamePosition', 'startNormalGameFromReview', 'startConfiguredNormalGame', 'canHumanMove',
     'discardPuzzleEditor', 'confirmEditorPosition', 'openCustomPositionPlay', 'cancelCustomPositionPlay',

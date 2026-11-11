@@ -1949,3 +1949,44 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
 /* Session-only opponent notice stays visible on desktop and small screens. */
 .experimental-notice { margin: 6px 12px; font-size: 12px; line-height: 1.5; color: #f2c14e; flex: none; }
 .experimental-notice[hidden], #btnRetryExperimental[hidden] { display: none; }
+/* Portable game export: a bounded, keyboard-accessible download chooser. */
+#gameExportDialog {
+  box-sizing: border-box;
+  margin: auto;
+  width: min(440px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+  padding: 24px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+}
+#gameExportDialog::backdrop { background: rgba(0, 0, 0, .65); }
+#gameExportDialog h2 { margin-top: 0; }
+#gameExportDialog p { line-height: 1.6; margin: 12px 0; }
+.game-export-formats { display: grid; gap: 12px; }
+#gameExportDialog button { min-height: 44px; white-space: normal; }
+.game-export-note { font-size: 13px; color: var(--muted); }
+#gameExportStatus { min-height: 3.2em; }
+#gameExportClose { width: 100%; }
+[data-game-export][hidden] { display: none !important; }
+/* Import stays memory-only; the modal scrolls within both supported viewports. */
+#gameImportDialog {
+  box-sizing: border-box; margin: auto; width: min(480px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px); overflow: auto; padding: 20px;
+  color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 18px;
+}
+#gameImportDialog::backdrop { background: rgba(0, 0, 0, .65); }
+#gameImportDialog h2 { margin-top: 0; }
+#gameImportDialog p { line-height: 1.6; overflow-wrap: anywhere; }
+#gameImportFile { display: block; box-sizing: border-box; width: 100%; min-width: 0; margin: 12px 0; }
+#gameImportFile::file-selector-button, #gameImportDialog button { min-height: 44px; }
+#gameImportMeta { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; }
+#gameImportMeta dd { margin: 0; overflow-wrap: anywhere; }
+.game-import-board { width: 100%; max-width: 320px; margin: 12px auto; table-layout: fixed; border-collapse: collapse; text-align: center; }
+.game-import-board td { height: 24px; border: 1px solid #987849; background: #e5bd7d; color: #38271b; }
+.game-import-board td.red { color: #9b211c; }
+.game-import-actions { display: flex; gap: 12px; margin-top: 16px; }
+.game-import-actions button { flex: 1; }
+[data-game-import][hidden], #gameImportPreview[hidden] { display: none !important; }

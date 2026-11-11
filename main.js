@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 // Required for the default wood/grid texture as well as photo rendering.
 // Unlike the optional UI/store below, failure of this core dependency is fatal.
-import { createBoardSurface } from './board-appearance.js?v=b1355bbc48';
+import { createBoardSurface } from './board-appearance.js?v=1ebb13d661';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
   normalizePieceGlyphOrientationMode,
@@ -17,20 +17,20 @@ import {
   ROWS, COLS, RED, BLACK,
   initialBoard, legalMoves, applyMove, inCheck,
   hasAnyLegalMove, name, notation, hashBoard, repetitionVerdict,
-} from './game.js?v=b1355bbc48';
+} from './game.js?v=1ebb13d661';
 import {
   validateCustomPlayPosition, createCustomGameRoot, createMutableCustomGamePosition,
-} from './custom-position-play.js?v=b1355bbc48';
-import { createSessionGameRecord as createGameRecord, replaySessionGameRecord } from './game-record.js?v=b1355bbc48';
-import { createCustomPositionRepository } from './custom-position-repository.js?v=b1355bbc48';
-import { createSavedPositionUI } from './saved-position-ui.js?v=b1355bbc48';
-import { attachTerminalOverlayFocus } from './terminal-overlay-focus.js?v=b1355bbc48';
+} from './custom-position-play.js?v=1ebb13d661';
+import { createSessionGameRecord as createGameRecord, replaySessionGameRecord } from './game-record.js?v=1ebb13d661';
+import { createCustomPositionRepository } from './custom-position-repository.js?v=1ebb13d661';
+import { createSavedPositionUI } from './saved-position-ui.js?v=1ebb13d661';
+import { attachTerminalOverlayFocus } from './terminal-overlay-focus.js?v=1ebb13d661';
 import {
   canStartGameFromReview, createReviewContinuationPosition,
   defaultContinuationDifficulty, defaultContinuationHumanSide,
   validateRuntimeContinuationConfiguration as validateContinuationConfiguration,
-} from './game-review-continuation.js?v=b1355bbc48';
-import { createGameRecordStore } from './game-record-store.js?v=b1355bbc48';
+} from './game-review-continuation.js?v=1ebb13d661';
+import { createGameRecordStore } from './game-record-store.js?v=1ebb13d661';
 import {
   createGameReview,
   createGameRecordLibraryView,
@@ -39,15 +39,15 @@ import {
   nextGameReviewPly,
   lastGameReviewPly,
   selectGameReviewPly,
-} from './game-review.js?v=b1355bbc48';
+} from './game-review.js?v=1ebb13d661';
 import {
   createGameReviewAiState,
   invalidateGameReviewAiState,
   beginGameReviewAiRequest,
   settleGameReviewAiResponse,
-} from './game-review-ai.js?v=b1355bbc48';
-import { createGameReviewEvidence } from './game-review-evidence.js?v=b1355bbc48';
-import { deriveGameReviewTeaching } from './game-review-teaching.js?v=b1355bbc48';
+} from './game-review-ai.js?v=1ebb13d661';
+import { createGameReviewEvidence } from './game-review-evidence.js?v=1ebb13d661';
+import { deriveGameReviewTeaching } from './game-review-teaching.js?v=1ebb13d661';
 import {
   createGameTeachingModeState,
   setGameTeachingModeEnabled,
@@ -56,7 +56,7 @@ import {
   settleGameTeachingModeAnalysis,
   gameTeachingModeMatchesHistory,
   shouldScheduleGameTeachingMode,
-} from './game-teaching-mode.js?v=b1355bbc48';
+} from './game-teaching-mode.js?v=1ebb13d661';
 import {
   createDisabledCoachState,
   createIdleCoachState,
@@ -65,28 +65,28 @@ import {
   settleCoachResponse,
   invalidateCoachState,
   selectCoachModelProfile,
-} from './game-review-coach.js?v=b1355bbc48';
+} from './game-review-coach.js?v=1ebb13d661';
 import {
   readCoachModelProfilePreference,
   writeCoachModelProfilePreference,
-} from './coach-model-profile-preference.js?v=b1355bbc48';
+} from './coach-model-profile-preference.js?v=1ebb13d661';
 import {
   readInstalledReviewCoachStagingCapability,
   isReviewCoachProfileAvailable,
-} from './review-coach-connectivity.js?v=b1355bbc48';
+} from './review-coach-connectivity.js?v=1ebb13d661';
 import {
   createGameAnalysis,
   gameAnalysisLegalMoves,
   applyGameAnalysisMove,
   undoGameAnalysisMove,
   resetGameAnalysis,
-} from './game-analysis.js?v=b1355bbc48';
-import { createGameReviewPuzzleHandoff } from './game-review-puzzle-handoff.js?v=b1355bbc48';
+} from './game-analysis.js?v=1ebb13d661';
+import { createGameReviewPuzzleHandoff } from './game-review-puzzle-handoff.js?v=1ebb13d661';
 import {
   createGameLiveReviewHandoff,
   consumeGameLiveReviewHandoff,
   createGameLiveReviewAnalysis,
-} from './game-live-review-handoff.js?v=b1355bbc48';
+} from './game-live-review-handoff.js?v=1ebb13d661';
 import {
   PuzzleEditorError,
   createEditorState,
@@ -96,7 +96,7 @@ import {
   setEditorSideToMove,
   confirmAuthoredPosition,
   exportAuthoredPosition,
-} from './puzzle-editor.js?v=b1355bbc48';
+} from './puzzle-editor.js?v=1ebb13d661';
 import {
   PuzzleRecorderError,
   createRecorder,
@@ -106,7 +106,7 @@ import {
   finishRecording,
   exportRecorderBoard,
   exportRecordedResult,
-} from './puzzle-recorder.js?v=b1355bbc48';
+} from './puzzle-recorder.js?v=1ebb13d661';
 import {
   PuzzlePracticeError,
   PRACTICE_HINT_MAX_LEVEL,
@@ -116,12 +116,12 @@ import {
   derivePracticeHint,
   restartPractice,
   exportPracticeSnapshot,
-} from './puzzle-practice.js?v=b1355bbc48';
-import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=b1355bbc48';
+} from './puzzle-practice.js?v=1ebb13d661';
+import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=1ebb13d661';
 import {
   PracticeAnalyticsError,
   createPracticeAnalyticsStore,
-} from './puzzle-analytics.js?v=b1355bbc48';
+} from './puzzle-analytics.js?v=1ebb13d661';
 import {
   PUZZLE_TRANSFER_FORMAT,
   PUZZLE_TRANSFER_SCHEMA_VERSION,
@@ -129,7 +129,7 @@ import {
   PuzzleTransferError,
   serializePuzzleExport,
   parsePuzzleImport,
-} from './puzzle-transfer.js?v=b1355bbc48';
+} from './puzzle-transfer.js?v=1ebb13d661';
 import {
   PHOTO_MAX_ZOOM,
   PHOTO_MIN_ZOOM,
@@ -143,7 +143,7 @@ import {
   validatePhotoMetadata,
   zoomPhotoIn,
   zoomPhotoOut,
-} from './puzzle-photo.js?v=b1355bbc48';
+} from './puzzle-photo.js?v=1ebb13d661';
 import {
   CALIBRATION_CANONICAL_HEIGHT,
   CALIBRATION_CANONICAL_WIDTH,
@@ -159,7 +159,7 @@ import {
   setCorner,
   transformPoint,
   validateQuadrilateral,
-} from './puzzle-photo-calibration.js?v=b1355bbc48';
+} from './puzzle-photo-calibration.js?v=1ebb13d661';
 import {
   PuzzlePhotoRecognitionError,
   RECOGNITION_OCCUPANCY_EMPTY,
@@ -171,7 +171,7 @@ import {
   isRecognitionTokenCurrent,
   recognizeIntersections,
   selectionKey,
-} from './puzzle-photo-recognition.js?v=b1355bbc48';
+} from './puzzle-photo-recognition.js?v=1ebb13d661';
 import {
   addTemplate,
   createPieceTypeSessionToken,
@@ -181,13 +181,13 @@ import {
   normalizePiecePatch,
   removeTemplatesForSource,
   suggestUnresolvedPieceTypes,
-} from './puzzle-photo-piece-types.js?v=b1355bbc48';
+} from './puzzle-photo-piece-types.js?v=1ebb13d661';
 import {
   UNREVIEWED, PuzzlePhotoReviewError,
   createReviewState, buildReviewQueue, selectReviewCandidate, confirmEmpty, confirmPiece,
   nextCandidate, previousCandidate, nextUnresolved, acceptHighConfidenceEmpty,
   undoBulkEmpty, resetReview, rescanReview, reviewProgress, confirmedSelections, buildReviewedBoard,
-} from './puzzle-photo-review.js?v=b1355bbc48';
+} from './puzzle-photo-review.js?v=1ebb13d661';
 
 // ---------------- 常數 ----------------
 const CELL = 1;
@@ -712,6 +712,34 @@ const gameRecordIdFactory = () => {
 let normalGameRecordSession = null;
 let normalGameModeRevision = 0;
 let normalGameRecordError = null;
+let gameExportUI = null;
+let gameExportRevision = 0;
+let gameExportPageActive = true;
+let gameExportLoadGeneration = 0;
+let gameImportUI = null;
+let gameImportModule = null;
+let gameImportLoadGeneration = 0;
+function invalidateGameExport() {
+  gameExportRevision++;
+  gameExportUI?.invalidate();
+}
+function readGameExportSource(kind) {
+  const common = { kind, revision: gameExportRevision, modeRevision: normalGameModeRevision,
+    invalidating: !gameExportPageActive || !!customRematchRequest || !!customRematchLock };
+  if (kind === 'review') {
+    const record = gameReviewSession?.record;
+    const owned = !gameReviewStored && record?.id === normalGameRecordSession?.id
+      && normalGameRecordMatches(normalGameRecordSession);
+    return { ...common, available: appState === APP_STATE.GAME_REVIEW,
+      sourceKind: gameReviewSession?.sourceKind, record, stored: gameReviewStored,
+      recordError: owned && normalGameRecordError,
+      verifiedPlayerSide: owned ? normalGameRecordSession.humanSide : null };
+  }
+  return { ...common, available: normalGameActive(), session: normalGameRecordSession,
+    mode, humanSide, history, board, turn, over, winner, busy, aiThinking,
+    recordError: normalGameRecordError, completedRecord: lastCompletedGameRecord,
+    completedSessionId: completedGameRecordSessionId, positionHashes: posHistory, repetitionHistory: repHistory };
+}
 // Only the exact live session owns this memory-only root, including while paused.
 let customGameContext = null;
 let customRematchRequest = null;
@@ -810,7 +838,7 @@ function startAIFallback(request) {
   if (!currentAIRequest(request) || request.settled || request.fallbackStarted) return;
   if (request.payload.level === 'experimental-b') { failExperimentalAI(request); return; }
   request.fallbackStarted = true;
-  (aiModule ??= import('./ai.js?v=b1355bbc48')).then(({ findBestMove }) => {
+  (aiModule ??= import('./ai.js?v=1ebb13d661')).then(({ findBestMove }) => {
     if (!currentAIRequest(request) || request.settled) return;
     request.fallbackTimer = setTimeout(() => {
       if (!currentAIRequest(request) || request.settled) return;
@@ -839,7 +867,7 @@ function requestAIMove() {
     submitted: false, fallbackStarted: false, worker: null, moveTimer: null, fallbackTimer: null };
   aiRequest = request;
   try {
-    aiWorker ??= new Worker(new URL('./ai-worker.js?v=b1355bbc48', import.meta.url), { type: 'module' });
+    aiWorker ??= new Worker(new URL('./ai-worker.js?v=1ebb13d661', import.meta.url), { type: 'module' });
     const worker = aiWorker;
     request.worker = worker;
     worker.onmessage = (event) => {
@@ -1044,7 +1072,7 @@ function requestGameTeachingModeAnalysis(source) {
   renderGameTeachingMode();
   let worker;
   try {
-    worker = new Worker(new URL('./ai-worker.js?v=b1355bbc48', import.meta.url), { type: 'module' });
+    worker = new Worker(new URL('./ai-worker.js?v=1ebb13d661', import.meta.url), { type: 'module' });
     gameTeachingModeWorker = worker;
     worker.onmessage = (event) => handleGameTeachingModeResponse(worker, event.data);
     worker.onerror = (event) => {
@@ -1494,6 +1522,8 @@ function refreshHUD() {
   btnGameRecords.disabled = puzzleFlowActive() || ((busy || aiThinking) && !gameRecordFlowActive());
   btnGameRecords.setAttribute('aria-pressed', String(gameRecordFlowActive()));
   renderGameTeachingMode();
+  gameExportUI?.refresh();
+  gameImportUI?.refresh();
 }
 
 function addLog(nota, side) {
@@ -2794,6 +2824,10 @@ function syncGameReviewMoveMark() {
 function gameReviewAnnouncement() {
   const review = gameReviewSession;
   const move = review.currentMove ? `上一著：${review.currentMove.notation}。` : '開局位置。';
+  if (review.sourceKind === 'imported' && review.atLast) {
+    return `第 ${review.selectedPly} / ${review.totalPlies} 著。${move}${review.snapshot.terminal
+      ? `終局：${gameAnalysisTerminalLabel(review.snapshot.terminal)}。` : '最後一著；棋局尚未完成。'}`;
+  }
   if (review.sourceKind === 'completed' && review.atLast && review.snapshot.terminal) {
     return `第 ${review.selectedPly} / ${review.totalPlies} 著。${move}終局：${gameRecordResultLabel(review.record)}。`;
   }
@@ -2981,6 +3015,7 @@ function renderGameReviewCoach(message) {
     && appState === APP_STATE.GAME_REVIEW
     && !!message
     && gameReviewSession?.sourceKind !== 'live-teaching'
+    && gameReviewSession?.sourceKind !== 'imported'
     && gameReviewCoachState.status !== 'disabled';
   if (available) requestGameReviewCoachCapabilities(message);
   const loading = available && gameReviewCoachState.status === 'loading';
@@ -3031,6 +3066,7 @@ function renderGameReviewTeaching(evidence, acceptedMessage = gameReviewTeaching
 }
 
 function changeGameReviewCoachModelProfile() {
+  if (gameReviewSession?.sourceKind === 'imported') return false;
   if (!gameReviewCoachRequester || appState !== APP_STATE.GAME_REVIEW
     || !gameReviewSession || !currentGameReviewTeachingMessage()
     || gameReviewCoachState.status === 'disabled') return false;
@@ -3089,6 +3125,7 @@ function handleGameReviewCoachResponse(activeRequest, response) {
 }
 
 function requestGameReviewCoach() {
+  if (gameReviewSession?.sourceKind === 'imported') return false;
   const message = currentGameReviewTeachingMessage();
   if (!gameReviewCoachRequester
     || appState !== APP_STATE.GAME_REVIEW
@@ -3197,10 +3234,11 @@ function handleGameReviewAiResponse(worker, response) {
 }
 
 function createGameReviewAiWorker() {
-  return new Worker(new URL('./ai-worker.js?v=b1355bbc48', import.meta.url), { type: 'module' });
+  return new Worker(new URL('./ai-worker.js?v=1ebb13d661', import.meta.url), { type: 'module' });
 }
 
 function requestGameReviewAiCandidate() {
+  if (gameReviewSession?.sourceKind === 'imported') return false;
   if (appState !== APP_STATE.GAME_REVIEW || !gameReviewSession || gameReviewSession.snapshot.terminal) return false;
   terminateGameReviewAiWorker();
   let started;
@@ -3245,7 +3283,8 @@ function requestGameReviewAiCandidate() {
 function renderGameReviewContinuation() {
   const button = document.getElementById('btnGameReviewContinue');
   const reason = document.getElementById('gameReviewContinueReason');
-  button.disabled = !canStartGameFromReview(gameReviewSession);
+  button.disabled = gameReviewSession?.sourceKind === 'imported'
+    ? !gameImportModule?.canContinueImportedGame(gameReviewSession) : !canStartGameFromReview(gameReviewSession);
   reason.textContent = gameReviewSession?.sourceKind === 'live-teaching'
     ? '進行中的教學對局請返回棋局繼續下棋。'
     : gameReviewSession?.snapshot.terminal
@@ -3259,9 +3298,12 @@ function renderGameReviewContinuation() {
 }
 
 function openGameReviewContinuation() {
-  if (appState !== APP_STATE.GAME_REVIEW || !canStartGameFromReview(gameReviewSession)) return false;
+  const allowed = gameReviewSession?.sourceKind === 'imported'
+    ? gameImportModule?.canContinueImportedGame(gameReviewSession) : canStartGameFromReview(gameReviewSession);
+  if (appState !== APP_STATE.GAME_REVIEW || !allowed) return false;
   gameReviewContinuationSource = gameReviewSession;
-  const { selectedPly, snapshot, record } = gameReviewSession;
+  const { selectedPly, snapshot } = gameReviewSession;
+  const record = gameReviewSession.document ?? gameReviewSession.record;
   document.getElementById('gameReviewContinuationPosition').textContent =
     `目前局面：第 ${selectedPly} 著後・輪到：${snapshot.sideToMove === RED ? '紅方' : '黑方'}`;
   document.getElementById('gameReviewContinuationDifficulty').value = defaultContinuationDifficulty(record.mode);
@@ -3285,13 +3327,14 @@ function startNormalGameFromReview(review, configuration) {
   let position;
   let settings;
   try {
-    position = createReviewContinuationPosition(review);
+    position = review.sourceKind === 'imported'
+      ? gameImportModule.createImportedContinuationPosition(review) : createReviewContinuationPosition(review);
     settings = validateContinuationConfiguration(configuration);
   } catch {
     toast('目前局面或對弈設定無效，請返回複盤重新選擇。');
     return false;
   }
-  return startConfiguredNormalGame(position, settings, { sourceRecordId: review.record.id });
+  return startConfiguredNormalGame(position, settings, { sourceRecordId: review.sourceKind === 'imported' ? null : review.record.id });
 }
 
 // Both entry points validate and detach their position before committing here.
@@ -3401,17 +3444,24 @@ function performCustomRematch(context) {
 function renderGameReview() {
   if (!gameReviewSession) return;
   const review = gameReviewSession;
+  const imported = review.sourceKind === 'imported';
+  const record = imported ? review.document : review.record;
   renderGameReviewContinuation();
   gameReviewMeta.replaceChildren();
-  appendGameReviewMeta('模式', gameRecordModeLabel(review.record.mode));
-  if (review.record.mode === 'experimental-b') appendGameReviewMeta('保存', '僅記憶體；重新整理後消失');
-  if (review.sourceKind === 'live-teaching') {
+  appendGameReviewMeta('模式', gameRecordModeLabel(record.mode));
+  if (imported) {
+    appendGameReviewMeta('來源', '匯入棋譜・暫存唯讀，不會自動儲存');
+    appendGameReviewMeta('玩家棋色', record.playerSide === null ? '未記錄' : record.playerSide === RED ? '紅方' : '黑方');
+    appendGameReviewMeta('狀態', record.status === 'completed' ? '已完成' : '未完成');
+    if (record.result) appendGameReviewMeta('結果', gameRecordResultLabel(record));
+  } else if (review.sourceKind === 'live-teaching') {
     appendGameReviewMeta('開始時間', formatGameRecordCompletedAt(review.record.createdAt));
     appendGameReviewMeta('狀態', '進行中的本機對局');
   } else {
     appendGameReviewMeta('完成時間', formatGameRecordCompletedAt(review.record.completedAt));
     appendGameReviewMeta('結果', gameRecordResultLabel(review.record));
   }
+  if (record.mode === 'experimental-b') appendGameReviewMeta('保存', '僅記憶體；重新整理後消失');
   appendGameReviewMeta('進度', `${review.selectedPly} / ${review.totalPlies}`);
   gameReviewStatus.textContent = gameReviewAnnouncement();
   gameReviewMoveCount.textContent = `${review.totalPlies} 著`;
@@ -3450,12 +3500,20 @@ function renderGameReview() {
   btnGameReviewPrevious.disabled = review.atFirst;
   btnGameReviewNext.disabled = review.atLast;
   btnGameReviewLast.disabled = review.atLast;
+  const lastLabel = imported && record.status === 'in-progress' ? '最後一著' : '終局';
+  btnGameReviewLast.querySelector('span').textContent = lastLabel;
+  btnGameReviewLast.setAttribute('aria-label', `前往${lastLabel}`);
   btnGameReviewAnalyze.disabled = !!review.snapshot.terminal;
   btnGameReviewAnalyze.title = review.snapshot.terminal ? '終局位置不可開始分析' : '';
-  btnGameReviewCreatePuzzle.disabled = !!review.snapshot.terminal || review.record.mode === 'experimental-b';
-  btnGameReviewCreatePuzzle.title = review.record.mode === 'experimental-b' ? '挑戰級棋譜不匯出至殺局題庫'
+  btnGameReviewCreatePuzzle.disabled = !!review.snapshot.terminal || record.mode === 'experimental-b';
+  btnGameReviewCreatePuzzle.title = record.mode === 'experimental-b' ? '挑戰級棋譜不匯出至殺局題庫'
     : review.snapshot.terminal ? '終局位置不可建立殺局題，請先返回較早著數' : '';
   renderGameReviewAi();
+  for (const button of [btnGameReviewAnalyze, btnGameReviewAiAnalyze, btnGameReviewCreatePuzzle]) {
+    button.classList.toggle('hidden', imported);
+    if (imported) button.disabled = true;
+  }
+  if (imported) { btnGameReviewCoach.classList.add('hidden'); btnGameReviewCoach.disabled = true; }
   btnGameReviewBack.classList.toggle('hidden', gameReviewReturnState !== APP_STATE.GAME_RECORD_LIBRARY);
   btnGameReviewDelete.classList.toggle('hidden', !gameReviewStored);
   rebuildPieceMeshes(review.snapshot.board, false);
@@ -3538,6 +3596,7 @@ function renderGameAnalysis() {
 }
 
 function enterGameAnalysis(invoker = btnGameReviewAnalyze) {
+  if (gameReviewSession?.sourceKind === 'imported') return false;
   if (appState !== APP_STATE.GAME_REVIEW || !gameReviewSession || gameReviewSession.snapshot.terminal) return false;
   try {
     gameAnalysisState = gameReviewSession.sourceKind === 'live-teaching'
@@ -3726,7 +3785,10 @@ function openStoredGameReview(id, invoker) {
 function navigateGameReview(target) {
   if (appState !== APP_STATE.GAME_REVIEW || !gameReviewSession) return false;
   let nextReview;
-  if (target === 'first') nextReview = firstGameReviewPly(gameReviewSession);
+  if (gameReviewSession.sourceKind === 'imported') {
+    if (!['first', 'previous', 'next', 'last'].includes(target) && !Number.isInteger(target)) return false;
+    nextReview = gameImportModule.selectImportedGameReviewPly(gameReviewSession, target);
+  } else if (target === 'first') nextReview = firstGameReviewPly(gameReviewSession);
   else if (target === 'previous') nextReview = previousGameReviewPly(gameReviewSession);
   else if (target === 'next') nextReview = nextGameReviewPly(gameReviewSession);
   else if (target === 'last') nextReview = lastGameReviewPly(gameReviewSession);
@@ -3739,6 +3801,7 @@ function navigateGameReview(target) {
 }
 
 function deleteGameRecordFromLibrary(id) {
+  if (gameReviewSession?.sourceKind === 'imported') return false;
   if (!window.confirm('確定要刪除這筆已完成對局嗎？刪除後無法復原。')) return false;
   try {
     const deleted = gameRecordStore.deleteGameRecord(id);
@@ -3838,6 +3901,7 @@ function enterEditor() {
 }
 
 function createPuzzleFromGameReview(invoker = btnGameReviewCreatePuzzle) {
+  if (gameReviewSession?.sourceKind === 'imported') return false;
   if (gameReviewSession?.record.mode === 'experimental-b') return false;
   if (appState !== APP_STATE.GAME_REVIEW || !gameReviewSession || gameReviewSession.snapshot.terminal) {
     return false;
@@ -5163,6 +5227,7 @@ function canHumanMove() {
 }
 
 function initializeNormalGamePosition(startBoard, startTurn, { sourceRecordId = null, customGameRoot = null } = {}) {
+  invalidateGameExport();
   invalidateTeachingModeFeedback();
   tweens.length = 0;
   invalidateNormalAI();
@@ -5242,6 +5307,7 @@ function animateCapture(m, done) {
 
 function doMove(from, to) {
   if (!normalGameActive()) return;
+  invalidateGameExport();
   const gameRecordSessionId = normalGameRecordSession?.id ?? null;
   const teachingSource = captureTeachingModeSource(from, to);
   if (teachingSource) invalidateTeachingModeFeedback();
@@ -5372,6 +5438,7 @@ function normalGameRecordMatches(session) {
 }
 
 function failNormalGameRecord(code, session) {
+  invalidateGameExport();
   // Latch this session's error. Restoring a mode value cannot make an already
   // suspect game safe to persist; only a new game clears the failure.
   normalGameRecordError = Object.freeze({ code, sessionId: session?.id ?? null,
@@ -5442,6 +5509,7 @@ function showBanner() {
 }
 
 function undoPly() {
+  invalidateGameExport();
   const h = history.pop();
   posHistory.pop();
   repHistory.pop();
@@ -6108,7 +6176,7 @@ btnGameAnalysisReset.addEventListener('click', resetGameAnalysisToSource);
 btnGameAnalysisReturn.addEventListener('click', returnToGameReview);
 document.getElementById('btnGameAnalysisExit').addEventListener('click', exitGameRecordFlow);
 btnGameReviewDelete.addEventListener('click', () => {
-  if (gameReviewSession) deleteGameRecordFromLibrary(gameReviewSession.record.id);
+  if (gameReviewSession && gameReviewSession.sourceKind !== 'imported') deleteGameRecordFromLibrary(gameReviewSession.record.id);
 });
 gameRecordLibraryList.addEventListener('click', (event) => {
   const button = event.target.closest('[data-game-record-action]');
@@ -6286,6 +6354,44 @@ function closeHudMenu() {
   hudMore.classList.remove('open');
   btnMore.setAttribute('aria-expanded', 'false');
 }
+async function loadGameExportUI() {
+  if (!gameExportPageActive || gameExportUI || document.getElementById('gameExportDialog')?.dataset.gameExportUi !== '1') return;
+  const generation = ++gameExportLoadGeneration;
+  try {
+    const { createGameExportUI } = await import('./game-transfer/export-ui.js?v=1ebb13d661');
+    if (!gameExportPageActive || generation !== gameExportLoadGeneration) return;
+    gameExportUI = createGameExportUI({ readSource: readGameExportSource, closeMenu: closeHudMenu, notify: toast });
+  } catch (error) {
+    console.warn('棋譜匯出暫時無法載入；主要對弈仍可使用。', error);
+  }
+}
+async function loadGameImportUI() {
+  if (!gameExportPageActive || gameImportUI || document.getElementById('gameImportDialog')?.dataset.gameImportUi !== '1') return;
+  const generation = ++gameImportLoadGeneration;
+  try {
+    const module = await import('./game-transfer/import-ui.js?v=1ebb13d661');
+    if (!gameExportPageActive || generation !== gameImportLoadGeneration) return;
+    gameImportModule = module;
+    gameImportUI = module.createGameImportUI({
+      context: () => ({ active: gameExportPageActive && appState === APP_STATE.GAME_RECORD_LIBRARY, revision: gameExportRevision }),
+      accept: review => {
+        if (appState !== APP_STATE.GAME_RECORD_LIBRARY || !module.isImportedGameReview(review)) return false;
+        if (!openPreparedGameReview(review, { returnState: APP_STATE.GAME_RECORD_LIBRARY, stored: false })) return false;
+        renderGameReview(); gameReviewHeading.focus({ preventScroll: true }); return true;
+      },
+    });
+  } catch (error) { console.warn('棋譜匯入暫時無法載入；其他功能仍可使用。', error); }
+}
+window.addEventListener('pagehide', () => {
+  gameExportPageActive = false; gameExportLoadGeneration++;
+  invalidateGameExport(); gameExportUI?.dispose(); gameExportUI = null;
+  gameImportLoadGeneration++; gameImportUI?.dispose(); gameImportUI = null;
+});
+window.addEventListener('pageshow', event => {
+  gameExportPageActive = true;
+  if (event.persisted) void loadGameExportUI();
+  if (event.persisted) void loadGameImportUI();
+});
 let boardAppearanceUI = null;
 let boardAppearanceGeneration = 0;
 let boardAppearancePageActive = true;
@@ -6301,7 +6407,7 @@ async function loadBoardAppearanceUI() {
   try {
     // Do not await this from core startup. A missing UI/store or invalid module
     // must leave the default board and all game controls working.
-    const { createBoardAppearanceUI } = await import('./board-appearance-ui.js?v=b1355bbc48');
+    const { createBoardAppearanceUI } = await import('./board-appearance-ui.js?v=1ebb13d661');
     if (!current()) return;
     boardAppearanceUI = createBoardAppearanceUI({
       surface: boardSurface,
@@ -6337,6 +6443,8 @@ document.addEventListener('pointerdown', (e) => {
 document.addEventListener('keydown', (e) => {
   // The modal owns Escape and navigation keys until confirmed or cancelled.
   if (document.getElementById('boardAppearanceDialog')?.open) return;
+  if (document.getElementById('gameExportDialog')?.open) return;
+  if (document.getElementById('gameImportDialog')?.open) return;
   if (document.getElementById('gameReviewContinuationDialog').open
     || document.getElementById('savedPositionsDialog').open
     || document.getElementById('customPlayDialog').open
@@ -6586,3 +6694,5 @@ for (const id of ['modeSel', 'customPlayDifficulty', 'gameReviewContinuationDiff
   if (option) option.disabled = false;
 }
 void loadBoardAppearanceUI();
+void loadGameExportUI();
+void loadGameImportUI();

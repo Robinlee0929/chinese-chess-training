@@ -21,8 +21,9 @@ function install(name, values) {
 }
 
 function installMany(names, values) {
-  const context = vm.createContext({ RED, BLACK, mode: 'medium', experimentalAIFailure: null, clearTimeout() {}, customRematchRequest: null, ...values });
-  vm.runInContext(names.map(functionSource).join('\n'), context);
+  const context = vm.createContext({ RED, BLACK, mode: 'medium', experimentalAIFailure: null, clearTimeout() {}, customRematchRequest: null,
+    gameExportRevision: 0, gameExportUI: null, ...values });
+  vm.runInContext(['invalidateGameExport', ...names].map(functionSource).join('\n'), context);
   return context;
 }
 

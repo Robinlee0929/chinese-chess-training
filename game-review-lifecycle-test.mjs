@@ -147,8 +147,8 @@ function domNode(initiallyHidden = false, tagName = 'div') {
       return attributes.get(name) ?? null;
     },
     querySelector(selector) {
-      const matches = (candidate) => selector === '[aria-current="step"]'
-        && candidate.getAttribute?.('aria-current') === 'step';
+      const matches = (candidate) => selector === 'span' ? candidate.tagName === 'SPAN'
+        : selector === '[aria-current="step"]' && candidate.getAttribute?.('aria-current') === 'step';
       const visit = (candidate) => {
         if (matches(candidate)) return candidate;
         for (const child of candidate.children || []) {
@@ -171,6 +171,7 @@ function domNode(initiallyHidden = false, tagName = 'div') {
 function teachingCtaHarness({ enabled = true, accepted = true, hasMessage = true,
   hasHandoff = true, active = true, ai = true } = {}) {
   const context = vm.createContext({
+    gameExportUI: null, gameImportUI: null,
     mode: 'medium',
     gameTeachingModeState: Object.freeze({
       enabled,
@@ -313,6 +314,7 @@ function harness({
     createElement: (tagName) => domNode(false, tagName),
   };
   const context = vm.createContext({
+    gameExportUI: null, gameImportUI: null,
     RED, BLACK, structuredClone, name,
     APP_STATE: Object.freeze({
       NORMAL_GAME: 'NORMAL_GAME',
@@ -489,7 +491,7 @@ function harness({
     btnGameReviewFirst: domNode(),
     btnGameReviewPrevious: domNode(),
     btnGameReviewNext: domNode(),
-    btnGameReviewLast: domNode(),
+    btnGameReviewLast: Object.assign(domNode(), { children: [domNode(false, 'span')] }),
     btnGameReviewAnalyze: domNode(),
     btnGameReviewAiAnalyze: domNode(),
     gameReviewAiPanel: domNode(true),

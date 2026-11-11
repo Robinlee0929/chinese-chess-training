@@ -1,5 +1,5 @@
-import { createBoardAppearanceController } from './board-appearance.js?v=b1355bbc48';
-import { createBoardAppearanceStore } from './board-appearance-store.js?v=b1355bbc48';
+import { createBoardAppearanceController } from './board-appearance.js?v=1ebb13d661';
+import { createBoardAppearanceStore } from './board-appearance-store.js?v=1ebb13d661';
 
 export function createBoardAppearanceUI({ surface, changed, closeMenu, doc = document }) {
   const el = id => doc.getElementById(id);
