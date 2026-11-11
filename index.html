@@ -69,7 +69,7 @@
   "isBasedOn": "https://github.com/doggy8088/chinese-chess"
 }
 </script>
-<link rel="stylesheet" href="./css/style.css?v=b1355bbc48">
+<link rel="stylesheet" href="./css/style.css?v=1ebb13d661">
 <script type="importmap">
 {
   "imports": {
@@ -108,6 +108,7 @@
       <button id="btnCustomRematch" type="button" class="hidden" aria-haspopup="dialog" aria-controls="customRematchDialog">重新挑戰</button>
       <button id="btnMore" type="button" aria-haspopup="true" aria-expanded="false" title="更多設定" aria-label="更多設定">⋯</button>
       <div id="hudMore">
+        <button id="btnGameExport" type="button" data-game-export="1" hidden disabled aria-haspopup="dialog" aria-controls="gameExportDialog">匯出棋譜</button>
         <button id="btnBoardAppearance" type="button" disabled title="棋盤外觀載入中…" aria-haspopup="dialog" aria-controls="boardAppearanceDialog">棋盤外觀</button>
         <button id="btnSaveCurrentPosition" type="button" disabled aria-haspopup="dialog" aria-controls="savedPositionsDialog">儲存目前局面</button>
         <button id="btnSavedPositions" type="button" aria-haspopup="dialog" aria-controls="savedPositionsDialog">我的局面</button>
@@ -533,6 +534,7 @@
           <span id="gameRecordLibraryCount" class="editor-badge">0 局</span>
         </div>
         <p id="gameRecordLibraryIssues" class="game-record-issues hidden" role="status" aria-live="polite"></p>
+        <button id="btnGameImport" type="button" data-game-import="1" hidden disabled aria-haspopup="dialog" aria-controls="gameImportDialog">匯入棋譜 JSON</button>
         <div id="gameRecordLibraryList" class="game-record-library-list"></div>
         <p id="gameRecordLibraryEmpty" class="game-record-empty">尚無可複盤的已完成對局。</p>
         <button id="btnGameRecordLibraryExit" type="button">返回棋局</button>
@@ -568,7 +570,7 @@
             <h2 id="gameReviewContinuationHeading">從此局面對弈</h2>
             <p id="gameReviewContinuationPosition"></p>
             <p>會從目前局面建立一盤新對局，原棋譜不會變更。</p>
-            <p id="gameReviewContinuationWarning">開始後會以此局面建立新對局；目前尚未完成的棋局若未有完成紀錄，不會成為這個新對局的一部分。</p>
+            <p id="gameReviewContinuationWarning">開始新對局會取代目前尚未完成的棋局。需要保留的話，請先匯出。</p>
             <p>重複局面紀錄會從此處重新計算。</p>
             <label for="gameReviewContinuationDifficulty">AI 難度</label>
             <select id="gameReviewContinuationDifficulty">
@@ -585,6 +587,7 @@
           </form>
         </dialog>
         <div class="game-review-actions" aria-label="複盤操作">
+          <button id="btnGameReviewExport" type="button" data-game-export="1" hidden disabled aria-haspopup="dialog" aria-controls="gameExportDialog">匯出整局棋譜</button>
           <button id="btnGameReviewAnalyze" type="button" class="game-analysis-primary">從這裡分析</button>
           <button id="btnGameReviewAiAnalyze" type="button" class="game-review-ai-primary"
             aria-label="分析目前複盤局面" aria-controls="gameReviewAiPanel" aria-busy="false">AI 分析</button>
@@ -716,6 +719,7 @@
       </div>
       <p id="ovReason">以「將死」取勝</p>
       <div class="ovBtns">
+        <button id="btnGameExportEnd" type="button" data-game-export="1" hidden disabled aria-haspopup="dialog" aria-controls="gameExportDialog">匯出棋譜</button>
         <button id="btnShare" type="button" class="primary">分享戰績 🎉</button>
         <button id="btnReviewGame" type="button" class="hidden">複盤本局</button>
         <button id="btnAgain" type="button">再來一局</button>
@@ -724,6 +728,36 @@
       </div>
     </div>
   </div>
+
+  <dialog id="gameImportDialog" data-game-import-ui="1" aria-labelledby="gameImportHeading" aria-describedby="gameImportPrivacy">
+    <form id="gameImportForm">
+      <h2 id="gameImportHeading">匯入棋譜 JSON</h2>
+      <p id="gameImportPrivacy">棋譜只在此分頁暫存，不會自動儲存或上傳。TXT 僅供閱讀，不能匯入。</p>
+      <label for="gameImportFile">選擇 JSON 棋譜（最多 1 MiB、1,024 著）</label>
+      <input id="gameImportFile" type="file" accept=".json,application/json">
+      <p id="gameImportStatus" role="status" aria-live="polite" aria-atomic="true"></p>
+      <section id="gameImportPreview" hidden aria-label="已驗證棋譜預覽">
+        <dl id="gameImportMeta"></dl>
+        <table class="game-import-board" aria-label="初始棋盤，黑方在上、紅方在下"><caption>初始棋盤</caption><tbody id="gameImportBoard"></tbody></table>
+      </section>
+      <div class="game-import-actions">
+        <button id="gameImportConfirm" type="submit" disabled>開始複盤</button>
+        <button id="gameImportCancel" type="button">取消</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="gameExportDialog" data-game-export-ui="1" aria-labelledby="gameExportHeading" aria-describedby="gameExportSummary">
+    <h2 id="gameExportHeading">匯出棋譜</h2>
+    <p id="gameExportSummary"></p>
+    <p>把完整走棋進度下載到裝置，方便閱讀與分享。</p>
+    <div class="game-export-formats">
+      <button type="button" data-export-format="txt">文字棋譜 TXT</button>
+      <button type="button" data-export-format="json">可匯入棋譜 JSON</button>
+    </div>
+    <p class="game-export-note">JSON 保留完整棋譜資料，可在「對局紀錄」匯入並複盤。</p>
+    <p id="gameExportStatus" role="status" aria-live="polite" aria-atomic="true"></p>
+    <button id="gameExportClose" type="button">取消／關閉</button>
+  </dialog>
 
   <dialog id="savedPositionsDialog" aria-labelledby="savedPositionsHeading">
     <div class="saved-positions-heading">
@@ -807,6 +841,6 @@
   <div id="toast" class="hidden" role="status"></div>
 </div>
 
-<script type="module" src="./main.js?v=b1355bbc48"></script>
+<script type="module" src="./main.js?v=1ebb13d661"></script>
 </body>
 </html>

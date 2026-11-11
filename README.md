@@ -24,6 +24,26 @@ python -m http.server 8000
 
 開啟 <http://127.0.0.1:8000/>。
 
+## 下載完整對局棋譜
+
+一般對弈可從「⋯ 更多設定 → 匯出棋譜」下載已確認的走棋進度；終局畫面也有「匯出棋譜」。在「對局紀錄 → 對局複盤」選「匯出整局棋譜」時，會包含完整原對局，不受目前觀看著數影響。
+
+提供中文 TXT 閱讀格式及版本化 JSON，支援簡單、中等、困難、挑戰級與雙人模式，以及現有自訂／殺局局面對弈起點。零著或尚未完成的棋局會標示「未完成」；舊紀錄未提供玩家棋色時保留未知，不推測。請等待 AI 思考及動畫結束再匯出；換局、悔棋、離開或取消會讓舊匯出失效。超過 1,024 著或 1 MiB 時拒絕匯出，不截斷棋譜。
+
+檔案只下載到你的裝置，不自動儲存至網站資料庫，也不含照片、瀏覽器設定或 Session ID。挑戰級可手動下載棋譜，但完整 B 棋譜仍不寫入舊 GameRecord 儲存區。
+
+資料格式與開發說明見 [game-transfer/README.md](game-transfer/README.md)。資料與生命週期測試可執行 `node --test game-transfer-test.mjs game-transfer-worker-test.mjs game-export-test.mjs`。實際下載驗收：`node tools/game-export-browser-test.mjs /absolute/path/to/built-site /absolute/path/to/new-evidence`，須先配置既有 Playwright／Chrome；證據必須放在工作樹外。
+
+## 匯入棋譜與暫存複盤
+
+在「對局紀錄」選「匯入棋譜 JSON」，選擇本網站匯出的完整棋譜。完整驗證通過後，先確認起始棋盤、模式、玩家棋色、先行方、著數與完成狀態，再按「開始複盤」。未記錄的玩家棋色不會被猜測。TXT 只能閱讀；既有「我的殺局」JSON 是不同格式，不能由此入口匯入。
+
+匯入棋譜只在目前分頁暫存，可逐著查看，也可從非終局位置另開簡單、中等、困難或挑戰級對局。新局可選紅／黑方，使用全新的走棋與悔棋歷史；開始前會提醒先匯出需要保留的原棋局。取消、返回或複盤不會改寫既有資料，也不會自動保存匯入棋譜。重新整理後暫存複盤會消失，請保留原 JSON 檔案。
+
+驗證使用獨立 Worker，維持 1 MiB、1,024 著、16 層 JSON 與 10 秒上限。錯誤棋譜整份拒絕，不載入合法前綴。沒有雲端同步、外部 XQF／PGN、匯入棋譜 AI 分析或自動永久保存。
+
+匯入資料測試：`node --test game-import-test.mjs`。跨工作階段驗收：`node tools/game-import-browser-test.mjs /absolute/path/to/built-site /absolute/path/to/new-evidence [phase-b-source]`；使用隔離 Chrome，若已安裝 Firefox 也會驗證同一下載檔的跨引擎複盤。
+
 ## 自由擺棋後與電腦對弈
 
 1. 開啟「建立殺局」，自由放置、移動或刪除紅黑棋子，也可載入標準開局再調整。

@@ -62,7 +62,8 @@ test('actual disabled explanations cover terminal and live teaching review', () 
   assert.equal(ctx.openGameReviewContinuation(),false);
 });
 
-test('global Review keyboard shortcuts cannot exit or navigate behind an open configuration modal', () => {
+for (const modal of ['gameReviewContinuationDialog', 'savedPositionsDialog', 'customPlayDialog',
+  'customRematchDialog', 'boardAppearanceDialog', 'gameExportDialog', 'gameImportDialog']) test(`global Review shortcuts stay behind ${modal} and resume after closing`, () => {
   const {ctx,node} = harness();
   const match = source.match(/document\.addEventListener\('keydown', \(e\) => \{([^]*?)\n\}\);/);
   assert.ok(match);
@@ -71,10 +72,15 @@ test('global Review keyboard shortcuts cannot exit or navigate behind an open co
   ctx.exitGameReview = () => transitions++;
   ctx.navigateGameReview = () => transitions++;
   ctx.closeHudMenu = () => {};
-  node('gameReviewContinuationDialog').open = true;
-  for (const key of ['Escape','ArrowLeft','ArrowRight','Home','End']) ctx.keyboard({key});
+  for (const name of ['HTMLInputElement', 'HTMLTextAreaElement', 'HTMLSelectElement']) ctx[name] = class {};
+  const event = key => ({ key, target: {}, preventDefault() { this.prevented = true; } });
+  node(modal).open = true;
+  for (const key of ['Escape','ArrowLeft','ArrowRight','Home','End','Tab']) {
+    const e = event(key); ctx.keyboard(e);
+    assert.equal(e.prevented, undefined, 'leave native modal keyboard handling intact');
+  }
   assert.equal(transitions,0);
-  node('gameReviewContinuationDialog').open = false;
-  ctx.keyboard({key:'Escape'});
-  assert.equal(transitions,1);
+  node(modal).open = false;
+  for (const key of ['Escape','ArrowLeft','ArrowRight','Home','End']) ctx.keyboard(event(key));
+  assert.equal(transitions,5);
 });
