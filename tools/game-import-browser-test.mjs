@@ -112,7 +112,7 @@ try{
    await toolbar(b,'#btnLock');
   });
   await check(label+' storage isolation, repeated preview/cancel/navigation, keyboard and runtime permissions',async()=>{
-   await b.evaluate(async()=>{__chess.setMode('easy');__chess.newGame();__chess.doMove({r:3,c:4},{r:4,c:4});
+   await b.evaluate(async()=>{__chess.newGame();__chess.setMode('easy');__chess.doMove({r:3,c:4},{r:4,c:4});
     const {createPracticeAnalyticsStore}=await import('./puzzle-analytics.js');createPracticeAnalyticsStore({storage:localStorage}).recordAttempt({puzzleId:'synthetic-phase-c',startedAt:'2026-11-10T00:00:00.000Z',endedAt:'2026-11-10T00:01:00.000Z',outcome:'completed',mistakes:0,hintRequests:0,maxHintLevel:0});
    });await idle(b);await b.waitForTimeout(1100);
    await b.evaluate(async d=>{const {createPuzzleStore}=await import('./puzzle-store.js');createPuzzleStore({storage:localStorage}).savePuzzle({id:'synthetic-phase-c',title:'合成殺局',initialBoard:d.initialPosition.board,sideToMove:d.initialPosition.sideToMove,solution:d.moves.map(m=>({...m,side:'red'})),tags:[],notes:'合成資料'});},terminal());

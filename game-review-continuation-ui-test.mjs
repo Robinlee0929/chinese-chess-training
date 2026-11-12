@@ -63,7 +63,7 @@ test('actual disabled explanations cover terminal and live teaching review', () 
 });
 
 for (const modal of ['gameReviewContinuationDialog', 'savedPositionsDialog', 'customPlayDialog',
-  'customRematchDialog', 'boardAppearanceDialog', 'gameExportDialog', 'gameImportDialog']) test(`global Review shortcuts stay behind ${modal} and resume after closing`, () => {
+  'customRematchDialog', 'boardAppearanceDialog', 'gameExportDialog', 'gameImportDialog', 'newGameConfirmDialog']) test(`global Review shortcuts stay behind ${modal} and resume after closing`, () => {
   const {ctx,node} = harness();
   const match = source.match(/document\.addEventListener\('keydown', \(e\) => \{([^]*?)\n\}\);/);
   assert.ok(match);

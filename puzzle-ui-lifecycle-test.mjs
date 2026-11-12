@@ -2942,7 +2942,9 @@ test('Phase C: standard new game, side change and direct Review continuation rem
   for (const action of ['new', 'side', 'mode', 'review']) {
     const ctx = customPlayHarness(); startCustom(ctx);
     if (action === 'side') {
-      vm.runInContext(functionSource('changeHumanSide'), ctx); ctx.changeHumanSide(game.RED);
+      // Exercise the already-confirmed transition; the U0 suite owns admission/cancellation.
+      vm.runInContext(functionSource('commitNormalNewGame'), ctx);
+      ctx.commitNormalNewGame({ mode: ctx.mode, humanSide: game.RED });
     } else if (action === 'mode') { ctx.mode = 'pvp'; ctx.newGame(); }
     else if (action === 'review') {
       const r = r4TurnDivergenceReviewFixture(); ctx.appState = 'GAME_REVIEW';

@@ -36,6 +36,10 @@ const idle=p=>p.waitForFunction(()=>window.__chess && !__chess.busy && !__chess.
 const toolbar=async(p,id)=>{if(!await p.locator(id).isVisible())await p.locator('#btnMore').click();await p.locator(id).click();};
 const closeExport=async p=>{if(await p.locator('#gameExportDialog').evaluate(d=>d.open))await p.locator('#gameExportClose').click();};
 async function openExport(p,id='#btnGameExport'){await toolbar(p,id);await p.locator('#gameExportDialog').waitFor({state:'visible'});}
+async function chooseMode(p,mode){
+  await p.locator('#modeSel').selectOption(mode);
+  if(await p.locator('#newGameConfirmDialog').evaluate(d=>d.open))await p.locator('#btnNewGameConfirm').click();
+}
 async function download(p,format){
   const started=performance.now();const event=p.waitForEvent('download');await p.locator(`[data-export-format="${format}"]`).click();
   const d=await event;const target=path.join(out,`${++downloadIndex}-${d.suggestedFilename()}`);await d.saveAs(target);assert.equal(await d.failure(),null);
@@ -77,7 +81,7 @@ try {
     await p.goto(url);await idle(p);await p.waitForFunction(()=>!document.querySelector('#btnGameExport').hidden);
     assert.match(await p.title(),/中國象棋/);assert.equal(await p.locator('#stage canvas').count(),1);
     for(const mode of ['easy','medium','hard','experimental-b','pvp'])await check(`${label}: ${mode} zero-ply JSON/TXT`,async()=>{
-      await p.locator('#modeSel').selectOption(mode);await idle(p);await openExport(p);
+      await chooseMode(p,mode);await idle(p);await openExport(p);
       assert.match(await p.locator('#gameExportSummary').textContent(),/0 著・未完成/);
       const data=await pair(p);assert.equal(data.mode,mode);assert.equal(data.playerSide,mode==='pvp'?null:'red');assert.equal(data.moves.length,0);
       if(mode==='experimental-b')await p.screenshot({path:path.join(out,label+'-export.png')});
@@ -99,16 +103,16 @@ try {
       assert.deepEqual(await p.evaluate(key=>({session:__chess.normalGameRecordSession,mode:__chess.mode,stored:localStorage.getItem(key),writes:exportQA.writes.filter(k=>k===key).length}),recordKey),before);
     });
     await check(`${label}: black-first nonstandard game and known player ownership`,async()=>{
-      const data=longGame(1,'black');await p.evaluate(d=>{__chess.setMode('hard');__chess.resetTo(d.initialPosition.board,'black');__chess.doMove(d.moves[0].from,d.moves[0].to);},data);await idle(p);
+      const data=longGame(1,'black');await p.evaluate(d=>{__chess.newGame();__chess.setMode('hard');__chess.resetTo(d.initialPosition.board,'black');__chess.doMove(d.moves[0].from,d.moves[0].to);},data);await idle(p);
       await openExport(p);const d=await pair(p);assert.equal(d.initialPosition.sideToMove,'black');assert.equal(d.playerSide,'red');await closeExport(p);
     });
     await check(`${label}: stable B AI Worker failure still permits confirmed timeline export`,async()=>{
-      await p.locator('#modeSel').selectOption('experimental-b');await p.evaluate(()=>{exportQA.failAI=true;__chess.doMove({r:3,c:4},{r:4,c:4});});
+      await chooseMode(p,'experimental-b');await p.evaluate(()=>{exportQA.failAI=true;__chess.doMove({r:3,c:4},{r:4,c:4});});
       await p.waitForFunction(()=>!document.querySelector('#btnRetryExperimental').hidden);await idle(p);await openExport(p);
       const d=await pair(p);assert.equal(d.mode,'experimental-b');assert.equal(d.status,'in-progress');assert.equal(d.moves.length,1);await closeExport(p);await p.evaluate(()=>exportQA.failAI=false);
     });
     for(const mode of ['hard','experimental-b'])await check(`${label}: completed ${mode}, storage failure retains memory export`,async()=>{
-      await p.evaluate(({d,mode})=>{__chess.setMode(mode);__chess.resetTo(d.initialPosition.board,d.initialPosition.sideToMove);exportQA.blockRecordStore=true;__chess.doMove(d.moves[0].from,d.moves[0].to);},{d:terminal(),mode});await idle(p);
+      await p.evaluate(({d,mode})=>{__chess.newGame();__chess.setMode(mode);__chess.resetTo(d.initialPosition.board,d.initialPosition.sideToMove);exportQA.blockRecordStore=true;__chess.doMove(d.moves[0].from,d.moves[0].to);},{d:terminal(),mode});await idle(p);
       await p.locator('#overlay').waitFor({state:'visible'});await openExport(p,'#btnGameExportEnd');const d=await pair(p);assert.equal(d.status,'completed');assert.deepEqual(d.result,terminal().result);assert.equal(d.mode,mode);await closeExport(p);
       await p.locator('#btnReviewGame').click();await p.locator('#btnGameReviewFirst').click();await openExport(p,'#btnGameReviewExport');const review=await pair(p);assert.equal(review.moves.length,1);assert.equal(review.playerSide,'red');await closeExport(p);
       await p.evaluate(()=>{__chess.exitGameRecordFlow();exportQA.blockRecordStore=false;__chess.newGame();});await idle(p);
@@ -116,7 +120,7 @@ try {
     await check(`${label}: old stored record exports whole game with null playerSide at earlier ply`,async()=>{
       const d=terminal('threefold-repetition');await p.evaluate(async d=>{const {createGameRecordStore}=await import('./game-record-store.js');createGameRecordStore({storage:localStorage}).saveGameRecord({schemaVersion:1,id:'synthetic-old-record',createdAt:d.exportedAt,completedAt:d.exportedAt,initialPosition:d.initialPosition,moves:d.moves,mode:'hard',result:d.result});__chess.enterGameRecordLibrary();__chess.openStoredGameReview('synthetic-old-record');},d);
       await p.locator('#btnGameReviewFirst').click();await openExport(p,'#btnGameReviewExport');const exported=await pair(p);assert.equal(exported.moves.length,8);assert.equal(exported.playerSide,null);await closeExport(p);
-      await p.evaluate(()=>{__chess.exitGameRecordFlow();__chess.setMode('pvp');__chess.newGame();});await idle(p);
+      await p.evaluate(()=>{__chess.exitGameRecordFlow();__chess.newGame();__chess.setMode('pvp');});await idle(p);
     });
     await check(`${label}: cancel, new-session invalidation and retained late callbacks`,async()=>{
       for(const action of ['cancel','new-game']){

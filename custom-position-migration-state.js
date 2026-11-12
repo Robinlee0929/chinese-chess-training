@@ -1,4 +1,4 @@
-import { validateCustomPositionEnvelope } from './custom-position-store.js?v=1ebb13d661';
+import { validateCustomPositionEnvelope } from './custom-position-store.js?v=7ba133c431';
 
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const uuid = value => { if (typeof value !== 'string' || !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(value)) fail('INVALID_MIGRATION_ID'); };

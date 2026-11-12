@@ -1,9 +1,9 @@
-import { createGameTimeline, replayGameTimeline, createSessionGameRecord, GameRecordValidationError } from '../game-record.js?v=1ebb13d661';
-import { validateCustomPlayPosition } from '../custom-position-play.js?v=1ebb13d661';
-import { checkTransferOutputSize as checkOutputSize, renderTransferJSON, renderTransferTXT } from './export-format.js?v=1ebb13d661';
-import { GAME_TRANSFER_FORMAT, GAME_TRANSFER_VERSION, GAME_TRANSFER_MAX_BYTES, GAME_TRANSFER_MAX_PLIES, GameTransferError, fail, deepFreeze } from './contract.js?v=1ebb13d661';
-import { parseStrictTransferJSON } from './strict-json.js?v=1ebb13d661';
-export { GAME_TRANSFER_FORMAT, GAME_TRANSFER_VERSION, GAME_TRANSFER_MAX_BYTES, GAME_TRANSFER_MAX_PLIES, GAME_TRANSFER_MAX_DEPTH, GAME_TRANSFER_TIMEOUT_MS, GameTransferError } from './contract.js?v=1ebb13d661';
+import { createGameTimeline, replayGameTimeline, createSessionGameRecord, GameRecordValidationError } from '../game-record.js?v=7ba133c431';
+import { validateCustomPlayPosition } from '../custom-position-play.js?v=7ba133c431';
+import { checkTransferOutputSize as checkOutputSize, renderTransferJSON, renderTransferTXT } from './export-format.js?v=7ba133c431';
+import { GAME_TRANSFER_FORMAT, GAME_TRANSFER_VERSION, GAME_TRANSFER_MAX_BYTES, GAME_TRANSFER_MAX_PLIES, GameTransferError, fail, deepFreeze } from './contract.js?v=7ba133c431';
+import { parseStrictTransferJSON } from './strict-json.js?v=7ba133c431';
+export { GAME_TRANSFER_FORMAT, GAME_TRANSFER_VERSION, GAME_TRANSFER_MAX_BYTES, GAME_TRANSFER_MAX_PLIES, GAME_TRANSFER_MAX_DEPTH, GAME_TRANSFER_TIMEOUT_MS, GameTransferError } from './contract.js?v=7ba133c431';
 
 const fields = ['format', 'schemaVersion', 'exportedAt', 'initialPosition', 'moves', 'mode', 'playerSide', 'status', 'result'];
 const modes = new Set(['easy', 'medium', 'hard', 'experimental-b', 'pvp']);

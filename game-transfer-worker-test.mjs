@@ -94,7 +94,7 @@ test('oversize input is rejected before Worker construction and source bytes are
 });
 test('actual Worker entry validates and serializes domain failures, rejecting unknown requests',()=>{
   const messages=[];
-  const source=readFileSync(new URL('./game-transfer/validation-worker.js',import.meta.url),'utf8').replace(/^import .*;\n/gm,'');
+  const source=readFileSync(new URL('./game-transfer/validation-worker.js',import.meta.url),'utf8').replace(/\r\n?/g,'\n').replace(/^import .*;\n/gm,'');
   const context=vm.createContext({parseGameTransfer,GameTransferError,self:{postMessage:m=>messages.push(structuredClone(m))}});
   vm.runInContext(source,context);
   context.self.onmessage({data:{kind:'normal-game',requestId:1,input:json}});assert.equal(messages.length,0);

@@ -463,6 +463,7 @@ function harness({
       'threefold-repetition': '三次重複局面',
       'mutual-perpetual-check': '雙方長將',
     }),
+    normalNewGameConfirmation: null,
     appEl: domNode(),
     gameRecordPanel: domNode(true),
     gameRecordLibraryView: domNode(),
