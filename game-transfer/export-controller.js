@@ -1,7 +1,7 @@
-import { createGameTransferValidationClient } from './worker-client.js?v=1ebb13d661';
-import { captureExportSource, exportSourceIsCurrent, exportReplayMatches } from './export-source.js?v=1ebb13d661';
-import { renderTransferJSON, renderTransferTXT } from './export-format.js?v=1ebb13d661';
-import { GameTransferError } from './contract.js?v=1ebb13d661';
+import { createGameTransferValidationClient } from './worker-client.js?v=7ba133c431';
+import { captureExportSource, exportSourceIsCurrent, exportReplayMatches } from './export-source.js?v=7ba133c431';
+import { renderTransferJSON, renderTransferTXT } from './export-format.js?v=7ba133c431';
+import { GameTransferError } from './contract.js?v=7ba133c431';
 
 export function gameExportErrorMessage(error) {
   // The existing rule engine has English diagnostic messages. Keep those out

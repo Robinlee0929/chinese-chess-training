@@ -1946,6 +1946,18 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
 
 #btnCustomPlay { margin-top: 10px; }
 
+#newGameConfirmDialog {
+  margin: auto; width: min(440px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px); overflow: auto; padding: 24px;
+  border: 1px solid #827052; border-radius: 14px;
+  background: #201e1b; color: #eee7dc;
+}
+#newGameConfirmDialog::backdrop { background: rgba(0, 0, 0, .65); }
+#newGameConfirmDialog h2 { font-size: 20px; margin-bottom: 12px; }
+#newGameConfirmDialog p { font-size: 14px; line-height: 1.7; }
+.new-game-confirm-actions { display: grid; gap: 10px; margin-top: 20px; }
+.new-game-confirm-actions button { min-height: 44px; font-size: 14px; white-space: normal; }
+
 /* Session-only opponent notice stays visible on desktop and small screens. */
 .experimental-notice { margin: 6px 12px; font-size: 12px; line-height: 1.5; color: #f2c14e; flex: none; }
 .experimental-notice[hidden], #btnRetryExperimental[hidden] { display: none; }

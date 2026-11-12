@@ -1,7 +1,7 @@
 import {
   GameRecordValidationError,
   createGameRecord,
-} from './game-record.js?v=1ebb13d661';
+} from './game-record.js?v=7ba133c431';
 
 export const GAME_RECORD_STORAGE_VERSION = 1;
 export const GAME_RECORD_STORAGE_KEY = 'chinese-chess-training:game-records:v1';

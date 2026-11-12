@@ -1,6 +1,6 @@
-import { name } from '../game.js?v=1ebb13d661';
-import { createGameImportController, gameImportErrorMessage } from './import-controller.js?v=1ebb13d661';
-export { selectImportedGameReviewPly, canContinueImportedGame, createImportedContinuationPosition, isImportedGameReview } from './imported-review.js?v=1ebb13d661';
+import { name } from '../game.js?v=7ba133c431';
+import { createGameImportController, gameImportErrorMessage } from './import-controller.js?v=7ba133c431';
+export { selectImportedGameReviewPly, canContinueImportedGame, createImportedContinuationPosition, isImportedGameReview } from './imported-review.js?v=7ba133c431';
 
 const modes = { easy: '簡單', medium: '中等', hard: '困難', 'experimental-b': '挑戰級（試玩）', pvp: '雙人對弈' };
 const reasons = { checkmate: '將死', stalemate: '困斃', 'perpetual-check': '長將判負', 'threefold-repetition': '三次重複局面', 'mutual-perpetual-check': '雙方長將' };

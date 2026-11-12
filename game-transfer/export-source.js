@@ -1,4 +1,4 @@
-import { GAME_TRANSFER_FORMAT, GAME_TRANSFER_VERSION, GAME_TRANSFER_MAX_PLIES, GameTransferError, deepFreeze } from './contract.js?v=1ebb13d661';
+import { GAME_TRANSFER_FORMAT, GAME_TRANSFER_VERSION, GAME_TRANSFER_MAX_PLIES, GameTransferError, deepFreeze } from './contract.js?v=7ba133c431';
 
 const reject = (message, code = 'EXPORT_SOURCE_UNAVAILABLE') => { throw new GameTransferError(code, message); };
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);

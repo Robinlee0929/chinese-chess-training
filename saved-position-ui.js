@@ -1,4 +1,4 @@
-import { createAsyncSavedPositionSession } from './saved-position-async-session.js?v=1ebb13d661';
+import { createAsyncSavedPositionSession } from './saved-position-async-session.js?v=7ba133c431';
 
 export function createSavedPositionUI({ document, window, repository, host }) {
   const el = id => document.getElementById(id);

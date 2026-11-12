@@ -162,17 +162,18 @@ test('black-side opening cannot be undone until the human has moved', () => {
   assert.match(functionSource('undo'), /turn === aiSide\(\)/u);
 });
 
-test('side changes restart cleanly while new games reconcile the current-side camera', () => {
+test('side changes request confirmation before mutation; accepted new games reconcile the camera', () => {
   const calls = [];
   const context = install('changeHumanSide', {
     normalGameActive: () => true,
     isAI: () => true,
     humanSide: RED,
-    newGame(options) { calls.push(['new', options.resetHumanSide]); },
+    document: { getElementById: id => ({ id }) },
+    requestNormalNewGame(settings, invoker) { calls.push([settings.mode, settings.humanSide, invoker.id]); return true; },
   });
   assert.equal(context.changeHumanSide(BLACK), true);
-  assert.equal(context.humanSide, BLACK);
-  assert.deepEqual(calls, [['new', false]]);
+  assert.equal(context.humanSide, RED);
+  assert.deepEqual(calls, [['medium', BLACK, 'humanSideBlack']]);
   assert.match(functionSource('newGame'), /if \(resetHumanSide\) humanSide = RED;/u);
   assert.match(functionSource('newGame'), /if \(reconcileHumanSideCamera\) showPlayerPerspective\(humanSide\);/u);
   assert.match(functionSource('showPlayerPerspective'), /side === BLACK \? 4 : 2/u);
@@ -180,10 +181,11 @@ test('side changes restart cleanly while new games reconcile the current-side ca
 });
 
 test('PSS-REV-01: the latest authoritative side owns the camera after rapid game resets', () => {
-  const context = installMany(['changeHumanSide', 'initializeNormalGamePosition', 'newGame'], {
+  const context = installMany(['commitNormalNewGame', 'initializeNormalGamePosition', 'newGame'], {
     normalGameActive: () => true,
     isAI: () => true,
     humanSide: BLACK,
+    modeSel: { value: 'medium' },
     tweens: [{ tag: 'camera', target: BLACK }],
     aiToken: 0,
     aiThinking: false,
@@ -221,16 +223,16 @@ test('PSS-REV-01: the latest authoritative side owns the camera after rapid game
     maybeAIMove() {},
   });
 
-  context.changeHumanSide(RED);
+  context.commitNormalNewGame({ mode: 'medium', humanSide: RED });
   context.newGame();
   assert.equal(context.humanSide, RED);
   assert.equal(context.turn, RED);
   assert.equal(context.history.length, 0);
   assert.deepEqual(context.tweens.map(({ target }) => target), [RED]);
 
-  context.changeHumanSide(BLACK);
-  context.changeHumanSide(RED);
-  context.changeHumanSide(BLACK);
+  context.commitNormalNewGame({ mode: 'medium', humanSide: BLACK });
+  context.commitNormalNewGame({ mode: 'medium', humanSide: RED });
+  context.commitNormalNewGame({ mode: 'medium', humanSide: BLACK });
   assert.deepEqual(context.tweens.map(({ target }) => target), [BLACK]);
 });
 

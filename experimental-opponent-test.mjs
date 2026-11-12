@@ -208,9 +208,11 @@ for (const fault of ['revision','board','session-replaced-during-validation']) t
 
 test('mode change rejects modal/non-game/unknown/unready input before any state mutation',()=>{
   let active=true,modal=false,available=true,starts=0;
-  const ctx=vm.createContext({mode:'hard',modeSel:{value:'hard'},normalGameRecordSession:{mode:'hard'},
+  const requested=[];
+  const ctx=vm.createContext({RED:'red',mode:'hard',modeSel:{value:'hard'},normalGameRecordSession:{mode:'hard'},
     normalGameActive:()=>active,document:{querySelector:()=>modal?{}:null},allowExperimentalOpponent:()=>available,
-    newGame(){starts++;ctx.normalGameRecordSession={mode:ctx.mode};}});
+    newGame(){starts++;ctx.normalGameRecordSession={mode:ctx.mode};},
+    requestNormalNewGame(settings){requested.push(settings);return true;}});
   vm.runInContext(functionSource('changeNormalGameMode'),ctx);
   for(const fault of ['modal','non-game','unknown','unready']){
     modal=fault==='modal';active=fault!=='non-game';available=fault!=='unready';
@@ -220,7 +222,8 @@ test('mode change rejects modal/non-game/unknown/unready input before any state 
   }
   active=true;modal=false;available=true;
   for(const mode of ['experimental-b','easy','medium','hard','pvp']){
-    assert.equal(ctx.changeNormalGameMode(mode),true);assert.equal(ctx.mode,ctx.normalGameRecordSession.mode);assert.equal(ctx.modeSel.value,mode);
+    assert.equal(ctx.changeNormalGameMode(mode),true);assert.equal(ctx.mode,'hard');assert.equal(ctx.modeSel.value,'hard');
+    assert.equal(requested.at(-1).mode,mode);assert.equal(requested.at(-1).humanSide,'red');
   }
-  assert.equal(starts,5);
+  assert.equal(starts,0);assert.equal(requested.length,5);
 });

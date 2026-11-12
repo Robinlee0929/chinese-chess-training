@@ -1,5 +1,5 @@
-import { createCustomGameRoot, createMutableCustomGamePosition, validateCustomPlayPosition } from './custom-position-play.js?v=1ebb13d661';
-import { customPositionErrorMessage } from './custom-position-coordinator.js?v=1ebb13d661';
+import { createCustomGameRoot, createMutableCustomGamePosition, validateCustomPlayPosition } from './custom-position-play.js?v=7ba133c431';
+import { customPositionErrorMessage } from './custom-position-coordinator.js?v=7ba133c431';
 
 // One dialog owns one operation generation and one originating game/editor.
 // Host callbacks keep the existing game/renderer lifecycle in main.js.

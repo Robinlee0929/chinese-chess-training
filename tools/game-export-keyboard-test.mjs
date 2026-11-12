@@ -149,14 +149,14 @@ try {
         await p.keyboard.press('Escape'); await closed(p); assert.deepEqual(await state(p), before);
       });
       await check('live-game export keyboard preserves Session and confirmed moves', async () => {
-        await p.evaluate(() => { __chess.exitGameRecordFlow(); __chess.setMode('pvp'); __chess.newGame(); __chess.doMove({ r: 3, c: 4 }, { r: 4, c: 4 }); }); await idle(p);
+        await p.evaluate(() => { __chess.exitGameRecordFlow(); __chess.newGame(); __chess.setMode('pvp'); __chess.doMove({ r: 3, c: 4 }, { r: 4, c: 4 }); }); await idle(p);
         await keyboardDialog(p, '#btnGameExport', 'live game');
         const before = await state(p); await toolbar(p, '#btnGameExport'); const document = await downloadPair(p);
         assert.equal(document.status, 'in-progress'); assert.equal(document.moves.length, 1); assert.deepEqual(await state(p), before);
         await p.keyboard.press('Escape'); await closed(p);
       });
       await check('completed-game export keyboard preserves terminal state and memory record', async () => {
-        await p.evaluate(d => { __chess.setMode('hard'); __chess.resetTo(d.initialPosition.board, d.initialPosition.sideToMove); __chess.doMove(d.moves[0].from, d.moves[0].to); }, terminal()); await idle(p);
+        await p.evaluate(d => { __chess.newGame(); __chess.setMode('hard'); __chess.resetTo(d.initialPosition.board, d.initialPosition.sideToMove); __chess.doMove(d.moves[0].from, d.moves[0].to); }, terminal()); await idle(p);
         await p.locator('#btnGameExportEnd').waitFor({ state: 'visible' });
         await keyboardDialog(p, '#btnGameExportEnd', 'completed game');
         const before = await state(p); await p.locator('#btnGameExportEnd').click(); const document = await downloadPair(p);
