@@ -19,6 +19,7 @@ function harness() {
     gameReviewSession: { sourceKind: 'completed', selectedPly: 3, record: { mode: 'hard' },
       snapshot: { board: initialBoard(), sideToMove: BLACK, terminal: null } },
     gameReviewContinuationSource: null,
+    hudMore: { classList: { contains: () => false } },
     document: { getElementById: node },
   });
   for (const name of ['renderGameReviewContinuation', 'openGameReviewContinuation', 'cancelGameReviewContinuation']) {

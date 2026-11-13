@@ -1,4 +1,4 @@
-import { deepFreeze, GAME_TRANSFER_MAX_PLIES } from './contract.js?v=7ba133c431';
+import { deepFreeze, GAME_TRANSFER_MAX_PLIES } from './contract.js?v=fb9fc70633';
 
 // Only the import controller supplies the frozen canonical Worker result.
 // Private provenance prevents forged/mutated review objects from authorizing continuation.

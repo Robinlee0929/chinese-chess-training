@@ -1,6 +1,6 @@
-import { GAME_TRANSFER_MAX_BYTES, GAME_TRANSFER_TIMEOUT_MS, GameTransferError } from './contract.js?v=7ba133c431';
-import { createGameTransferValidationClient } from './worker-client.js?v=7ba133c431';
-import { createImportedGameReview } from './imported-review.js?v=7ba133c431';
+import { GAME_TRANSFER_MAX_BYTES, GAME_TRANSFER_TIMEOUT_MS, GameTransferError } from './contract.js?v=fb9fc70633';
+import { createGameTransferValidationClient } from './worker-client.js?v=fb9fc70633';
+import { createImportedGameReview } from './imported-review.js?v=fb9fc70633';
 
 export function gameImportErrorMessage(error) {
   if (Number.isInteger(error?.ply) && error.ply > 0) return `第 ${error.ply} 著不合法，尚未載入棋譜。`;
