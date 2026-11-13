@@ -1856,6 +1856,16 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
     align-items: stretch;
     gap: 4px;
     min-width: 168px;
+    max-width: calc(100vw - 16px);
+    --hud-more-safe-top: env(safe-area-inset-top, 0px);
+    --hud-more-safe-bottom: env(safe-area-inset-bottom, 0px);
+    --hud-more-safe-left: env(safe-area-inset-left, 0px);
+    --hud-more-safe-right: env(safe-area-inset-right, 0px);
+    /* JS first bounds the fixed menu position, then its remaining visible height. */
+    max-height: calc(60dvh - max(8px, env(safe-area-inset-bottom)));
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    scroll-padding-block: 8px;
     padding: 8px;
     background: var(--panel);
     border: 1px solid var(--line);
@@ -1864,6 +1874,7 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
     z-index: 60;
   }
   #hudMore.open { display: flex; }
+  #hudMore > * { flex-shrink: 0; }
   #hudMore > button, #hudMore > #repoLink {
     width: 100%;
     justify-content: flex-start;

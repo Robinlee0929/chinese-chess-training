@@ -1,5 +1,5 @@
-import { GAME_TRANSFER_MAX_BYTES, GAME_TRANSFER_TIMEOUT_MS, GameTransferError } from './contract.js?v=7ba133c431';
-import { invalidWorkerResponse, validateWorkerMessage } from './worker-protocol.js?v=7ba133c431';
+import { GAME_TRANSFER_MAX_BYTES, GAME_TRANSFER_TIMEOUT_MS, GameTransferError } from './contract.js?v=fb9fc70633';
+import { invalidWorkerResponse, validateWorkerMessage } from './worker-protocol.js?v=fb9fc70633';
 
 // No parser/replay import here: a failed Worker must not fall back to the UI thread.
 export function createGameTransferValidationClient({
@@ -45,7 +45,7 @@ export function createGameTransferValidationClient({
       try {
         // The caller may reuse/mutate its byte buffer after validate() returns.
         const source = typeof input === 'string' ? input : new Uint8Array(input instanceof ArrayBuffer ? new Uint8Array(input) : input);
-        worker = new WorkerClass(new URL('./validation-worker.js?v=7ba133c431', import.meta.url), { type: 'module', name: 'game-transfer-validation' });
+        worker = new WorkerClass(new URL('./validation-worker.js?v=fb9fc70633', import.meta.url), { type: 'module', name: 'game-transfer-validation' });
         if (done) { worker.terminate(); return; }
         worker.onmessage = event => {
           if (done || active?.requestId !== requestId) return;

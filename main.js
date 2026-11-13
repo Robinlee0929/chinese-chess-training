@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 // Required for the default wood/grid texture as well as photo rendering.
 // Unlike the optional UI/store below, failure of this core dependency is fatal.
-import { createBoardSurface } from './board-appearance.js?v=7ba133c431';
+import { createBoardSurface } from './board-appearance.js?v=fb9fc70633';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
   normalizePieceGlyphOrientationMode,
@@ -17,21 +17,21 @@ import {
   ROWS, COLS, RED, BLACK,
   initialBoard, legalMoves, applyMove, inCheck,
   hasAnyLegalMove, name, notation, hashBoard, repetitionVerdict,
-} from './game.js?v=7ba133c431';
+} from './game.js?v=fb9fc70633';
 import {
   validateCustomPlayPosition, createCustomGameRoot, createMutableCustomGamePosition,
-} from './custom-position-play.js?v=7ba133c431';
-import { createSessionGameRecord as createGameRecord, replaySessionGameRecord } from './game-record.js?v=7ba133c431';
-import { createCustomPositionRepository } from './custom-position-repository.js?v=7ba133c431';
-import { createSavedPositionUI } from './saved-position-ui.js?v=7ba133c431';
-import { attachTerminalOverlayFocus } from './terminal-overlay-focus.js?v=7ba133c431';
-import { createNewGameConfirmation } from './new-game-confirmation.js?v=7ba133c431';
+} from './custom-position-play.js?v=fb9fc70633';
+import { createSessionGameRecord as createGameRecord, replaySessionGameRecord } from './game-record.js?v=fb9fc70633';
+import { createCustomPositionRepository } from './custom-position-repository.js?v=fb9fc70633';
+import { createSavedPositionUI } from './saved-position-ui.js?v=fb9fc70633';
+import { attachTerminalOverlayFocus } from './terminal-overlay-focus.js?v=fb9fc70633';
+import { createNewGameConfirmation } from './new-game-confirmation.js?v=fb9fc70633';
 import {
   canStartGameFromReview, createReviewContinuationPosition,
   defaultContinuationDifficulty, defaultContinuationHumanSide,
   validateRuntimeContinuationConfiguration as validateContinuationConfiguration,
-} from './game-review-continuation.js?v=7ba133c431';
-import { createGameRecordStore } from './game-record-store.js?v=7ba133c431';
+} from './game-review-continuation.js?v=fb9fc70633';
+import { createGameRecordStore } from './game-record-store.js?v=fb9fc70633';
 import {
   createGameReview,
   createGameRecordLibraryView,
@@ -40,15 +40,15 @@ import {
   nextGameReviewPly,
   lastGameReviewPly,
   selectGameReviewPly,
-} from './game-review.js?v=7ba133c431';
+} from './game-review.js?v=fb9fc70633';
 import {
   createGameReviewAiState,
   invalidateGameReviewAiState,
   beginGameReviewAiRequest,
   settleGameReviewAiResponse,
-} from './game-review-ai.js?v=7ba133c431';
-import { createGameReviewEvidence } from './game-review-evidence.js?v=7ba133c431';
-import { deriveGameReviewTeaching } from './game-review-teaching.js?v=7ba133c431';
+} from './game-review-ai.js?v=fb9fc70633';
+import { createGameReviewEvidence } from './game-review-evidence.js?v=fb9fc70633';
+import { deriveGameReviewTeaching } from './game-review-teaching.js?v=fb9fc70633';
 import {
   createGameTeachingModeState,
   setGameTeachingModeEnabled,
@@ -57,7 +57,7 @@ import {
   settleGameTeachingModeAnalysis,
   gameTeachingModeMatchesHistory,
   shouldScheduleGameTeachingMode,
-} from './game-teaching-mode.js?v=7ba133c431';
+} from './game-teaching-mode.js?v=fb9fc70633';
 import {
   createDisabledCoachState,
   createIdleCoachState,
@@ -66,28 +66,28 @@ import {
   settleCoachResponse,
   invalidateCoachState,
   selectCoachModelProfile,
-} from './game-review-coach.js?v=7ba133c431';
+} from './game-review-coach.js?v=fb9fc70633';
 import {
   readCoachModelProfilePreference,
   writeCoachModelProfilePreference,
-} from './coach-model-profile-preference.js?v=7ba133c431';
+} from './coach-model-profile-preference.js?v=fb9fc70633';
 import {
   readInstalledReviewCoachStagingCapability,
   isReviewCoachProfileAvailable,
-} from './review-coach-connectivity.js?v=7ba133c431';
+} from './review-coach-connectivity.js?v=fb9fc70633';
 import {
   createGameAnalysis,
   gameAnalysisLegalMoves,
   applyGameAnalysisMove,
   undoGameAnalysisMove,
   resetGameAnalysis,
-} from './game-analysis.js?v=7ba133c431';
-import { createGameReviewPuzzleHandoff } from './game-review-puzzle-handoff.js?v=7ba133c431';
+} from './game-analysis.js?v=fb9fc70633';
+import { createGameReviewPuzzleHandoff } from './game-review-puzzle-handoff.js?v=fb9fc70633';
 import {
   createGameLiveReviewHandoff,
   consumeGameLiveReviewHandoff,
   createGameLiveReviewAnalysis,
-} from './game-live-review-handoff.js?v=7ba133c431';
+} from './game-live-review-handoff.js?v=fb9fc70633';
 import {
   PuzzleEditorError,
   createEditorState,
@@ -97,7 +97,7 @@ import {
   setEditorSideToMove,
   confirmAuthoredPosition,
   exportAuthoredPosition,
-} from './puzzle-editor.js?v=7ba133c431';
+} from './puzzle-editor.js?v=fb9fc70633';
 import {
   PuzzleRecorderError,
   createRecorder,
@@ -107,7 +107,7 @@ import {
   finishRecording,
   exportRecorderBoard,
   exportRecordedResult,
-} from './puzzle-recorder.js?v=7ba133c431';
+} from './puzzle-recorder.js?v=fb9fc70633';
 import {
   PuzzlePracticeError,
   PRACTICE_HINT_MAX_LEVEL,
@@ -117,12 +117,12 @@ import {
   derivePracticeHint,
   restartPractice,
   exportPracticeSnapshot,
-} from './puzzle-practice.js?v=7ba133c431';
-import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=7ba133c431';
+} from './puzzle-practice.js?v=fb9fc70633';
+import { PuzzleStoreError, createPuzzleStore } from './puzzle-store.js?v=fb9fc70633';
 import {
   PracticeAnalyticsError,
   createPracticeAnalyticsStore,
-} from './puzzle-analytics.js?v=7ba133c431';
+} from './puzzle-analytics.js?v=fb9fc70633';
 import {
   PUZZLE_TRANSFER_FORMAT,
   PUZZLE_TRANSFER_SCHEMA_VERSION,
@@ -130,7 +130,7 @@ import {
   PuzzleTransferError,
   serializePuzzleExport,
   parsePuzzleImport,
-} from './puzzle-transfer.js?v=7ba133c431';
+} from './puzzle-transfer.js?v=fb9fc70633';
 import {
   PHOTO_MAX_ZOOM,
   PHOTO_MIN_ZOOM,
@@ -144,7 +144,7 @@ import {
   validatePhotoMetadata,
   zoomPhotoIn,
   zoomPhotoOut,
-} from './puzzle-photo.js?v=7ba133c431';
+} from './puzzle-photo.js?v=fb9fc70633';
 import {
   CALIBRATION_CANONICAL_HEIGHT,
   CALIBRATION_CANONICAL_WIDTH,
@@ -160,7 +160,7 @@ import {
   setCorner,
   transformPoint,
   validateQuadrilateral,
-} from './puzzle-photo-calibration.js?v=7ba133c431';
+} from './puzzle-photo-calibration.js?v=fb9fc70633';
 import {
   PuzzlePhotoRecognitionError,
   RECOGNITION_OCCUPANCY_EMPTY,
@@ -172,7 +172,7 @@ import {
   isRecognitionTokenCurrent,
   recognizeIntersections,
   selectionKey,
-} from './puzzle-photo-recognition.js?v=7ba133c431';
+} from './puzzle-photo-recognition.js?v=fb9fc70633';
 import {
   addTemplate,
   createPieceTypeSessionToken,
@@ -182,13 +182,13 @@ import {
   normalizePiecePatch,
   removeTemplatesForSource,
   suggestUnresolvedPieceTypes,
-} from './puzzle-photo-piece-types.js?v=7ba133c431';
+} from './puzzle-photo-piece-types.js?v=fb9fc70633';
 import {
   UNREVIEWED, PuzzlePhotoReviewError,
   createReviewState, buildReviewQueue, selectReviewCandidate, confirmEmpty, confirmPiece,
   nextCandidate, previousCandidate, nextUnresolved, acceptHighConfidenceEmpty,
   undoBulkEmpty, resetReview, rescanReview, reviewProgress, confirmedSelections, buildReviewedBoard,
-} from './puzzle-photo-review.js?v=7ba133c431';
+} from './puzzle-photo-review.js?v=fb9fc70633';
 
 // ---------------- 常數 ----------------
 const CELL = 1;
@@ -840,7 +840,7 @@ function startAIFallback(request) {
   if (!currentAIRequest(request) || request.settled || request.fallbackStarted) return;
   if (request.payload.level === 'experimental-b') { failExperimentalAI(request); return; }
   request.fallbackStarted = true;
-  (aiModule ??= import('./ai.js?v=7ba133c431')).then(({ findBestMove }) => {
+  (aiModule ??= import('./ai.js?v=fb9fc70633')).then(({ findBestMove }) => {
     if (!currentAIRequest(request) || request.settled) return;
     request.fallbackTimer = setTimeout(() => {
       if (!currentAIRequest(request) || request.settled) return;
@@ -869,7 +869,7 @@ function requestAIMove() {
     submitted: false, fallbackStarted: false, worker: null, moveTimer: null, fallbackTimer: null };
   aiRequest = request;
   try {
-    aiWorker ??= new Worker(new URL('./ai-worker.js?v=7ba133c431', import.meta.url), { type: 'module' });
+    aiWorker ??= new Worker(new URL('./ai-worker.js?v=fb9fc70633', import.meta.url), { type: 'module' });
     const worker = aiWorker;
     request.worker = worker;
     worker.onmessage = (event) => {
@@ -1074,7 +1074,7 @@ function requestGameTeachingModeAnalysis(source) {
   renderGameTeachingMode();
   let worker;
   try {
-    worker = new Worker(new URL('./ai-worker.js?v=7ba133c431', import.meta.url), { type: 'module' });
+    worker = new Worker(new URL('./ai-worker.js?v=fb9fc70633', import.meta.url), { type: 'module' });
     gameTeachingModeWorker = worker;
     worker.onmessage = (event) => handleGameTeachingModeResponse(worker, event.data);
     worker.onerror = (event) => {
@@ -3237,7 +3237,7 @@ function handleGameReviewAiResponse(worker, response) {
 }
 
 function createGameReviewAiWorker() {
-  return new Worker(new URL('./ai-worker.js?v=7ba133c431', import.meta.url), { type: 'module' });
+  return new Worker(new URL('./ai-worker.js?v=fb9fc70633', import.meta.url), { type: 'module' });
 }
 
 function requestGameReviewAiCandidate() {
@@ -6383,15 +6383,89 @@ document.getElementById('btnSound').addEventListener('click', (e) => {
 const hudMore = document.getElementById('hudMore');
 const btnMore = document.getElementById('btnMore');
 const btnHelp = document.getElementById('btnHelp');
+let hudMenuHadFocus = false;
+let hudMenuBoundsFrame = 0;
+let hudMenuViewport = null;
+const hudMenuObserver = new ResizeObserver(scheduleHudMenuBounds);
+document.addEventListener('focusin', event => { hudMenuHadFocus = hudMore.contains(event.target); });
 function closeHudMenu() {
+  const restoreFocus = hudMore.classList.contains('open') && hudMore.contains(document.activeElement);
   hudMore.classList.remove('open');
   btnMore.setAttribute('aria-expanded', 'false');
+  cancelAnimationFrame(hudMenuBoundsFrame);
+  hudMenuBoundsFrame = 0;
+  window.removeEventListener('resize', scheduleHudMenuBounds);
+  hudMenuViewport?.removeEventListener('resize', scheduleHudMenuBounds);
+  hudMenuViewport?.removeEventListener('scroll', scheduleHudMenuBounds);
+  hudMenuViewport = null;
+  hudMenuObserver.disconnect();
+  for (const property of ['position', 'top', 'right', 'min-width', 'max-width', 'max-height']) {
+    hudMore.style.removeProperty(property);
+  }
+  if (restoreFocus && btnMore.getClientRects().length) btnMore.focus({ preventScroll: true });
 }
+function scheduleHudMenuBounds() {
+  if (!hudMore.classList.contains('open') || hudMenuBoundsFrame) return;
+  hudMenuBoundsFrame = requestAnimationFrame(() => {
+    hudMenuBoundsFrame = 0;
+    updateHudMenuBounds();
+  });
+}
+function updateHudMenuBounds() {
+  if (!btnMore.getClientRects().length) { closeHudMenu(); return; }
+  if (!hudMore.classList.contains('open')) {
+    // A desktop toolbar item may become hidden when entering the mobile layout.
+    if (hudMore.contains(document.activeElement)
+      || (hudMenuHadFocus && document.activeElement === document.body)) btnMore.focus({ preventScroll: true });
+    return;
+  }
+  const viewport = window.visualViewport;
+  const style = getComputedStyle(hudMore);
+  const gap = side => Math.max(8, parseFloat(style.getPropertyValue(`--hud-more-safe-${side}`)) || 0);
+  // VisualViewport offsets/size and client rects are layout CSS pixels. Do not
+  // multiply by scale or subtract offsetTop again when placing this fixed box.
+  const top = (viewport?.offsetTop ?? 0) + gap('top');
+  const bottom = (viewport ? viewport.offsetTop + viewport.height : window.innerHeight) - gap('bottom');
+  const left = (viewport?.offsetLeft ?? 0) + gap('left');
+  const right = (viewport ? viewport.offsetLeft + viewport.width : window.innerWidth) - gap('right');
+  const anchor = document.getElementById('hud').getBoundingClientRect();
+  const trigger = btnMore.getBoundingClientRect();
+  const frame = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)
+    + parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
+  const minimumHeight = frame + Math.max(...Array.from(hudMore.querySelectorAll('button, select, a'),
+    item => item.getBoundingClientRect().height));
+  let menuTop = Math.max(top, anchor.bottom + 10);
+  let menuBottom = bottom;
+  if (menuBottom - menuTop < minimumHeight) {
+    // On a very short screen, use space above the trigger so it can still close
+    // the menu. If the anchor is outside the visible area, pin to its top edge.
+    menuTop = top;
+    if (trigger.top - 10 - top >= minimumHeight && trigger.top < bottom) menuBottom = trigger.top - 10;
+  }
+  const availableWidth = right - left;
+  if (menuBottom - menuTop < minimumHeight || availableWidth <= 0) { closeHudMenu(); return; }
+  const rightEdge = Math.min(right, Math.max(anchor.right, left + Math.min(168, availableWidth)));
+  Object.assign(hudMore.style, {
+    position: 'fixed', top: `${menuTop}px`, right: `${window.innerWidth - rightEdge}px`,
+    minWidth: `${Math.min(168, rightEdge - left)}px`, maxWidth: `${rightEdge - left}px`,
+    maxHeight: `${menuBottom - menuTop}px`,
+  });
+  // Resizing does not refocus an already focused item; keep it inside the scroller.
+  if (hudMore.contains(document.activeElement)) {
+    const item = document.activeElement.getBoundingClientRect(), menu = hudMore.getBoundingClientRect();
+    if (item.bottom > menu.bottom - 8) hudMore.scrollTop += item.bottom - menu.bottom + 8;
+    else if (item.top < menu.top + 8) hudMore.scrollTop -= menu.top + 8 - item.top;
+  }
+}
+// Only the breakpoint watcher remains active while closed, to rescue focus
+// when desktop toolbar controls become hidden in the mobile layout.
+window.matchMedia('(max-width: 900px)').addEventListener('change', updateHudMenuBounds);
+window.addEventListener('pagehide', closeHudMenu);
 async function loadGameExportUI() {
   if (!gameExportPageActive || gameExportUI || document.getElementById('gameExportDialog')?.dataset.gameExportUi !== '1') return;
   const generation = ++gameExportLoadGeneration;
   try {
-    const { createGameExportUI } = await import('./game-transfer/export-ui.js?v=7ba133c431');
+    const { createGameExportUI } = await import('./game-transfer/export-ui.js?v=fb9fc70633');
     if (!gameExportPageActive || generation !== gameExportLoadGeneration) return;
     gameExportUI = createGameExportUI({ readSource: readGameExportSource, closeMenu: closeHudMenu, notify: toast });
   } catch (error) {
@@ -6402,7 +6476,7 @@ async function loadGameImportUI() {
   if (!gameExportPageActive || gameImportUI || document.getElementById('gameImportDialog')?.dataset.gameImportUi !== '1') return;
   const generation = ++gameImportLoadGeneration;
   try {
-    const module = await import('./game-transfer/import-ui.js?v=7ba133c431');
+    const module = await import('./game-transfer/import-ui.js?v=fb9fc70633');
     if (!gameExportPageActive || generation !== gameImportLoadGeneration) return;
     gameImportModule = module;
     gameImportUI = module.createGameImportUI({
@@ -6440,7 +6514,7 @@ async function loadBoardAppearanceUI() {
   try {
     // Do not await this from core startup. A missing UI/store or invalid module
     // must leave the default board and all game controls working.
-    const { createBoardAppearanceUI } = await import('./board-appearance-ui.js?v=7ba133c431');
+    const { createBoardAppearanceUI } = await import('./board-appearance-ui.js?v=fb9fc70633');
     if (!current()) return;
     boardAppearanceUI = createBoardAppearanceUI({
       surface: boardSurface,
@@ -6467,10 +6541,18 @@ window.addEventListener('pageshow', event => {
   if (event.persisted && !boardAppearanceUI) void loadBoardAppearanceUI();
 });
 btnMore.addEventListener('click', () => {
-  const open = hudMore.classList.toggle('open');
-  btnMore.setAttribute('aria-expanded', String(open));
+  if (hudMore.classList.contains('open')) { closeHudMenu(); return; }
+  hudMore.classList.add('open');
+  btnMore.setAttribute('aria-expanded', 'true');
+  window.addEventListener('resize', scheduleHudMenuBounds);
+  hudMenuViewport = window.visualViewport;
+  hudMenuViewport?.addEventListener('resize', scheduleHudMenuBounds);
+  hudMenuViewport?.addEventListener('scroll', scheduleHudMenuBounds);
+  hudMenuObserver.observe(document.getElementById('hud'));
+  updateHudMenuBounds();
 });
 document.addEventListener('pointerdown', (e) => {
+  if (!hudMore.contains(e.target)) hudMenuHadFocus = false;
   if (hudMore.classList.contains('open') && !hudMore.contains(e.target) && !btnMore.contains(e.target)) closeHudMenu();
 });
 document.addEventListener('keydown', (e) => {
@@ -6483,6 +6565,12 @@ document.addEventListener('keydown', (e) => {
     || document.getElementById('savedPositionsDialog').open
     || document.getElementById('customPlayDialog').open
     || document.getElementById('customRematchDialog').open) return;
+  if (hudMore.classList.contains('open')) {
+    // A native select picker consumes its own Escape; a bubbled Escape closes the menu.
+    // Other keys keep their native defaults without reaching background review shortcuts.
+    if (e.key === 'Escape') { e.preventDefault(); closeHudMenu(); }
+    return; // Menu navigation must not move or exit a background review.
+  }
   if (e.key === 'Escape') {
     if (appState === APP_STATE.GAME_ANALYSIS) returnToGameReview();
     else if (appState === APP_STATE.GAME_REVIEW) exitGameReview();
