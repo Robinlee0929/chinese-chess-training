@@ -1,4 +1,4 @@
-import { initialBoard, hashBoard, RED } from './game.js?v=fb9fc70633';
+import { initialBoard, hashBoard, RED } from './game.js?v=151972aca4';
 
 const standardBoard = JSON.stringify(initialBoard());
 const standardHash = hashBoard(initialBoard());
