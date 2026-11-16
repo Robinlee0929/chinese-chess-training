@@ -69,7 +69,7 @@
   "isBasedOn": "https://github.com/doggy8088/chinese-chess"
 }
 </script>
-<link rel="stylesheet" href="./css/style.css?v=fb9fc70633">
+<link rel="stylesheet" href="./css/style.css?v=151972aca4">
 <script type="importmap">
 {
   "imports": {
@@ -115,7 +115,7 @@
         <button id="btnGameRecords" type="button" aria-pressed="false">對局紀錄</button>
         <button id="btnTeachingMode" type="button" aria-pressed="false"
           aria-controls="gameTeachingCard">教學模式：關</button>
-        <button id="btnHelp" type="button" aria-pressed="false">玩法說明</button>
+        <button id="btnHelp" type="button" aria-haspopup="dialog" aria-controls="quickStartDialog" aria-expanded="false">玩法說明</button>
         <button id="btnSound" type="button" aria-pressed="true">音效：開</button>
         <button id="btnView" type="button" title="循環切換：紅右黑左 → 紅左黑右 → 紅方在下 → 俯視 → 黑方在下">視角</button>
         <label class="glyph-orientation-setting" for="pieceGlyphOrientationMode">
@@ -146,10 +146,8 @@
         <div id="capBlack" class="chips"></div>
       </section>
       <div class="help">
-        <p>上方選單可選擇 AI 難度（簡單／中等／困難）或雙人對弈，切換即開新局。</p>
-        <p>可選擇執紅或執黑，依目前局面的輪走方行棋；若輪到 AI 方，AI 會先行。悔棋會連 AI 的回應一併退回。</p>
-        <p>點擊己方棋子選中（亮起走法提示），再點擊目標交叉點移動；落到敵子上即為吃子。</p>
-        <p>拖曳空白處旋轉視角，滾輪 / 雙指縮放；按「固定視角」會把鏡頭凍結在當下的視角，畫面就不會再晃動。</p>
+        <p>第一次玩？學生與老師都可以從這裡開始。</p>
+        <button id="btnLeftHelp" type="button" aria-haspopup="dialog" aria-controls="quickStartDialog" aria-expanded="false">玩法說明</button>
       </div>
       <footer class="copyright">
         原作 © 2026 <a href="https://www.facebook.com/will.fans/" target="_blank" rel="noopener">Will 保哥</a><br>
@@ -849,9 +847,73 @@
       <button id="boardAppearanceRetry" type="button" hidden>重試保存</button>
     </div>
   </dialog>
+  <dialog id="quickStartDialog" aria-labelledby="quickStartHeading">
+    <div class="quick-start-heading">
+      <h2 id="quickStartHeading" tabindex="-1">玩法說明</h2>
+      <button id="quickStartClose" type="button">關閉說明</button>
+    </div>
+    <div class="quick-start-roles" role="group" aria-label="選擇快速開始">
+      <button id="quickStartStudent" type="button" aria-pressed="true" aria-controls="studentQuickStart">學生快速開始</button>
+      <button id="quickStartTeacher" type="button" aria-pressed="false" aria-controls="teacherQuickStart">老師快速開始</button>
+    </div>
+    <div id="quickStartBody" tabindex="0" role="region" aria-label="快速開始與保存提醒">
+      <p class="quick-start-intro">一般對弈是下棋；殺局練習是解題；複盤是回看棋譜。</p>
+      <section id="studentQuickStart" aria-labelledby="studentQuickStartHeading">
+        <h3 id="studentQuickStartHeading">學生：開始玩</h3>
+        <h4>一般對弈</h4>
+        <ol>
+          <li>在上方「對弈模式」選「人機・簡單」，再選「紅方」或「黑方」。想和同學下棋就選「雙人對弈」。標準開局紅方先走；輪到電腦時，等它走完。</li>
+          <li>點一下自己的棋子，再點亮起提示的目標位置。再點同一顆棋子可取消選取。</li>
+          <li>想重走就按「悔棋」。人機對弈會連電腦的回應一起退回；雙人對弈退一著。</li>
+          <li>想看走棋提示，在「⋯ 更多設定」點「教學模式：關」開啟。提示不會暫停棋局，也不一定每步都有。</li>
+        </ol>
+        <h4>殺局練習：解老師的題目</h4>
+        <p>點「我的殺局」→「匯入 JSON」，選老師給的<strong>殺局 JSON</strong> →「確認匯入」。點題目的「檢視」→「開始練習」；卡住時可按「提示」。這裡只練習老師錄好的那一條答案。</p>
+        <h4>保存棋譜，再回看</h4>
+        <ol>
+          <li>等電腦和棋子走完，點「⋯ 更多設定」→「匯出棋譜」→「可匯入棋譜 JSON」。保留下載的檔案，也可以交給老師。</li>
+          <li>回看<strong>完整對局 JSON</strong>：點「⋯ 更多設定」→「對局紀錄」→「匯入棋譜 JSON」，選檔並檢查預覽，再按「開始複盤」。按「上一著」／「下一著」逐步看。</li>
+          <li>想從其中一步再下，選還沒結束的局面，按「從此局面對弈」，選難度、棋色，再按「開始對弈」。這會另開一盤，原棋譜不變。</li>
+        </ol>
+      </section>
+      <section id="teacherQuickStart" aria-labelledby="teacherQuickStartHeading" hidden>
+        <h3 id="teacherQuickStartHeading">老師：出題與講解</h3>
+        <ol>
+          <li>點「建立殺局」。需要保留目前對局時，請先匯出棋譜。</li>
+          <li>選紅／黑棋子，再點棋盤交叉點擺放；可用「移動棋子」、「刪除棋子」或「清空棋盤」調整。選「紅方先行」或「黑方先行」。</li>
+          <li>按「確認局面」。若有錯誤提示，先修正；雙方各須有一個將／帥。</li>
+          <li>按「開始錄製答案」，依序操作雙方走出合法解答。可用「退一步」修正；最後必須將死，再按「完成答案」。</li>
+          <li>填「題目名稱」，按「儲存題目」。到「我的殺局」按「匯出此題」；若看到題目列表，先按題目的「檢視」。也可用「匯出全部」備份題庫。</li>
+          <li>把下載的殺局 JSON 交給學生。請學生在「我的殺局」→「匯入 JSON」→「確認匯入」，再「檢視」→「開始練習」。</li>
+          <li>收到學生的完整對局 JSON，點「⋯ 更多設定」→「對局紀錄」→「匯入棋譜 JSON」。選檔、確認預覽，按「開始複盤」，用「上一著」／「下一著」講解。</li>
+          <li>在還沒終局的複盤位置按「從此局面對弈」，選難度與棋色，再按「開始對弈」。會取代目前棋局；需保留時先取消並匯出。</li>
+        </ol>
+        <p class="quick-start-note">殺局練習只驗證已錄製的一條解答路線，不會判斷其他解法。複盤中的 AI 候選不保證最佳著。本站目前沒有線上派發作業、帳號或班級管理。</p>
+      </section>
+      <p class="quick-start-warning"><strong>換局前先保存：</strong>需要保留進度時先匯出棋譜。換模式、棋色或按「新對局」（手機顯示「新局」）時，有進度會先確認；按「取消，繼續這盤」可保留原局。確認視窗不會自動備份。</p>
+      <details id="quickStartFiles">
+        <summary>檔案與保存提醒</summary>
+        <p>JSON 是可讓網站重新匯入的檔案；題目和完整對局有不同的入口。</p>
+        <dl>
+          <dt>殺局 JSON → 我的殺局</dt><dd>備份與分享題目，用「匯入 JSON」載入；不是完整對局棋譜。</dd>
+          <dt>完整對局 JSON → 對局紀錄</dt><dd>保存對局，用「匯入棋譜 JSON」載入並複盤。</dd>
+          <dt>TXT → 只能閱讀</dt><dd>「文字棋譜 TXT」供人閱讀，不能當成完整對局 JSON 匯入。</dd>
+          <dt>我的局面 → 保存指定棋面</dt><dd>不是完整對局棋譜，不包含之前的走棋歷史；目前沒有 JSON 備份功能。</dd>
+          <dt>棋盤背景照片 → 獨立保存</dt><dd>「棋盤外觀」的照片不包含在棋譜 JSON。勾選「在此裝置記住照片」才會嘗試保存；請確認畫面的保存結果。</dd>
+        </dl>
+        <ul>
+          <li>未匯出的進行中棋局，不保證重新整理後保留。</li>
+          <li>匯入的完整棋譜只在當前分頁暫存，重新整理就會消失，請保留原 JSON 檔案。</li>
+          <li>挑戰級（試玩）的完整棋譜不永久儲存，必須手動匯出。</li>
+          <li>本機儲存不是雲端同步。清除網站資料可能造成題目、局面、對局紀錄和已記住的照片遺失。</li>
+        </ul>
+      </details>
+      <p class="quick-start-note">桌面版的次要按鈕直接顯示在上方。想讓棋盤不晃動，可按棋盤旁的「固定視角：關」；再按一次解除。</p>
+    </div>
+  </dialog>
   <div id="toast" class="hidden" role="status"></div>
 </div>
 
-<script type="module" src="./main.js?v=fb9fc70633"></script>
+<script type="module" src="./main.js?v=151972aca4"></script>
 </body>
 </html>

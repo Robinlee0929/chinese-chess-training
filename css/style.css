@@ -267,8 +267,8 @@ button:disabled { opacity: 0.45; cursor: default; }
 /* 「更多」選單按鈕：僅小螢幕顯示；#hudMore 桌面版攤平成一般按鈕列 */
 #btnMore { display: none; font-size: 17px; line-height: 1; letter-spacing: 0; padding: 7px 12px; }
 #hudMore { display: contents; }
-/* 玩法說明僅出現在小螢幕選單（桌面版左欄本來就有說明） */
-#btnHelp { display: none; }
+/* Keep Help available while the desktop sidebar is showing an editor or replay. */
+#btnHelp { display: inline-flex; }
 /* 「新對局」按鈕在小螢幕改用短標籤 */
 .t-short { display: none; }
 
@@ -378,6 +378,42 @@ aside h3 {
 
 .help { color: var(--muted); font-size: 12px; line-height: 1.75; }
 .help p { margin-bottom: 4px; }
+
+/* Read-only quick start; only the body scrolls so Close and role choices stay reachable. */
+#quickStartDialog {
+  width: min(640px, calc(100% - 24px));
+  max-width: none;
+  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--gold);
+  border-radius: 14px;
+  background: var(--panel);
+  color: var(--text);
+  overflow: hidden;
+  font-size: 15px;
+  line-height: 1.7;
+}
+#quickStartDialog[open] { display: flex; flex-direction: column; }
+#quickStartDialog::backdrop { background: rgba(0, 0, 0, .65); }
+.quick-start-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 14px; flex: none; }
+.quick-start-heading h2 { font-size: 19px; }
+.quick-start-roles { display: flex; gap: 8px; padding: 0 14px 10px; flex: none; }
+.quick-start-roles button { flex: 1; white-space: normal; }
+#quickStartDialog button, #quickStartDialog summary { min-height: 44px; font-size: 14px; }
+.quick-start-roles button[aria-pressed="true"] { color: var(--bg); background: var(--gold); border-color: var(--gold); }
+#quickStartBody { overflow-y: auto; overscroll-behavior: contain; min-height: 0; padding: 0 16px 16px; overflow-wrap: anywhere; }
+#quickStartBody h3 { font-size: 18px; margin: 12px 0 8px; }
+#quickStartBody h4 { font-size: 16px; margin: 12px 0 4px; }
+#quickStartBody ol, #quickStartBody ul { padding-left: 1.5em; }
+#quickStartBody li, #quickStartBody p, #quickStartBody dd { margin-bottom: 10px; }
+#quickStartBody dt { font-weight: bold; color: var(--gold); }
+.quick-start-intro, .quick-start-warning { padding: 10px; background: var(--panel2); border-radius: 8px; }
+.quick-start-warning { margin-top: 16px; border-left: 3px solid var(--gold); }
+#quickStartFiles { margin: 12px 0; border-block: 1px solid var(--line); }
+#quickStartFiles summary { cursor: pointer; padding: 10px 0; color: var(--gold); font-weight: bold; }
+#quickStartDialog :focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 
 /* ---------- 殺局局面編輯器 ---------- */
 #editorPanel {
@@ -1921,21 +1957,6 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
   .chips em { font-size: 12px; }
   .help { display: none; }
   .copyright { display: none; }
-  /* 從「⋯ → 玩法說明」展開成浮動說明面板 */
-  #left.show-help {
-    pointer-events: auto;
-    flex-direction: column;
-    background: rgba(23, 19, 16, 0.96);
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    padding: 12px 14px;
-    max-height: 48dvh;
-    overflow-y: auto;
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-  }
-  #left.show-help .tray { pointer-events: auto; }
-  #left.show-help .help { display: block; }
 
   #checkBanner { font-size: 54px; letter-spacing: 10px; padding-left: 10px; }
 }
