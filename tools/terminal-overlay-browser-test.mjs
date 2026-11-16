@@ -76,7 +76,51 @@ try{for(const[label,viewport]of[['desktop',{width:1440,height:1000}],['mobile',{
   await challenge('seed-97');const next=await state();await page.evaluate(()=>{__terminalQA.replies.splice(0).forEach(fn=>fn());__terminalQA.timers.forEach(t=>t.invoke());});assert.deepEqual(await state(),next);assert.equal(await page.locator('#overlay').isVisible(),false);await mesh();
   // Exercise a challenge directly from the new terminal manager entrance, then Again.
   await square(6,2,true);await square(6,3);await page.locator('#overlay').waitFor({state:'visible'});const finished=await records();await challenge('seed-96');assert.equal(await page.evaluate(()=>document.getElementById('overlay').contains(document.activeElement)),false);assert.equal(await records(),finished);assert.equal(await page.evaluate(()=>document.querySelector('#app > header').inert),false);
-  await square(7,0,true);await square(9,0);await page.locator('#overlay').waitFor({state:'visible'});await page.locator('#btnAgain').click();await page.waitForFunction(()=>!document.querySelector('#app > main').inert);assert.equal(await page.locator('#btnSavedPositionsEnd').isVisible(),false);assert.equal(await page.evaluate(()=>__chess.pieces.length),32);await mesh();
+  await square(7,0,true);await square(9,0);await page.locator('#overlay').waitFor({state:'visible'});
+  // Again is a user action: U0 must preserve the terminal game until explicitly confirmed.
+  const readPositions=()=>page.evaluate(async()=>{const{createCustomPositionIDB}=await import('./custom-position-idb.js');const a=createCustomPositionIDB({initializeEmpty:false});try{return await a.read();}finally{a.dispose();}});
+  const terminalState=()=>page.evaluate(()=>({turn:__chess.turn,appState:__chess.appState,completed:__chess.lastCompletedGameRecord,
+   busy:__chess.busy,aiThinking:__chess.aiThinking,view:__chess.viewIdx,
+   overlayHidden:document.getElementById('overlay').classList.contains('hidden'),overlayText:document.getElementById('overlay').textContent,
+   headerInert:document.querySelector('#app > header').inert,mainInert:document.querySelector('#app > main').inert}));
+  const focusState=()=>page.evaluate(()=>{const a=document.activeElement;return{id:a.id,visible:!!a.getClientRects().length&&!a.closest('[hidden],[inert],[aria-hidden="true"]')&&getComputedStyle(a).visibility==='visible',inTerminal:document.getElementById('overlay').contains(a)};});
+  await settle();
+  const beforeAgain=await state(),beforeTerminal=await terminalState(),beforeRecords=await records(),beforePositions=await readPositions(),beforeLocal=await page.evaluate(()=>({...localStorage})),beforeAgainEffects=await effects();
+  assert.equal(beforePositions.ok,true);assert.equal(beforeTerminal.overlayHidden,false);
+  await page.evaluate(()=>{window.__terminalAgainIdentity={board:__chess.board,history:__chess.history};});
+  await page.locator('#btnAgain').click();await page.locator('#newGameConfirmDialog').waitFor({state:'visible'});
+  assert.equal(await page.locator('#newGameConfirmHeading').textContent(),'要開始新對局嗎？');
+  assert.equal(await page.evaluate(()=>document.activeElement.id),'btnNewGameCancel');
+  await page.keyboard.press('Tab');assert.equal(await page.evaluate(()=>document.activeElement.id),'btnNewGameConfirm');
+  await page.keyboard.press('Shift+Tab');assert.equal(await page.evaluate(()=>document.activeElement.id),'btnNewGameCancel');
+  assert.deepEqual(await state(),beforeAgain);assert.deepEqual(await terminalState(),beforeTerminal);
+  await page.screenshot({path:path.join(output,`${label}-again-confirmation.png`),fullPage:true});
+  await page.locator('#btnNewGameCancel').click();await page.locator('#newGameConfirmDialog').waitFor({state:'hidden'});
+  const afterCancel=await state(),cancelFocus=await focusState();
+  assert.deepEqual(afterCancel,beforeAgain);assert.deepEqual(await terminalState(),beforeTerminal);
+  assert.equal(await page.evaluate(()=>__chess.board===__terminalAgainIdentity.board&&__chess.history===__terminalAgainIdentity.history),true);
+  assert.equal(await records(),beforeRecords);assert.deepEqual(await page.evaluate(()=>({...localStorage})),beforeLocal);
+  assert.deepEqual(await readPositions(),beforePositions);assert.deepEqual(await effects(),beforeAgainEffects);
+  assert.equal(cancelFocus.id,'btnAgain');assert.equal(cancelFocus.visible,true);assert.equal(cancelFocus.inTerminal,true);
+  await mesh();await page.screenshot({path:path.join(output,`${label}-again-cancelled.png`),fullPage:true});
+  await page.locator('#btnAgain').click();await page.locator('#newGameConfirmDialog').waitFor({state:'visible'});
+  assert.deepEqual(await state(),beforeAgain);
+  assert.equal(await page.locator('#btnNewGameConfirm').textContent(),'放棄進度，開始新局');
+  await page.locator('#btnNewGameConfirm').click();await page.locator('#newGameConfirmDialog').waitFor({state:'hidden'});
+  await page.waitForFunction(()=>!document.querySelector('#app > main').inert&&!__chess.busy&&!__chess.aiThinking);
+  const afterConfirm=await state();
+  assert.notEqual(afterConfirm.session.id,beforeAgain.session.id);
+  // Each beginNormalGameRecordSession increments this revision, including transient sessions.
+  assert.equal(afterConfirm.session.modeRevision,beforeAgain.session.modeRevision+1);
+  assert.equal(afterConfirm.history.length,0);assert.deepEqual(afterConfirm.board,afterConfirm.session.initialPosition.board);
+  assert.equal(afterConfirm.session.initialPosition.sideToMove,'red');assert.equal(await page.evaluate(()=>__chess.turn),'red');
+  assert.equal(afterConfirm.mode,beforeAgain.mode);assert.equal(afterConfirm.human,'red');
+  assert.equal(await page.locator('#overlay').isVisible(),false);assert.equal(await page.locator('#btnSavedPositionsEnd').isVisible(),false);
+  assert.equal(await page.evaluate(()=>__chess.pieces.length),32);await mesh();await settle();
+  assert.deepEqual((await state()).session,afterConfirm.session);assert.equal(await records(),beforeRecords);assert.deepEqual(await readPositions(),beforePositions);
+  const confirmFocus=await focusState();assert.equal(confirmFocus.visible,true);assert.equal(confirmFocus.inTerminal,false);assert.notEqual(confirmFocus.id,'');
+  await page.screenshot({path:path.join(output,`${label}-again-new-game.png`),fullPage:true});
+  result.again={status:'PASS',before:beforeAgain,afterCancel,afterConfirm,modeRevisionDelta:afterConfirm.session.modeRevision-beforeAgain.session.modeRevision,cancelFocus,confirmFocus,localStoragePreservedOnCancel:true,persistedPositionsUnchanged:true,recordsUnchanged:true};
   const persisted=await page.evaluate(async()=>{const{createCustomPositionIDB}=await import('./custom-position-idb.js');const a=createCustomPositionIDB({initializeEmpty:false});try{return await a.read();}finally{a.dispose();}});assert.equal(persisted.ok,true);assert.deepEqual(persisted.snapshot.envelope,fixture.envelope);assert.deepEqual(persisted.snapshot.metadata,fixture.metadata);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);assert.deepEqual(errors,[]);assert.deepEqual(await page.evaluate(()=>__terminalQA.errors),[]);result.status='PASS';result.ai='single resume; obsolete real Worker reply ignored';result.persistedUnchanged=true;result.errors=errors;console.log(label+' terminal UI PASS');
  }catch(error){result.status='FAIL';result.error={message:error.message,stack:error.stack};await page.screenshot({path:path.join(output,label+'-FAIL.png'),fullPage:true});throw error;}
