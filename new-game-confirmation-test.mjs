@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { initialBoard, hashBoard } from './game.js';
 import { createNewGameConfirmation, needsNewGameConfirmation } from './new-game-confirmation.js';
+import { createPointerSafety } from './pointer-safety.js';
 
 function opening(mode = 'medium') {
   const board = initialBoard(), hash = hashBoard(board);
@@ -20,17 +21,24 @@ function harness(source = opening()) {
     if (!nodes.has(id)) nodes.set(id, { id, open: false, isConnected: true, disabled: false,
       listeners: {}, getClientRects: () => [{}], focus() { focused = id; },
       addEventListener(name, fn) { this.listeners[name] = fn; },
-      emit(name) { this.listeners[name]?.({ preventDefault() {} }); },
+      emit(name, init = {}) {
+        const event = { type: name, target: this, detail: 0, preventDefault() {}, ...init };
+        document.emit(name, event); this.listeners[name]?.(event);
+      },
       showModal() { this.open = true; }, close() { this.open = false; closeQueue.push(() => this.emit('close')); },
     });
     return nodes.get(id);
   };
-  const document = { getElementById: node, querySelector: () => [...nodes.values()].find(n => n.open) ?? null };
-  const guard = createNewGameConfirmation({ document, readSource: () => source,
+  const document = { listeners: {}, getElementById: node,
+    addEventListener(type, fn) { this.listeners[type] = fn; }, removeEventListener() {},
+    emit(type, event) { this.listeners[type]?.(event); },
+    querySelector: () => [...nodes.values()].find(n => n.open) ?? null };
+  const pointerSafety = createPointerSafety({ document, window: { addEventListener() {}, removeEventListener() {} } });
+  const guard = createNewGameConfirmation({ document, pointerSafety, readSource: () => source,
     commit: settings => commits.push(settings), syncSelection: () => syncs++, notify: message => notices.push(message) });
-  return { source, guard, node, commits, notices, closeQueue,
+  return { source, guard, node, commits, notices, closeQueue, document,
     request: (choice = { mode: 'easy', humanSide: 'red' }) => guard.request(choice, node('invoker')),
-    confirm: () => node('newGameConfirmForm').emit('submit'),
+    confirm: () => { node('btnNewGameConfirm').emit('click'); node('newGameConfirmForm').emit('submit'); },
     cancel: () => node('btnNewGameCancel').emit('click'), focused: () => focused, syncs: () => syncs };
 }
 
@@ -71,6 +79,28 @@ test('confirmation consumes exactly once, including duplicate submit and queued 
   const h = harness(); h.source.history.push({}); h.request({ mode: 'hard', humanSide: 'black' });
   h.confirm(); h.confirm(); for (const close of h.closeQueue) close(); h.confirm();
   assert.deepEqual(h.commits, [{ mode: 'hard', humanSide: 'black' }]);
+});
+
+test('bare requestSubmit cannot authorize discarding a protected game', () => {
+  const h = harness(); h.source.history.push({}); h.request();
+  h.node('newGameConfirmForm').emit('submit');
+  assert.equal(h.commits.length, 0); assert.equal(h.node('newGameConfirmDialog').open, true);
+  h.confirm(); assert.equal(h.commits.length, 1);
+});
+
+test('old pointer cannot authorize submit; a fresh button gesture can', () => {
+  const h = harness(); h.source.history.push({});
+  const e = { pointerId: 9, pointerType: 'touch', isPrimary: true, button: 0,
+    clientX: 100, clientY: 100, target: h.node('board') };
+  h.document.emit('pointerdown', e); h.request();
+  h.document.emit('pointerup', { ...e, type: 'pointerup' });
+  h.node('btnNewGameConfirm').emit('click', { ...e, target: h.node('btnNewGameConfirm'), detail: 1 });
+  h.node('newGameConfirmForm').emit('submit'); assert.equal(h.commits.length, 0);
+  const fresh = { ...e, pointerId: 10, target: h.node('btnNewGameConfirm') };
+  h.document.emit('pointerdown', fresh); h.document.emit('pointerup', { ...fresh, type: 'pointerup' });
+  h.node('btnNewGameConfirm').emit('click', { ...fresh, detail: 1 });
+  h.node('newGameConfirmForm').emit('submit'); h.node('newGameConfirmForm').emit('submit');
+  assert.equal(h.commits.length, 1);
 });
 const invalidations = {
   session: s => { s.session = structuredClone(s.session); },

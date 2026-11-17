@@ -1,4 +1,4 @@
-import { initialBoard, hashBoard, RED } from './game.js?v=e572cdb02d';
+import { initialBoard, hashBoard, RED } from './game.js?v=afcc9e6212';
 
 const standardBoard = JSON.stringify(initialBoard());
 const standardHash = hashBoard(initialBoard());
@@ -36,14 +36,14 @@ function capture(source) {
     fingerprint: JSON.stringify(source) };
 }
 
-export function createNewGameConfirmation({ document, readSource, commit, syncSelection, notify }) {
+export function createNewGameConfirmation({ document, pointerSafety, readSource, commit, syncSelection, notify }) {
   const dialog = document.getElementById('newGameConfirmDialog');
   const form = document.getElementById('newGameConfirmForm');
   const cancelButton = document.getElementById('btnNewGameCancel');
   const confirmButton = document.getElementById('btnNewGameConfirm');
   // Mixed old HTML/new JS must not silently discard progress without the UI.
   if (!dialog || !form || !cancelButton || !confirmButton) return null;
-  let pending = null;
+  let pending = null, activation = null, activationTimer = null;
 
   function current(operation) {
     if (!operation || pending !== operation) return false;
@@ -58,6 +58,8 @@ export function createNewGameConfirmation({ document, readSource, commit, syncSe
   function dismiss({ focus = true } = {}) {
     const operation = pending;
     pending = null; // Consume synchronously, before the queued native close event.
+    activation = null;
+    clearTimeout(activationTimer);
     if (dialog.open) dialog.close();
     syncSelection();
     if (focus && operation?.invoker?.isConnected && !operation.invoker.disabled
@@ -78,7 +80,8 @@ export function createNewGameConfirmation({ document, readSource, commit, syncSe
     const choice = Object.freeze({ mode: settings.mode, humanSide: settings.humanSide });
     if (!needsNewGameConfirmation(source)) { commit(choice); return true; }
     try {
-      pending = { settings: choice, source: capture(source), invoker };
+      pending = { settings: choice, source: capture(source), invoker,
+        inputBoundary: pointerSafety.checkpoint() };
       dialog.showModal();
       cancelButton.focus();
       return true;
@@ -88,15 +91,35 @@ export function createNewGameConfirmation({ document, readSource, commit, syncSe
       return false;
     }
   }
+  confirmButton.addEventListener('click', event => {
+    const operation = pending;
+    activation = null;
+    if (!dialog.open || !operation || !pointerSafety.allowClick(event, confirmButton,
+      { after: operation.inputBoundary, virtual: true })) {
+      event.preventDefault();
+      return;
+    }
+    const token = activation = { operation };
+    // Chrome runs a microtask checkpoint BEFORE native submit. Expire at the
+    // end of this activation task instead; this is cleanup, not a timed
+    // exception to pointer provenance. Submit consumes the token immediately.
+    clearTimeout(activationTimer);
+    activationTimer = setTimeout(() => { if (activation === token) activation = null; }, 0);
+  });
   form.addEventListener('submit', event => {
     event.preventDefault();
     const operation = pending;
     if (!dialog.open || !operation) return;
     if (!current(operation)) { refresh(); return; }
+    if (activation?.operation !== operation) return;
+    activation = null;
     dismiss({ focus: false });
     commit(operation.settings); // Exactly once, with no await between check and commit.
   });
-  cancelButton.addEventListener('click', () => dismiss());
+  cancelButton.addEventListener('click', event => {
+    if (pending && pointerSafety.allowClick(event, cancelButton,
+      { after: pending.inputBoundary, virtual: true })) dismiss();
+  });
   dialog.addEventListener('cancel', event => { event.preventDefault(); dismiss(); });
   dialog.addEventListener('close', () => {
     // An earlier close can arrive after Escape -> immediate reopen. It owns

@@ -1,7 +1,7 @@
 // Rendering only: callers supply the canonical result of the validation Worker.
 // No chess validation/replay, storage or browser settings are read here.
-import { name } from '../game.js?v=e572cdb02d';
-import { GAME_TRANSFER_MAX_BYTES, fail } from './contract.js?v=e572cdb02d';
+import { name } from '../game.js?v=afcc9e6212';
+import { GAME_TRANSFER_MAX_BYTES, fail } from './contract.js?v=afcc9e6212';
 
 const modeNames = { easy: '簡單', medium: '中等', hard: '困難', 'experimental-b': '挑戰級（試玩）', pvp: '雙人對弈' };
 const reasons = { checkmate: '將死', stalemate: '困斃', 'perpetual-check': '長將判負', 'threefold-repetition': '三次重複局面', 'mutual-perpetual-check': '雙方長將' };
