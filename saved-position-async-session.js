@@ -1,5 +1,5 @@
-import { createCustomGameRoot, createMutableCustomGamePosition, validateCustomPlayPosition } from './custom-position-play.js?v=151972aca4';
-import { validateContinuationConfiguration } from './game-review-continuation.js?v=151972aca4';
+import { createCustomGameRoot, createMutableCustomGamePosition, validateCustomPlayPosition } from './custom-position-play.js?v=e572cdb02d';
+import { validateContinuationConfiguration } from './game-review-continuation.js?v=e572cdb02d';
 
 export function savedPositionMessage(result = {}) {
   const code = result.code ?? result.status;

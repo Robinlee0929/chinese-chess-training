@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { initialBoard } from '../game.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 assert.ok(process.env.BOARD_APPEARANCE_EVIDENCE_DIR, 'Evidence directory required');
@@ -25,7 +26,9 @@ const server = createServer(async (req, res) => {
   try {
     let body = await readFile(file);
     // Test-only observation, never shipped in the production main module.
-    if (file === path.join(root, 'main.js')) body = Buffer.from(body.toString() + '\nwindow.__boardSurfaceQA = { surface: boardSurface, mesh: boardMesh };\n');
+    if (file === path.join(root, 'main.js')) body = Buffer.from(body.toString()
+      + '\nwindow.__boardSurfaceQA = { surface: boardSurface, mesh: boardMesh };\n'
+      + 'window.__appearanceDuplicateSessionFault = () => beginNormalGameRecordSession();\n');
     res.writeHead(200, { 'Cache-Control': 'no-store', 'Content-Type': ({ '.js': 'text/javascript', '.mjs': 'text/javascript', '.html': 'text/html', '.css': 'text/css', '.png': 'image/png' })[path.extname(file)] || 'text/plain' });
     res.end(body);
   } catch { res.writeHead(404); res.end(); }
@@ -62,6 +65,120 @@ async function fixture(p, type = 'image/png', width = 1600, height = 900, color 
 }
 async function upload(p, file) { await p.locator('#boardAppearanceFile').setInputFiles(file); await idle(p); }
 const shareCard = async p => createHash('sha256').update(await p.evaluate(async () => (await __chess.buildShareCard({ cardTitle: '測試', cardSub: '本機合成', reasonChars: ['將', '死'], plies: 2, secs: 3, caps: 0, undoCount: 0, pure: true })).toDataURL())).digest('hex');
+
+const rematchState = p => p.evaluate(() => ({
+  board: __chess.board, history: __chess.history, session: __chess.normalGameRecordSession,
+  mode: __chess.mode, side: __chess.humanSide, turn: __chess.turn, appState: __chess.appState,
+  completed: __chess.lastCompletedGameRecord, busy: __chess.busy, aiThinking: __chess.aiThinking,
+  view: __chess.viewIdx, overlayHidden: document.getElementById('overlay').classList.contains('hidden'),
+  overlayText: document.getElementById('overlay').textContent,
+  headerInert: document.querySelector('#app > header').inert, mainInert: document.querySelector('#app > main').inert,
+}));
+const focusState = p => p.evaluate(() => {
+  const a = document.activeElement, r = a.getBoundingClientRect();
+  return { id: a.id, visible: r.width > 0 && r.height > 0 && r.top >= 0 && r.bottom <= innerHeight
+    && !a.closest('[hidden],.hidden,[inert],[aria-hidden="true"]') };
+});
+// Read every existing database without creating a new one. Include full Blob
+// bytes: equal metadata alone cannot detect a corrupted saved photograph.
+const protectedStorage = p => p.evaluate(async () => {
+  async function encode(value) {
+    if (value instanceof Blob) return { type: value.type, size: value.size, bytes: Array.from(new Uint8Array(await value.arrayBuffer())) };
+    if (Array.isArray(value)) return Promise.all(value.map(encode));
+    if (value && typeof value === 'object') return Object.fromEntries(await Promise.all(Object.entries(value).map(async ([k,v]) => [k, await encode(v)])));
+    return value;
+  }
+  const databases = {};
+  for (const { name } of (await indexedDB.databases()).sort((a,b) => a.name.localeCompare(b.name))) {
+    const db = await new Promise((resolve,reject) => { const r = indexedDB.open(name); r.onsuccess = () => resolve(r.result); r.onerror = () => reject(r.error); });
+    try {
+      const stores = {};
+      for (const storeName of [...db.objectStoreNames].sort()) {
+        const values = await new Promise((resolve,reject) => {
+          const tx = db.transaction(storeName, 'readonly'), s = tx.objectStore(storeName), keys = s.getAllKeys(), rows = s.getAll();
+          tx.oncomplete = () => resolve({ keys: keys.result, rows: rows.result }); tx.onabort = () => reject(tx.error);
+        });
+        stores[storeName] = await encode(values);
+      }
+      databases[name] = { version: db.version, stores };
+    } finally { db.close(); }
+  }
+  return { local: Object.fromEntries(Object.entries(localStorage).filter(([k]) => k !== 'xiangqi.viewPrefs.v1')), databases };
+});
+
+async function injectRematchFault(p, fault, phase) {
+  if (!fault?.startsWith(phase + '-')) return;
+  await p.evaluate(async fault => {
+    if (fault === 'cancel-game-reset') {
+      const { initialBoard } = await import('./game.js'); __chess.resetTo(initialBoard(), 'red');
+    } else if (fault.endsWith('-photo-lost')) {
+      const { DEFAULT_BOARD_APPEARANCE } = await import('./board-appearance.js');
+      __boardSurfaceQA.surface.setPhoto(null, DEFAULT_BOARD_APPEARANCE);
+    } else if (fault === 'confirm-duplicate-session') {
+      __appearanceDuplicateSessionFault();
+    } else if (fault === 'cancel-saved-photo-changed') {
+      const { createBoardAppearanceStore } = await import('./board-appearance-store.js');
+      const s = createBoardAppearanceStore();
+      try { const r = await s.load(), bytes = new Uint8Array(await r.blob.arrayBuffer()); bytes[bytes.length - 1] ^= 1;
+        await s.save({ ...r, blob: new Blob([bytes], { type: r.blob.type }) });
+      } finally { s.dispose(); }
+    } else if (fault === 'cancel-records-changed') {
+      localStorage.setItem('chinese-chess-training:game-records:v1', 'injected corruption');
+    }
+    window.__appearanceRematchFaultApplied = fault;
+  }, fault);
+}
+
+async function verifyAgain(p, background, fault = null) {
+  const before = await rematchState(p), stored = await protectedStorage(p);
+  assert.equal(before.overlayHidden, false); assert.ok(before.session?.id); assert.ok(before.history.length > 0);
+  assert.ok(stored.databases['chinese-chess-training:board-appearance'], 'A saved synthetic photograph is required');
+  assert.ok(await saved(p), 'The saved photograph must contain a valid record');
+  await p.evaluate(() => { window.__appearanceAgainIdentity = { board: __chess.board, history: __chess.history }; });
+  if (fault === 'missing-confirmation') await p.locator('#btnAgain').evaluate(e => e.addEventListener('click', event => {
+    window.__appearanceRematchFaultApplied = 'missing-confirmation';
+    event.preventDefault(); event.stopImmediatePropagation();
+  }, { capture: true, once: true }));
+  await p.locator('#btnAgain').click();
+  await p.locator('#newGameConfirmDialog').waitFor({ state: 'visible' });
+  assert.equal(await p.locator('#newGameConfirmHeading').textContent(), '要開始新對局嗎？');
+  assert.deepEqual(await rematchState(p), before, 'OPEN_GAME_PRESERVED');
+  assert.equal(await signature(p), background, 'OPEN_PHOTO_PRESERVED');
+  assert.equal(await p.locator('#btnNewGameCancel').textContent(), '取消，繼續這盤');
+  await p.locator('#btnNewGameCancel').click();
+  await p.locator('#newGameConfirmDialog').waitFor({ state: 'hidden' });
+  await injectRematchFault(p, fault, 'cancel');
+  assert.deepEqual(await rematchState(p), before, 'CANCEL_GAME_PRESERVED');
+  assert.equal(await p.evaluate(() => __chess.board === __appearanceAgainIdentity.board && __chess.history === __appearanceAgainIdentity.history), true);
+  assert.equal(await signature(p), background, 'CANCEL_PHOTO_PRESERVED');
+  assert.deepEqual(await protectedStorage(p), stored, 'CANCEL_STORAGE_PRESERVED');
+  const cancelFocus = await focusState(p); assert.equal(cancelFocus.id, 'btnAgain'); assert.equal(cancelFocus.visible, true);
+  await p.locator('#btnAgain').click(); await p.locator('#newGameConfirmDialog').waitFor({ state: 'visible' });
+  assert.equal(await p.locator('#btnNewGameConfirm').textContent(), '放棄進度，開始新局');
+  if (fault === 'confirm-no-new-game') await p.locator('#btnNewGameConfirm').evaluate(e => e.addEventListener('click', event => {
+    window.__appearanceRematchFaultApplied = 'confirm-no-new-game';
+    event.preventDefault(); event.stopImmediatePropagation();
+  }, { capture: true, once: true }));
+  await p.locator('#btnNewGameConfirm').click();
+  await p.locator('#newGameConfirmDialog').waitFor({ state: 'hidden' });
+  await p.waitForFunction(() => !__chess.busy && !__chess.aiThinking && !document.querySelector('#app > main').inert);
+  await injectRematchFault(p, fault, 'confirm');
+  const after = await rematchState(p);
+  assert.notEqual(after.session.id, before.session.id, 'NEW_SESSION_REQUIRED');
+  assert.equal(after.session.modeRevision, before.session.modeRevision + 1, 'ONE_NEW_SESSION');
+  assert.deepEqual(after.board, initialBoard(), 'STANDARD_NEW_GAME'); assert.deepEqual(after.history, []);
+  assert.deepEqual(after.board, after.session.initialPosition.board); assert.equal(after.turn, 'red');
+  assert.equal(after.mode, before.mode); assert.equal(after.side, 'red'); assert.equal(after.overlayHidden, true);
+  assert.equal(await p.evaluate(() => __chess.pieces.length), 32);
+  assert.equal(await signature(p), background, 'CONFIRM_PHOTO_PRESERVED');
+  assert.deepEqual(await protectedStorage(p), stored, 'CONFIRM_STORAGE_PRESERVED');
+  await p.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.deepEqual((await rematchState(p)).session, after.session, 'SESSION_REMAINS_STABLE');
+  const confirmFocus = await focusState(p); assert.equal(confirmFocus.visible, true); assert.notEqual(confirmFocus.id, '');
+  return { beforeSession: before.session.id, afterSession: after.session.id,
+    revisionDelta: after.session.modeRevision - before.session.modeRevision, cancelFocus, confirmFocus,
+    savedPhotoAndOtherStoragePreserved: true };
+}
 
 try {
   browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true });
@@ -236,7 +353,9 @@ try {
       }
       result.checks.push('native Image fallback revokes Object URL and disposes canvas; extreme aspect ratios in contain mode');
 
-      await upload(p, png); await close(p);
+      await upload(p, png); await p.locator('#boardAppearanceRemember').check();
+      await p.waitForFunction(() => document.getElementById('boardAppearancePersistence').textContent.includes('已在'));
+      await close(p);
       const background = await signature(p);
       await p.locator('#modeSel').selectOption('pvp');
       await p.locator('#btnNew').click(); assert.equal(await signature(p), background);
@@ -254,7 +373,7 @@ try {
       await p.locator('#gameReviewHeading').waitFor({ state: 'visible' });
       assert.equal(await signature(p), background);
       await p.keyboard.press('Escape'); await p.locator('#overlay').waitFor({ state: 'visible' });
-      await p.locator('#btnAgain').click(); assert.equal(await signature(p), background);
+      result.again = await verifyAgain(p, background);
       result.checks.push('normal move/undo; completed game review and Again retain background');
       await toolbar(p, '#btnView'); await p.waitForTimeout(700); assert.equal(await signature(p), background);
       if (await p.locator('#btnMore').getAttribute('aria-expanded') === 'true') await p.locator('#btnMore').click();
@@ -347,6 +466,47 @@ try {
       } catch (error) { result.status = 'FAIL'; result.error = error.stack; throw error; }
       finally { compatibility.push(result); await write('compatibility', compatibility); await context.close(); }
     }
+  }
+  // Each fault gets a fresh context. Only these deliberate failures are caught;
+  // a missing injection, unexpected error or surviving mutant fails the suite.
+  const negativeControls = [];
+  for (const [fault, marker] of [
+    ['missing-confirmation', null], ['cancel-game-reset', 'CANCEL_GAME_PRESERVED'],
+    ['cancel-photo-lost', 'CANCEL_PHOTO_PRESERVED'], ['confirm-photo-lost', 'CONFIRM_PHOTO_PRESERVED'],
+    ['confirm-no-new-game', null], ['confirm-duplicate-session', 'ONE_NEW_SESSION'],
+    ['cancel-saved-photo-changed', 'CANCEL_STORAGE_PRESERVED'], ['cancel-records-changed', 'CANCEL_STORAGE_PRESERVED'],
+  ]) {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const p = await context.newPage(), errors = []; p.setDefaultTimeout(20000);
+    p.on('pageerror', e => errors.push(e.message));
+    p.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+    try {
+      await p.goto(url); await p.waitForFunction(() => !!window.__boardSurfaceQA && !!window.__chess?.board);
+      await p.locator('#modeSel').selectOption('pvp');
+      await open(p); await upload(p, await fixture(p)); await p.locator('#boardAppearanceRemember').check();
+      await p.waitForFunction(() => document.getElementById('boardAppearancePersistence').textContent.includes('已在'));
+      await close(p);
+      await p.evaluate(() => {
+        const b = Array.from({ length: 10 }, () => Array(9).fill(null));
+        for (const [side,type,r,c] of [['red','K',0,3],['black','K',9,4],['red','R',8,8],['red','R',7,0]]) b[r][c] = { side,type };
+        __chess.resetTo(b, 'red'); __chess.doMove({ r: 7,c: 0 }, { r: 9,c: 0 });
+      });
+      await p.locator('#overlay').waitFor({ state: 'visible' });
+      const background = await signature(p); let detected;
+      try { await verifyAgain(p, background, fault); } catch (error) { detected = error; }
+      assert.equal(await p.evaluate(() => window.__appearanceRematchFaultApplied), fault, 'Injection must reach its intended path');
+      assert.ok(detected, `Mutant survived: ${fault}`);
+      if (marker) { assert.equal(detected.code, 'ERR_ASSERTION'); assert.ok(detected.message.includes(marker), detected.message); }
+      else {
+        assert.equal(detected.name, 'TimeoutError');
+        assert.ok(detected.message.includes('newGameConfirmDialog'));
+        assert.ok(detected.message.includes(fault === 'missing-confirmation' ? 'to be visible' : 'to be hidden'));
+        assert.equal(await p.locator('#newGameConfirmDialog').isVisible(), fault !== 'missing-confirmation');
+      }
+      assert.deepEqual(errors, []);
+      negativeControls.push({ fault, status: 'EXPECTED_FAIL_DETECTED', error: detected.message.split('\n')[0] });
+      await write('negative-controls', negativeControls);
+    } finally { await context.close(); }
   }
 } finally { await browser?.close(); server.close(); }
 console.log(JSON.stringify(results, null, 2));

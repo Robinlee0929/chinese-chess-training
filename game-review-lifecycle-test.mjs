@@ -58,6 +58,48 @@ const R3C_FORBIDDEN_UI_TERMS = Object.freeze([
   '子力優勢', '優勢', '勝率', '評分', '評估值', '分數', 'score', 'evaluation', 'PV',
   '妙手', '牽制', '串擊', '必勝', '必敗',
 ]);
+const REVIEW_LEGACY_FORBIDDEN_UI_TERMS = Object.freeze([
+  '最佳著', '比較好', '比較差', '你走錯了', '失誤', '大漏著', '白送',
+  '掉子', '懸子', '優勢', '勝率', '評分',
+]);
+
+// Extract a required, balanced element from the real entry page. Missing/empty
+// output containers must not turn a language guard into an empty-string PASS.
+function requiredOutputRegion(markup, id) {
+  const matches = [...markup.matchAll(new RegExp(`<([a-z][\\w-]*)\\b[^>]*\\sid="${id}"[^>]*>`, 'gi'))];
+  assert.equal(matches.length, 1, `${id}: required unique output region`);
+  const opening = matches[0], tag = opening[1];
+  const tokens = new RegExp(`<\\/?${tag}\\b[^>]*>`, 'gi');
+  tokens.lastIndex = opening.index + opening[0].length;
+  let depth = 1, token;
+  while ((token = tokens.exec(markup))) {
+    if (token[0].startsWith('</')) depth--;
+    else if (!token[0].endsWith('/>')) depth++;
+    if (depth === 0) return markup.slice(opening.index, tokens.lastIndex);
+  }
+  assert.fail(`${id}: required closing element`);
+}
+
+function assertOutputLanguage(text, terms, label) {
+  assert.ok(text.trim(), `${label}: required output content`);
+  for (const term of new Set([...REVIEW_LEGACY_FORBIDDEN_UI_TERMS, ...terms])) {
+    assert.equal(text.toLowerCase().includes(term.toLowerCase()), false,
+      `${label} must not contain forbidden term: ${term}`);
+  }
+}
+
+function assertReviewOutputMarkup(markup) {
+  const regions = [
+    ['gameReviewAiPanel', R3B_FORBIDDEN_UI_TERMS, ['gameReviewAiHeading', 'gameReviewAiDetail', 'gameReviewEvidence']],
+    ['gameReviewEvidence', R3B_FORBIDDEN_UI_TERMS, ['gameReviewEvidencePlayed', 'gameReviewEvidenceCandidate', 'gameReviewEvidenceMatch', 'gameReviewEvidenceFacts']],
+    ['gameReviewTeaching', R3C_FORBIDDEN_UI_TERMS, ['gameReviewTeachingTitle', 'gameReviewTeachingBody', 'gameReviewCoachLeadIn', 'gameReviewCoachEncouragement', 'gameReviewCoachStatus']],
+  ];
+  for (const [id, terms, outputs] of regions) {
+    const region = requiredOutputRegion(markup, id);
+    for (const output of outputs) requiredOutputRegion(region, output);
+    assertOutputLanguage(region, terms, id);
+  }
+}
 
 function functionSource(name) {
   const match = source.match(new RegExp(`^(?:async )?function ${name}\\([^]*?^}`, 'm'));
@@ -161,6 +203,14 @@ function domNode(initiallyHidden = false, tagName = 'div') {
     },
     getBoundingClientRect() {
       return { top: 0, bottom: 100, left: 0, right: 100, width: 100, height: 100 };
+    },
+    getClientRects() {
+      return classes.has('hidden') ? [] : [this.getBoundingClientRect()];
+    },
+    closest(selector) {
+      if (selector === '#gameReviewContent') return null;
+      return classes.has('hidden') || attributes.has('hidden') || attributes.has('inert')
+        || attributes.get('aria-hidden') === 'true' ? this : null;
     },
     focusCalls: 0,
     focus() { this.focusCalls++; },
@@ -653,6 +703,7 @@ function harness({
     'renderGameReviewTeaching', 'renderGameReviewEvidence', 'renderGameReviewAi',
     'handleGameReviewAiResponse', 'requestGameReviewAiCandidate',
     'pauseLiveGameForGameRecords', 'restoreLiveGamePresentation',
+    'focusGameRecordPanel',
     'enterGameRecordLibrary', 'showGameRecordLibrary', 'openPreparedGameReview', 'openGameReview',
     'openGameTeachingReviewHandoff', 'normalGameRecordMatches', 'currentPositionSaveUnavailableReason',
     'openLastCompletedGameReview', 'openStoredGameReview', 'navigateGameReview',
@@ -2883,7 +2934,7 @@ test('source and DOM contain explicit read-only, accessibility and responsive gu
   assert.match(functionSource('renderGameReviewTeaching'), /deriveGameReviewTeaching\(evidence\)/);
   assert.equal((html.match(/id="btnGameReviewAiAnalyze"/g) || []).length, 1, 'R3B adds no second action');
   assert.equal((html.match(/id="btnGameReviewCoach"/g) || []).length, 1, 'R3C2 adds one bounded action');
-  assert.doesNotMatch(html, /最佳著|比較好|比較差|你走錯了|失誤|大漏著|白送|掉子|懸子|優勢|勝率|評分/);
+  assertReviewOutputMarkup(html);
   assert.match(source, /setAttribute\('aria-current', 'step'\)/);
   assert.match(source, /ArrowLeft: 'previous'/);
   assert.match(source, /ArrowRight: 'next'/);
@@ -2902,4 +2953,58 @@ test('source and DOM contain explicit read-only, accessibility and responsive gu
   assert.doesNotMatch(coachPath, /\b(?:fetch|XMLHttpRequest|WebSocket|EventSource|sendBeacon)\b/);
   assert.doesNotMatch(coachPath, /\b(?:localStorage|sessionStorage|indexedDB|gameRecordStore|puzzleStore)\b/);
   assert.doesNotMatch(coachPath, /\b(?:findBestMove|legalMoves|applyMove|inCheck|repetitionVerdict)\b/);
+});
+
+function renderedLanguageFixture() {
+  const saved = record('protected-output-language');
+  const ctx = harness({ records: [saved], realRenderer: true });
+  ctx.enterGameRecordLibrary(); ctx.openStoredGameReview(saved.id); ctx.navigateGameReview('first');
+  ctx.requestGameReviewAiCandidate();
+  const worker = ctx.reviewAiWorkers.at(-1);
+  worker.emit(successfulReviewAiResponse(worker, { to: { r: 3, c: 3 } }));
+  assertOutputLanguage(renderedR3bText(ctx), R3B_FORBIDDEN_UI_TERMS, 'rendered R3B');
+  assertOutputLanguage(renderedR3cText(ctx), R3C_FORBIDDEN_UI_TERMS, 'rendered R3C');
+  return ctx;
+}
+
+test('protected teaching output rejects AI best-move text in its actual markup and rendered node', () => {
+  const body = requiredOutputRegion(html, 'gameReviewTeachingBody');
+  const injected = html.replace(body, body.replace('></', '>AI 最佳著</'));
+  assert.notEqual(injected, html);
+  assert.throws(() => assertReviewOutputMarkup(injected), { code: 'ERR_ASSERTION', message: /forbidden term/ });
+  const ctx = renderedLanguageFixture();
+  ctx.gameReviewTeachingBody.textContent = 'AI 最佳著';
+  assert.throws(() => assertOutputLanguage(renderedR3cText(ctx), R3C_FORBIDDEN_UI_TERMS, 'rendered R3C'),
+    { code: 'ERR_ASSERTION', message: /forbidden term/ });
+});
+
+test('protected evaluation and fact outputs reject score and advantage injections', () => {
+  for (const [id, injectedText] of [['gameReviewAiDetail', '評分 +120，紅方優勢'], ['gameReviewEvidenceFacts', 'score 120 evaluation PV']]) {
+    const region = requiredOutputRegion(html, id);
+    const injected = html.replace(region, region.replace('></', `>${injectedText}</`));
+    assert.notEqual(injected, html);
+    assert.throws(() => assertReviewOutputMarkup(injected), { code: 'ERR_ASSERTION', message: /forbidden term/ });
+  }
+  const ctx = renderedLanguageFixture();
+  ctx.gameReviewAiDetail.textContent = '評分 +120，紅方優勢';
+  assert.throws(() => assertOutputLanguage(renderedR3bText(ctx), R3B_FORBIDDEN_UI_TERMS, 'rendered R3B'),
+    { code: 'ERR_ASSERTION', message: /forbidden term/ });
+});
+
+test('legitimate U1b capability disclaimer is preserved outside the protected outputs', () => {
+  assert.match(requiredOutputRegion(html, 'teacherQuickStart'), /AI 候選不保證最佳著/);
+  assertReviewOutputMarkup(html);
+});
+
+test('missing, renamed, duplicated or emptied R3B/R3C output regions fail closed', () => {
+  for (const id of ['gameReviewAiPanel', 'gameReviewEvidence', 'gameReviewTeaching']) {
+    const region = requiredOutputRegion(html, id);
+    for (const replacement of ['', region.replace(`id="${id}"`, `id="missing-${id}"`), region + region,
+      region.replace(/>[^]*</, '><')]) {
+      assert.throws(() => assertReviewOutputMarkup(html.replace(region, replacement)),
+        { code: 'ERR_ASSERTION', message: /required/ });
+    }
+  }
+  const body = requiredOutputRegion(html, 'gameReviewTeachingBody');
+  assert.throws(() => assertReviewOutputMarkup(html.replace(body, '')), { code: 'ERR_ASSERTION', message: /required/ });
 });
