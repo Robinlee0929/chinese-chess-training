@@ -1100,6 +1100,7 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
 }
 .game-record-library-view,
 .game-review-view,
+.game-review-content,
 .game-analysis-view {
   display: flex;
   flex: none;
@@ -1217,6 +1218,8 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
 .game-review-move .notation { min-width: 0; overflow-wrap: anywhere; }
 .game-review-move .side.red { color: #ef776a; }
 .game-review-move .side.black { color: #c8cbd0; }
+#btnGameReviewBack, #btnGameReviewExit, #btnGameRecordLibraryExit,
+#gameReviewMoveList .game-review-move { min-width: 44px; min-height: 44px; }
 .game-review-teaching-move-marker {
   padding: 2px 5px;
   border: 1px solid rgba(101, 183, 164, 0.68);
@@ -1848,6 +1851,22 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
     padding: 12px;
   }
   #gameReviewMoveList, #gameAnalysisMoveList { max-height: 24dvh; }
+  /* One navigation row outside the scrolling content: no overlay or duplicate controls. */
+  #gameRecordPanel:has(> #gameReviewView:not(.hidden) > #gameReviewContent) {
+    height: 42dvh;
+    overflow: hidden;
+  }
+  #gameReviewView:has(> #gameReviewContent) { flex: 1; overflow: hidden; }
+  #gameReviewView > .game-review-navigation { flex: none; }
+  #gameReviewContent {
+    flex: 1;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    scroll-padding-block: 4px;
+    padding: 4px;
+  }
+  #gameReviewContent > * { flex-shrink: 0; }
+  #gameReviewMoveList { max-height: none; overflow: visible; }
   .game-record-card-actions button,
   .game-review-navigation button,
   .game-analysis-view .game-review-topbar button,
@@ -1878,7 +1897,7 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
   #turnDot { width: 9px; height: 9px; }
   button, #modeSel { padding: 6px 10px; font-size: 12.5px; }
   .side-chooser label { min-height: 42px; padding: 0 10px; }
-  #btnMore { display: inline-flex; align-items: center; justify-content: center; }
+  #btnMore { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; }
   .t-short { display: inline; }
   .t-full { display: none; }
 
