@@ -1,4 +1,4 @@
-import { createCustomPositionStore, CustomPositionStoreError, CUSTOM_POSITION_STORAGE_KEY } from './custom-position-store.js?v=e572cdb02d';
+import { createCustomPositionStore, CustomPositionStoreError, CUSTOM_POSITION_STORAGE_KEY } from './custom-position-store.js?v=afcc9e6212';
 
 export const CUSTOM_POSITION_LOCK = `${CUSTOM_POSITION_STORAGE_KEY}:write`;
 const mutations = new Set(['savePosition', 'renamePosition', 'updatePlayPreferences', 'deletePosition']);

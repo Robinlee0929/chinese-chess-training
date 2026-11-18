@@ -57,7 +57,7 @@ try{
    assert.equal(await p.evaluate(()=>document.activeElement.id),'btnNewGameCancel');await p.screenshot({path:path.join(out,label+'-confirmation.png')});
    const box=await dialog(p).boundingBox();assert.ok(box.x>=0&&box.y>=0&&box.x+box.width<=viewport.width&&box.y+box.height<=viewport.height);
    await cancel(p);assert.deepEqual(await state(p),before);assert.equal(await p.evaluate(()=>document.activeElement.id),'modeSel');
-   await p.locator('#modeSel').selectOption('easy');await p.evaluate(()=>{const form=document.querySelector('#newGameConfirmForm');form.requestSubmit();form.requestSubmit();});const after=await state(p);singleSession(before,after);assert.equal(after.mode,'easy');assert.equal(after.history.length,0);
+   await p.locator('#modeSel').selectOption('easy');await accept(p);await p.evaluate(()=>{const form=document.querySelector('#newGameConfirmForm');form.requestSubmit();form.requestSubmit();});const after=await state(p);singleSession(before,after);assert.equal(after.mode,'easy');assert.equal(after.history.length,0);
   });
   await check(label+' AI progress side-change cancel and confirm',async()=>{
    await oneMove(p);const before=await state(p);assert.equal(before.history.length,2);await p.locator('label[for="humanSideBlack"]').click();
@@ -104,7 +104,7 @@ try{
   });
   await check(label+' animation cancellation preserves progress; confirmation clears old animation',async()=>{
    await reset(p);const observed=await p.evaluate(()=>{__chess.doMove({r:3,c:0},{r:4,c:0});const session=__chess.normalGameRecordSession.id,board=JSON.stringify(__chess.board);document.querySelector('#btnNew').click();const opened=document.querySelector('#newGameConfirmDialog').open;document.querySelector('#btnNewGameCancel').click();return{opened,preserved:session===__chess.normalGameRecordSession.id&&board===JSON.stringify(__chess.board),busy:__chess.busy};});assert.deepEqual(observed,{opened:true,preserved:true,busy:true});await idle(p);
-   await reset(p);const before=await state(p);await p.evaluate(()=>{__chess.doMove({r:3,c:0},{r:4,c:0});document.querySelector('#btnNew').click();document.querySelector('#newGameConfirmForm').requestSubmit();});await p.waitForTimeout(800);singleSession(before,await state(p));assert.equal((await state(p)).history.length,0);
+   await reset(p);const before=await state(p);await p.evaluate(()=>{__chess.doMove({r:3,c:0},{r:4,c:0});document.querySelector('#btnNew').click();});assert.equal(await p.evaluate(()=>__chess.busy),true);await accept(p);await p.waitForTimeout(800);singleSession(before,await state(p));assert.equal((await state(p)).history.length,0);
   });
   await check(label+' stale session and in-place history mutations cannot authorize new game',async()=>{
    await reset(p);await oneMove(p);await p.locator('#btnNew').click();await p.evaluate(()=>__chess.newGame());const fresh=await state(p);await p.locator('#newGameConfirmForm').dispatchEvent('submit');assert.deepEqual(await state(p),fresh);

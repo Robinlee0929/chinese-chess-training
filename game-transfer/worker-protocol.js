@@ -1,5 +1,5 @@
 import { GAME_TRANSFER_FORMAT, GAME_TRANSFER_VERSION, GAME_TRANSFER_MAX_BYTES,
-  GAME_TRANSFER_MAX_PLIES, GAME_TRANSFER_MAX_DEPTH, GameTransferError } from './contract.js?v=e572cdb02d';
+  GAME_TRANSFER_MAX_PLIES, GAME_TRANSFER_MAX_DEPTH, GameTransferError } from './contract.js?v=afcc9e6212';
 
 export const invalidWorkerResponse = () => new GameTransferError('INVALID_WORKER_RESPONSE', '棋譜驗證回應無效。');
 const require = condition => { if (!condition) throw invalidWorkerResponse(); };
