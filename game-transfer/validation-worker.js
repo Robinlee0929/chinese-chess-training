@@ -1,5 +1,5 @@
-import { parseGameTransfer } from './game-transfer.js?v=afcc9e6212';
-import { GameTransferError } from './contract.js?v=afcc9e6212';
+import { parseGameTransfer } from './game-transfer.js?v=b64bec86c9';
+import { GameTransferError } from './contract.js?v=b64bec86c9';
 
 // Dedicated data-validation Worker; never imports an AI engine or storage API.
 self.onmessage = ({ data }) => {
