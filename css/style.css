@@ -1757,6 +1757,8 @@ button.danger { color: #e99a8e; border-color: rgba(192, 83, 69, 0.55); }
 }
 
 #toast {
+  /* A status message must not intercept input to the board beneath it. */
+  pointer-events: none;
   position: fixed;
   left: 50%;
   bottom: 34px;

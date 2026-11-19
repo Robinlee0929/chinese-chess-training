@@ -1,5 +1,5 @@
 // AI 搜索在 Worker 執行，避免深層搜索卡住畫面
-import { findBestMove } from './ai.js?v=b64bec86c9';
+import { findBestMove } from './ai.js?v=0bdbd906ce';
 
 const SIDES = new Set(['red', 'black']);
 const LEVELS = new Set(['easy', 'medium', 'hard', 'experimental-b']);
@@ -45,7 +45,7 @@ function searchExperimental(message, startedAt) {
   if (experimentalPending) { unsupportedRequest(message); return; }
   experimentalPending = true;
   // Only the Worker imports this frozen engine. Its hard preset remains 4500ms.
-  import('./ai-experimental-b.js?v=b64bec86c9').then(candidate => {
+  import('./ai-experimental-b.js?v=0bdbd906ce').then(candidate => {
     const result = candidate.findBestMove(message.board, message.side, 'hard', message.recent);
     self.postMessage({ token: message.token, result, timeMs: Date.now() - startedAt, metrics: candidate.metrics() });
   }).catch(() => {
