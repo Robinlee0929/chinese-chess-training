@@ -1,4 +1,4 @@
-import { GAME_TRANSFER_MAX_BYTES, GAME_TRANSFER_MAX_DEPTH, fail } from './contract.js?v=b64bec86c9';
+import { GAME_TRANSFER_MAX_BYTES, GAME_TRANSFER_MAX_DEPTH, fail } from './contract.js?v=0bdbd906ce';
 
 // Count raw bytes before removing one optional UTF-8 BOM. A second BOM is invalid.
 export function decodeTransferInput(input) {

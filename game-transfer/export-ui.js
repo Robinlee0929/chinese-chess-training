@@ -1,5 +1,5 @@
-import { createGameExportController, createGameExportDownload, gameExportErrorMessage } from './export-controller.js?v=b64bec86c9';
-import { captureExportSource } from './export-source.js?v=b64bec86c9';
+import { createGameExportController, createGameExportDownload, gameExportErrorMessage } from './export-controller.js?v=0bdbd906ce';
+import { captureExportSource } from './export-source.js?v=0bdbd906ce';
 
 // Capability handshake: old HTML never receives new handlers; old JS leaves
 // all export buttons hidden/disabled. Missing modules cannot break game startup.
