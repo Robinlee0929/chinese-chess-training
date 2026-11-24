@@ -27,15 +27,34 @@ function installMany(names, values) {
   return context;
 }
 
+function assertCustomPlayDescription(markup) {
+  const descriptions = [...markup.matchAll(/<p\b[^>]*\sid="customPlayDescription"[^>]*>([^]*?)<\/p>/gu)];
+  assert.equal(descriptions.length, 1, 'one custom-position play description');
+  assert.equal(descriptions[0][1].replace(/\s+/gu, ' ').trim(),
+    '以已確認棋面開始新對局。玩家棋色與輪走方分開設定；輪到電腦時，電腦會先走。原本尚未完成的對局將被取代。');
+}
+
 test('renders one native AI-only player-side selector with the approved labels', () => {
   assert.equal((html.match(/id="sideChooser"/gu) || []).length, 1);
   assert.match(html, /<fieldset id="sideChooser"[^>]*>[\s\S]*<legend>選擇你的棋色<\/legend>/u);
   assert.match(html, /<label for="humanSideRed">紅方<\/label>/u);
   assert.match(html, /<label for="humanSideBlack">黑方<\/label>/u);
   assert.doesNotMatch(html, /選黑方時 AI 會先走|尚無著法，紅方先行/u);
-  assert.match(html, /依目前局面的輪走方行棋；若輪到 AI 方，AI 會先行/u);
+  assertCustomPlayDescription(html);
   assert.match(css, /\.side-chooser input:focus-visible \+ label/u);
   assert.match(css, /@media \(max-width: 480px\)[\s\S]*\.side-chooser label \{ min-height: 44px/u);
+});
+
+test('custom play description negative controls reject wrong turn ownership and misplaced copy', () => {
+  for (const [before, after] of [
+    ['玩家棋色與輪走方分開設定', '玩家棋色決定輪走方'],
+    ['輪到電腦時，電腦會先走', '選黑方時，電腦必定先走'],
+    ['id="customPlayDescription"', 'id="unrelatedDescription"'],
+    ['id="customPlayDescription"', 'data-id="customPlayDescription"'],
+  ]) {
+    assert.equal(html.split(before).length, 2, 'mutation must hit exactly once');
+    assert.throws(() => assertCustomPlayDescription(html.replace(before, after)), { code: 'ERR_ASSERTION' });
+  }
 });
 
 test('derives AI ownership from ephemeral human ownership without an authoritative AI_SIDE', () => {
