@@ -527,14 +527,40 @@ test('review continuation: invalid configuration, terminal, live teaching and st
 });
 
 function installContinuationNavigation(ctx) {
+  // Model only the outer-panel DOM used by these lifecycle cases. The real
+  // focus function runs below; mobile-review-ui-test covers nested scrollers.
+  const hidden = element => element.hidden || element.classList.contains('hidden')
+    || element.inert || element.getAttribute('hidden') !== null
+    || element.getAttribute('inert') !== null || element.getAttribute('aria-hidden') === 'true';
+  Object.assign(ctx.gameRecordPanel, {
+    scrollTop: 0, getBoundingClientRect: () => ({ top: 0, bottom: 100 }),
+  });
+  ctx.navigationFocusCalls = [];
+  const heading = (id, view) => Object.assign(node(), {
+    id, isConnected: true,
+    getBoundingClientRect: () => ({ top: 10, bottom: 30 }),
+    getClientRects() { return this.isConnected && ![this, view, ctx.gameRecordPanel].some(hidden)
+      ? [this.getBoundingClientRect()] : []; },
+    closest(selector) {
+      if (selector === '#gameReviewContent') return null;
+      assert.equal(selector, '[hidden], .hidden, [inert], [aria-hidden="true"]');
+      return [this, view, ctx.gameRecordPanel].find(hidden) ?? null;
+    },
+    focus(options) {
+      this.focused = true;
+      ctx.navigationFocusCalls.push({ target: this, options: structuredClone(options) });
+    },
+  });
   Object.assign(ctx, {
     createGameReview, selectGameReviewPly,
-    btnGameRecords: node(), gameRecordLibraryHeading: node(), gameReviewHeading: node(),
+    btnGameRecords: node(),
+    gameRecordLibraryHeading: heading('gameRecordLibraryHeading', ctx.gameRecordLibraryView),
+    gameReviewHeading: heading('gameReviewHeading', ctx.gameReviewView),
     renderGameRecordLibrary: noop,
     renderGameReview: noop,
   });
   vm.runInContext([
-    'pauseLiveGameForGameRecords', 'enterGameRecordLibrary', 'openPreparedGameReview',
+    'focusGameRecordPanel', 'pauseLiveGameForGameRecords', 'enterGameRecordLibrary', 'openPreparedGameReview',
     'openGameReview', 'openStoredGameReview', 'navigateGameReview',
   ].map(functionSource).join('\n'), ctx);
   const requests = [];
@@ -545,11 +571,21 @@ function installContinuationNavigation(ctx) {
   return requests;
 }
 
-test('review continuation: consecutive different plies replace played history and AI state through real Review navigation', () => {
+function assertNavigationFocus(ctx, ...targets) {
+  assert.equal(ctx.navigationFocusCalls.length, targets.length, 'each navigation focuses its heading once');
+  targets.forEach((target, index) => {
+    assert.equal(ctx.navigationFocusCalls[index].target, target);
+    assert.deepEqual(ctx.navigationFocusCalls[index].options, { preventScroll: true });
+  });
+}
+
+function verifyContinuationNavigation(installFault = noop) {
   const first = r4TurnDivergenceReviewFixture();
   const ctx = continuationHarness(first);
   const requests = installContinuationNavigation(ctx);
+  installFault(ctx);
   const sourceBefore = ctx.gameRecordStorage.serialized;
+  const sourceWrites = ctx.gameRecordStorage.writes;
   assert.equal(ctx.startNormalGameFromReview(first, { difficulty: 'easy', humanSide: game.BLACK }), true);
   assert.equal(ctx.logEmpty.textContent, '尚無著法，目前黑方行棋。');
   ctx.flushAnimations();
@@ -563,6 +599,7 @@ test('review continuation: consecutive different plies replace played history an
 
   assert.equal(ctx.enterGameRecordLibrary(), true);
   assert.equal(ctx.openStoredGameReview(first.record.id), true);
+  assertNavigationFocus(ctx, ctx.gameRecordLibraryHeading, ctx.gameReviewHeading);
   assert.equal(ctx.navigateGameReview(2), true);
   const second = ctx.gameReviewSession;
   assert.notDeepEqual(second.snapshot.board, first.snapshot.board);
@@ -592,53 +629,98 @@ test('review continuation: consecutive different plies replace played history an
   assert.equal(ctx.canHumanMove(), true);
   assert.equal(requests.length, 2);
   assert.equal(ctx.gameRecordStorage.serialized, sourceBefore);
+  assert.equal(ctx.gameRecordStorage.writes, sourceWrites);
+  same(ctx.gameRecordStore.getGameRecord(first.record.id), first.record);
+}
+
+test('review continuation: consecutive different plies replace played history and AI state through real Review navigation', () => {
+  verifyContinuationNavigation();
 });
 
+test('review continuation negative controls detect skipped focus and retained branch history', () => {
+  assert.throws(() => verifyContinuationNavigation(ctx => { ctx.focusGameRecordPanel = noop; }),
+    error => error.code === 'ERR_ASSERTION' && /each navigation focuses its heading once/.test(error.message));
+  assert.throws(() => verifyContinuationNavigation(ctx => {
+    const initialize = ctx.initializeNormalGamePosition;
+    let calls = 0;
+    ctx.initializeNormalGamePosition = (...args) => {
+      const oldHistory = ctx.history;
+      initialize(...args);
+      if (++calls === 2) ctx.history = oldHistory;
+    };
+  }), error => error.code === 'ERR_ASSERTION' && error.actual === 2 && error.expected === 0);
+});
+
+function verifyStaleContinuation(delivery, installFault = noop) {
+  const first = r4TurnDivergenceReviewFixture();
+  const ctx = continuationHarness(first);
+  const requests = installContinuationNavigation(ctx);
+  installFault(ctx);
+  const sourceBefore = ctx.gameRecordStorage.serialized, sourceWrites = ctx.gameRecordStorage.writes;
+  ctx.startNormalGameFromReview(first, { difficulty: 'easy', humanSide: game.RED });
+  assert.equal(ctx.aiThinking, true);
+  assert.equal(requests.length, 1);
+  const oldReply = { token: requests[0].token, result: first.record.moves[1] };
+  if (delivery === 'callback-queued') {
+    ctx.onAIResult(oldReply);
+    assert.equal(ctx.timers.length, 1);
+    assert.equal(ctx.history.length, 0);
+  }
+
+  assert.equal(ctx.enterGameRecordLibrary(), true);
+  assert.equal(ctx.openStoredGameReview(first.record.id), true);
+  assertNavigationFocus(ctx, ctx.gameRecordLibraryHeading, ctx.gameReviewHeading);
+  assert.equal(ctx.navigateGameReview(5), true);
+  const second = ctx.gameReviewSession;
+  // The old move is also legal here: legality alone cannot hide a broken
+  // cancellation guard. Only B's own response may settle its pending move.
+  assert.deepEqual(second.snapshot.board, first.snapshot.board);
+  ctx.gameReviewContinuationSource = second;
+  ctx.startNormalGameFromReview(second, { difficulty: 'medium', humanSide: game.RED });
+  const branchSession = ctx.normalGameRecordSession;
+  const before = structuredClone({ board: ctx.board, history: ctx.history,
+    session: ctx.normalGameRecordSession, posHistory: ctx.posHistory, repHistory: ctx.repHistory });
+  assert.equal(requests.length, 2);
+  if (delivery === 'worker-pending') ctx.onAIResult(oldReply);
+  ctx.flushTimers(); ctx.flushAnimations();
+  same({ board: ctx.board, history: ctx.history, session: ctx.normalGameRecordSession,
+    posHistory: ctx.posHistory, repHistory: ctx.repHistory }, before);
+  assert.equal(ctx.turn, game.BLACK);
+  assert.equal(ctx.aiThinking, true, `${delivery}: stale A must not clear B's thinking state`);
+  assert.equal(ctx.canHumanMove(), false);
+  assert.equal(requests.length, 2, `${delivery}: no extra AI request`);
+  assert.equal(ctx.checkBoardMeshInvariant(ctx.board).ok, true);
+  assert.equal(ctx.normalGameRecordSession, branchSession, `${delivery}: stale reply preserves session identity`);
+
+  ctx.onAIResult({ token: requests[1].token, result: second.record.moves[5] });
+  ctx.flushTimers(); ctx.flushAnimations();
+  assert.equal(ctx.history.length, 1, `${delivery}: B accepts exactly its own AI move`);
+  same(ctx.history[0].from, second.record.moves[5].from);
+  same(ctx.history[0].to, second.record.moves[5].to);
+  assert.equal(ctx.aiThinking, false);
+  assert.equal(ctx.canHumanMove(), true);
+  assert.equal(requests.length, 2);
+  assert.equal(ctx.normalGameRecordSession, branchSession);
+  assert.equal(ctx.gameRecordStorage.serialized, sourceBefore);
+  assert.equal(ctx.gameRecordStorage.writes, sourceWrites);
+  same(ctx.gameRecordStore.getGameRecord(first.record.id), first.record);
+}
+
 test('review continuation: stale worker reply and queued AI callback cannot alter a replacement branch', () => {
-  for (const delivery of ['worker-pending', 'callback-queued']) {
-    const first = r4TurnDivergenceReviewFixture();
-    const ctx = continuationHarness(first);
-    const requests = installContinuationNavigation(ctx);
-    ctx.startNormalGameFromReview(first, { difficulty: 'easy', humanSide: game.RED });
-    assert.equal(ctx.aiThinking, true);
-    assert.equal(requests.length, 1);
-    const oldReply = { token: requests[0].token, result: first.record.moves[1] };
-    if (delivery === 'callback-queued') {
-      ctx.onAIResult(oldReply);
-      assert.equal(ctx.timers.length, 1);
-      assert.equal(ctx.history.length, 0);
-    }
+  for (const delivery of ['worker-pending', 'callback-queued']) verifyStaleContinuation(delivery);
+});
 
-    assert.equal(ctx.enterGameRecordLibrary(), true);
-    assert.equal(ctx.openStoredGameReview(first.record.id), true);
-    assert.equal(ctx.navigateGameReview(5), true);
-    const second = ctx.gameReviewSession;
-    // The old move is also legal here: legality alone cannot hide a broken
-    // cancellation guard. Only B's own response may settle its pending move.
-    assert.deepEqual(second.snapshot.board, first.snapshot.board);
-    ctx.gameReviewContinuationSource = second;
-    ctx.startNormalGameFromReview(second, { difficulty: 'medium', humanSide: game.RED });
-    const before = structuredClone({ board: ctx.board, history: ctx.history,
-      session: ctx.normalGameRecordSession, posHistory: ctx.posHistory, repHistory: ctx.repHistory });
-    assert.equal(requests.length, 2);
-    if (delivery === 'worker-pending') ctx.onAIResult(oldReply);
-    ctx.flushTimers(); ctx.flushAnimations();
-    same({ board: ctx.board, history: ctx.history, session: ctx.normalGameRecordSession,
-      posHistory: ctx.posHistory, repHistory: ctx.repHistory }, before);
-    assert.equal(ctx.turn, game.BLACK);
-    assert.equal(ctx.aiThinking, true, `${delivery}: stale A must not clear B's thinking state`);
-    assert.equal(ctx.canHumanMove(), false);
-    assert.equal(requests.length, 2, `${delivery}: no extra AI request`);
-    assert.equal(ctx.checkBoardMeshInvariant(ctx.board).ok, true);
-
-    ctx.onAIResult({ token: requests[1].token, result: second.record.moves[5] });
-    ctx.flushTimers(); ctx.flushAnimations();
-    assert.equal(ctx.history.length, 1, `${delivery}: B accepts exactly its own AI move`);
-    same(ctx.history[0].from, second.record.moves[5].from);
-    same(ctx.history[0].to, second.record.moves[5].to);
-    assert.equal(ctx.aiThinking, false);
-    assert.equal(ctx.canHumanMove(), true);
-    assert.equal(requests.length, 2);
+test('review continuation negative controls detect stale worker and queued callback contamination', () => {
+  for (const [delivery, guard] of [
+    ['worker-pending', 'if (token !== aiToken) return;'],
+    ['callback-queued', 'if (!currentAIRequest(request)) return;'],
+  ]) {
+    assert.throws(() => verifyStaleContinuation(delivery, ctx => {
+      const original = functionSource('onAIResult');
+      assert.equal(original.split(guard).length, 2, 'mutation must hit exactly once');
+      vm.runInContext(original.replace(guard, ''), ctx);
+    }), error => error.code === 'ERR_ASSERTION' && error.operator === 'deepStrictEqual'
+      && error.actual?.history.length === 1 && error.expected?.history.length === 0);
   }
 });
 
@@ -2922,20 +3004,77 @@ test('Phase C: terminal rematch keeps completed/source records byte-identical an
   same(ctx.board, board); invariant(ctx, board);
 });
 
-test('Phase C: temporary editor, puzzle library and Review visits preserve the exact root/session', () => {
+function verifyTemporaryVisits(injectAfterReview = noop) {
   const ctx = customPlayHarness(); startCustom(ctx);
+  const sourceRecord = r4TurnDivergenceReviewFixture().record;
+  ctx.gameRecordStore.saveGameRecord(sourceRecord);
   const owned = ctx.customGameContext;
+  const root = owned.root, session = ctx.normalGameRecordSession;
+  const before = structuredClone({ board: ctx.board, history: ctx.history, session,
+    posHistory: ctx.posHistory, repHistory: ctx.repHistory, turn: ctx.turn });
+  const stored = ctx.gameRecordStorage.serialized, writes = ctx.gameRecordStorage.writes;
+  const assertLiveRestored = () => {
+    assert.equal(ctx.appState, 'NORMAL_GAME');
+    assert.equal(ctx.customGameContext, owned, 'custom context identity survives temporary visits');
+    assert.equal(ctx.customGameContext.root, root, 'root identity survives temporary visits');
+    assert.equal(ctx.normalGameRecordSession, session, 'session identity survives temporary visits');
+    assert.equal(ctx.customGameContext.session, session, 'root ownership still refers to the live session');
+    same({ board: ctx.board, history: ctx.history, session: ctx.normalGameRecordSession,
+      posHistory: ctx.posHistory, repHistory: ctx.repHistory, turn: ctx.turn }, before);
+    assert.equal(ctx.gameRecordStorage.serialized, stored);
+    assert.equal(ctx.gameRecordStorage.writes, writes);
+    same(ctx.gameRecordStore.getGameRecord(sourceRecord.id), sourceRecord);
+  };
   ctx.enterEditor(); assert.equal(ctx.customRematchAvailable(), false); ctx.exitEditor();
   assert.equal(ctx.customGameContext, owned); assert.equal(ctx.customRematchAvailable(), true);
+  assertLiveRestored();
   ctx.enterLibrary(); ctx.exitEditor();
   assert.equal(ctx.customGameContext, owned); invariant(ctx, ctx.board);
+  assertLiveRestored();
   installContinuationNavigation(ctx);
   vm.runInContext(['exitGameRecordFlow', 'restoreLiveGamePresentation'].map(functionSource).join('\n'), ctx);
   ctx.gameRecordFlowActive = () => ['GAME_REVIEW', 'GAME_RECORD_LIBRARY'].includes(ctx.appState);
   ctx.showMoveDots = noop;
-  ctx.enterGameRecordLibrary(); assert.equal(ctx.customRematchAvailable(), false); ctx.exitGameRecordFlow();
+  assert.equal(ctx.enterGameRecordLibrary(), true); assert.equal(ctx.customRematchAvailable(), false);
+  assert.equal(ctx.openStoredGameReview(sourceRecord.id), true);
+  assert.equal(ctx.appState, 'GAME_REVIEW');
+  assert.equal(ctx.navigateGameReview(2), true);
+  assert.equal(ctx.gameReviewSession.selectedPly, 2);
+  ctx.exitGameRecordFlow();
+  injectAfterReview(ctx);
+  assertNavigationFocus(ctx, ctx.gameRecordLibraryHeading, ctx.gameReviewHeading);
+  assertLiveRestored();
   assert.equal(ctx.customGameContext, owned); assert.equal(ctx.customRematchAvailable(), true);
   invariant(ctx, ctx.board);
+}
+
+test('Phase C: temporary editor, puzzle library and Review visits preserve the exact root/session', () => {
+  verifyTemporaryVisits();
+});
+
+test('Phase C negative controls detect replaced root/session and persistence writes after Review', () => {
+  for (const replace of [
+    ctx => {
+      const expected = ctx.customGameContext;
+      ctx.customGameContext = { ...expected, root: { ...expected.root } };
+      return { actual: ctx.customGameContext, expected };
+    },
+    ctx => {
+      const expected = ctx.normalGameRecordSession;
+      ctx.normalGameRecordSession = { ...expected };
+      return { actual: ctx.normalGameRecordSession, expected };
+    },
+    ctx => {
+      const expected = ctx.gameRecordStorage.writes;
+      ctx.gameRecordStorage.setItem('synthetic', ctx.gameRecordStorage.serialized);
+      return { actual: expected + 1, expected };
+    },
+  ]) {
+    let fault;
+    assert.throws(() => verifyTemporaryVisits(ctx => { fault = replace(ctx); }),
+      error => error.code === 'ERR_ASSERTION' && error.operator === 'strictEqual'
+        && !!fault && error.actual === fault.actual && error.expected === fault.expected);
+  }
 });
 
 test('Phase C: standard new game, side change and direct Review continuation remove rematch eligibility', () => {
