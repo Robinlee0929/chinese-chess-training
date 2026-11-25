@@ -1,0 +1,706 @@
+{
+  "baseSHA": "dcf2cf3333c9c7282d88dfa3d89da647baae2fb0",
+  "coordinateSystem": "row0=red-home; row9=black-home; columns0..8",
+  "provenance": "Synthetic positions; immediate outcomes cross-checked during read-only design. No historical reachability claim.",
+  "fixtures": [
+    {
+      "id": "A",
+      "source": {
+        "sourceId": "fixture-A",
+        "sourceSessionId": "synthetic-source-A",
+        "board": [
+          [
+            null,
+            null,
+            null,
+            null,
+            {
+              "type": "K",
+              "side": "red"
+            },
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            null,
+            null,
+            null,
+            null,
+            {
+              "type": "P",
+              "side": "red"
+            },
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            {
+              "type": "R",
+              "side": "red"
+            },
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            {
+              "type": "R",
+              "side": "black"
+            },
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            null,
+            null,
+            null,
+            null,
+            {
+              "type": "K",
+              "side": "black"
+            },
+            {
+              "type": "N",
+              "side": "black"
+            },
+            null,
+            null,
+            null
+          ]
+        ],
+        "sideToMove": "red",
+        "history": {
+          "kind": "unknown"
+        }
+      },
+      "sourceFingerprint": "a3716ede6088236618d0d891db3056e3ee76e919ff6f1fc14924cc0e555d9db1",
+      "candidate": {
+        "from": {
+          "r": 7,
+          "c": 0
+        },
+        "to": {
+          "r": 7,
+          "c": 4
+        }
+      },
+      "illegal": {
+        "from": {
+          "r": 7,
+          "c": 0
+        },
+        "to": {
+          "r": 6,
+          "c": 1
+        }
+      },
+      "expected": {
+        "replyCount": 3,
+        "checked": true,
+        "terminal": null,
+        "replies": [
+          {
+            "from": {
+              "r": 8,
+              "c": 0
+            },
+            "to": {
+              "r": 8,
+              "c": 4
+            }
+          },
+          {
+            "from": {
+              "r": 9,
+              "c": 4
+            },
+            "to": {
+              "r": 9,
+              "c": 3
+            }
+          },
+          {
+            "from": {
+              "r": 9,
+              "c": 5
+            },
+            "to": {
+              "r": 7,
+              "c": 4
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "B",
+      "source": {
+        "sourceId": "fixture-B",
+        "sourceSessionId": "synthetic-source-B",
+        "board": [
+          [
+            null,
+            null,
+            null,
+            null,
+            {
+              "type": "K",
+              "side": "red"
+            },
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            {
+              "type": "R",
+              "side": "red"
+            },
+            null,
+            null,
+            null,
+            {
+              "type": "P",
+              "side": "red"
+            },
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            {
+              "type": "P",
+              "side": "black"
+            },
+            null,
+            null,
+            {
+              "type": "R",
+              "side": "black"
+            },
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            null,
+            null,
+            null,
+            null,
+            {
+              "type": "K",
+              "side": "black"
+            },
+            null,
+            null,
+            null,
+            null
+          ]
+        ],
+        "sideToMove": "red",
+        "history": {
+          "kind": "unknown"
+        }
+      },
+      "sourceFingerprint": "8fb826056d206c045bb409dcc6f21744501b4c4083187aebfae2e7f4d8a529fb",
+      "candidate": {
+        "from": {
+          "r": 4,
+          "c": 0
+        },
+        "to": {
+          "r": 6,
+          "c": 0
+        }
+      },
+      "illegal": null,
+      "expected": {
+        "replyCount": 20,
+        "checked": false,
+        "terminal": null,
+        "recapture": {
+          "from": {
+            "r": 6,
+            "c": 3
+          },
+          "to": {
+            "r": 6,
+            "c": 0
+          }
+        },
+        "alternative": {
+          "from": {
+            "r": 4,
+            "c": 0
+          },
+          "to": {
+            "r": 4,
+            "c": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "C",
+      "source": {
+        "sourceId": "fixture-C",
+        "sourceSessionId": "synthetic-source-C",
+        "board": [
+          [
+            null,
+            null,
+            null,
+            null,
+            {
+              "type": "K",
+              "side": "red"
+            },
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            {
+              "type": "R",
+              "side": "red"
+            },
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            null,
+            null,
+            null,
+            null,
+            {
+              "type": "N",
+              "side": "red"
+            },
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            {
+              "type": "R",
+              "side": "black"
+            },
+            null,
+            null
+          ],
+          [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            null,
+            null,
+            null,
+            null,
+            {
+              "type": "K",
+              "side": "black"
+            },
+            null,
+            null,
+            null,
+            null
+          ]
+        ],
+        "sideToMove": "red",
+        "history": {
+          "kind": "unknown"
+        }
+      },
+      "sourceFingerprint": "2a6beb2a27d6b05e4047d39cab98b209c432e2fc72babf2e1fa38f044627b54e",
+      "candidate": {
+        "from": {
+          "r": 2,
+          "c": 0
+        },
+        "to": {
+          "r": 2,
+          "c": 4
+        }
+      },
+      "illegal": {
+        "from": {
+          "r": 4,
+          "c": 4
+        },
+        "to": {
+          "r": 5,
+          "c": 6
+        }
+      },
+      "expected": {
+        "replyCount": 20,
+        "checked": false,
+        "terminal": null
+      }
+    },
+    {
+      "id": "D",
+      "source": {
+        "sourceId": "fixture-D",
+        "sourceSessionId": "synthetic-source-D",
+        "board": [
+          [
+            null,
+            null,
+            null,
+            null,
+            {
+              "type": "K",
+              "side": "red"
+            },
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            null,
+            null,
+            null,
+            null,
+            {
+              "type": "P",
+              "side": "red"
+            },
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          [
+            {
+              "type": "R",
+              "side": "red"
+            },
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            {
+              "type": "R",
+              "side": "red"
+            }
+          ],
+          [
+            null,
+            null,
+            null,
+            null,
+            {
+              "type": "K",
+              "side": "black"
+            },
+            null,
+            null,
+            null,
+            null
+          ]
+        ],
+        "sideToMove": "red",
+        "history": {
+          "kind": "unknown"
+        }
+      },
+      "sourceFingerprint": "cd3752f2099f53016d4e349b2b3b224c82c4b17fc10f918bcc5509eba7d98da9",
+      "candidate": {
+        "from": {
+          "r": 8,
+          "c": 0
+        },
+        "to": {
+          "r": 9,
+          "c": 0
+        }
+      },
+      "illegal": null,
+      "expected": {
+        "replyCount": 0,
+        "checked": true,
+        "terminal": {
+          "winner": "red",
+          "reason": "checkmate"
+        }
+      }
+    }
+  ]
+}
