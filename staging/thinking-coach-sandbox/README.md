@@ -1,6 +1,6 @@
-# U3-01B-1 Interactive Thinking Sandbox
+# U3-01B-2 Evidence-Based Thinking Guidance
 
-Base: `a77d1a038e3d8ee21480ef09ab20ba4a1ca62ad9`.
+Base: `67ed4f5ece5f1c9a47bfd38b5507a41afd560875`.
 This standalone staging interface is excluded by the existing Jekyll configuration.
 It has no production entrypoint, persistence, AI Worker, cloud or LLM integration.
 
@@ -11,7 +11,8 @@ Do not use `file://` or publish the repository through a server that ignores Jek
 The child first observes, then proposes a move, plays the opponent's defense,
 continues a variation and reflects. Nothing moves automatically. There is no
 best-move ranking, candidate-match score or penalty for a legal sacrifice.
-The exact questions and uncertainty text come from the existing `teaching()` API.
+The existing `teaching()` questions remain. An independent deterministic teaching
+adapter adds three hint levels without interpreting or grading free text.
 
 ## Interaction and access
 
@@ -31,7 +32,9 @@ The exact questions and uncertainty text come from the existing `teaching()` API
 
 ## Boundary and rendering
 
-`app.mjs` owns DOM, focus, selection and ephemeral notes. `model.mjs` is a narrow
+`app.mjs` owns DOM, focus and selection. `guidance-model.mjs` owns memory-only
+contextual notes and submitted predictions; `teaching-adapter.mjs` selects fixed
+questions from validated context flags. `model.mjs` remains an unchanged narrow
 view adapter around the unchanged PR #25 JSON-only browser core. It does not
 implement chess rules and never exposes a core/session object to the renderer.
 All public model commands and results are primitive JSON text. Commands are
@@ -43,7 +46,7 @@ the child's visited nodes. It does not pass through legal move lists, coverage,
 source fingerprints, search evidence, rankings or future paths. The renderer
 uses `textContent` and explicit elements; free text never becomes HTML.
 
-Facts exist only after the child presses **檢查這一步**. The model requests a core
+Played-position facts exist only after the child presses **檢查這一步**. The model requests a core
 verification ticket, enumerates immediate replies privately, yields once, checks
 the view generation and settles the original ticket. A reset, switch, navigation,
 disposal or newer verification cannot apply an old result. The application also
@@ -56,6 +59,15 @@ marked unproved in quality. No reply coordinates or answer sequence are rendered
 even on request. Every state-changing operation clears disclosed facts; hidden
 fact DOM is emptied. The history limitations remain visible after checking.
 
+The child can mark a predicted response without moving the board. Level three
+checks only that submitted move, its check/capture facts and immediate recapture
+existence in a private replay preserving the declared source history. It returns
+no reply coordinates. A matching prediction does not prove a full line or best move.
+Reasons, forecasts and revisions are bound to session, epoch, candidate, node and
+stage. Reflection lists only child-authored text and actually explored nodes.
+The default optional challenge is two candidates and three plies; it can be changed
+without assigning ability from age. See GUIDANCE_DESIGN.md for limits and contracts.
+
 Security assumes a trusted JavaScript realm, as in PR #25. This is not protection
 against hostile same-origin scripts or replaced browser intrinsics. Browser JSON
 input restrictions deliberately differ from the original Node object API; no
@@ -66,6 +78,8 @@ equivalent browser Proxy detector is claimed. No core or formal product file cha
 ```text
 node --test staging/thinking-coach-sandbox/model-test.mjs
 node staging/thinking-coach-sandbox/browser-test.mjs ABSOLUTE_NEW_EXTERNAL_OUTPUT
+node --test staging/thinking-coach-sandbox/guidance-test.mjs
+node staging/thinking-coach-sandbox/guidance-browser-test.mjs ABSOLUTE_NEW_EXTERNAL_OUTPUT
 ```
 
 Set `PLAYWRIGHT_MODULE` to an existing Playwright `index.mjs` if needed. The runner
@@ -77,11 +91,12 @@ loading occur outside negative-control catches and cannot count as detection.
 
 Original 42 core tests (including 11 negatives), 667 baseline tests and PR #25's
 29 Chrome checks/14 negatives remain separate sets. Model and UI checks overlap;
-they are not added into a new independent-case total. See TEST_REPORT.md and
-INDEPENDENT_REVIEW.md for evidence and limits.
+they are not added into a new independent-case total. See GUIDANCE_TEST_REPORT.md
+for this change. TEST_REPORT.md and INDEPENDENT_REVIEW.md remain the historical
+U3-01B-1 reports; they do not claim to review the new adapter.
 
 No local result is GitHub CI PASS. Real devices, screen readers, human UAT, real
 BFCache restoration, long-term heap/performance and learning outcomes remain
 untested. The interface is not integrated into the production chessboard.
 PR #21 stays BLOCKED_PRODUCTION_ACCEPTANCE and Issue #22 stays OPEN and unprobed.
-This work does not authorize merge, deployment or U3-01B-2.
+This work does not authorize merge, deployment or U3-01C.
