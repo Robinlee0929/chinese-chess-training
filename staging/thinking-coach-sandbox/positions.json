@@ -1,0 +1,560 @@
+[
+  {
+    "id": "A",
+    "source": {
+      "sourceId": "fixture-A",
+      "sourceSessionId": "synthetic-source-A",
+      "board": [
+        [
+          null,
+          null,
+          null,
+          null,
+          {
+            "type": "K",
+            "side": "red"
+          },
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          {
+            "type": "P",
+            "side": "red"
+          },
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          {
+            "type": "R",
+            "side": "red"
+          },
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          {
+            "type": "R",
+            "side": "black"
+          },
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          {
+            "type": "K",
+            "side": "black"
+          },
+          {
+            "type": "N",
+            "side": "black"
+          },
+          null,
+          null,
+          null
+        ]
+      ],
+      "sideToMove": "red",
+      "history": {
+        "kind": "unknown"
+      }
+    }
+  },
+  {
+    "id": "B",
+    "source": {
+      "sourceId": "fixture-B",
+      "sourceSessionId": "synthetic-source-B",
+      "board": [
+        [
+          null,
+          null,
+          null,
+          null,
+          {
+            "type": "K",
+            "side": "red"
+          },
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          {
+            "type": "R",
+            "side": "red"
+          },
+          null,
+          null,
+          null,
+          {
+            "type": "P",
+            "side": "red"
+          },
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          {
+            "type": "P",
+            "side": "black"
+          },
+          null,
+          null,
+          {
+            "type": "R",
+            "side": "black"
+          },
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          {
+            "type": "K",
+            "side": "black"
+          },
+          null,
+          null,
+          null,
+          null
+        ]
+      ],
+      "sideToMove": "red",
+      "history": {
+        "kind": "unknown"
+      }
+    }
+  },
+  {
+    "id": "C",
+    "source": {
+      "sourceId": "fixture-C",
+      "sourceSessionId": "synthetic-source-C",
+      "board": [
+        [
+          null,
+          null,
+          null,
+          null,
+          {
+            "type": "K",
+            "side": "red"
+          },
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          {
+            "type": "R",
+            "side": "red"
+          },
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          {
+            "type": "N",
+            "side": "red"
+          },
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          {
+            "type": "R",
+            "side": "black"
+          },
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          {
+            "type": "K",
+            "side": "black"
+          },
+          null,
+          null,
+          null,
+          null
+        ]
+      ],
+      "sideToMove": "red",
+      "history": {
+        "kind": "unknown"
+      }
+    }
+  },
+  {
+    "id": "D",
+    "source": {
+      "sourceId": "fixture-D",
+      "sourceSessionId": "synthetic-source-D",
+      "board": [
+        [
+          null,
+          null,
+          null,
+          null,
+          {
+            "type": "K",
+            "side": "red"
+          },
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          {
+            "type": "P",
+            "side": "red"
+          },
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          {
+            "type": "R",
+            "side": "red"
+          },
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          {
+            "type": "R",
+            "side": "red"
+          }
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          {
+            "type": "K",
+            "side": "black"
+          },
+          null,
+          null,
+          null,
+          null
+        ]
+      ],
+      "sideToMove": "red",
+      "history": {
+        "kind": "unknown"
+      }
+    }
+  }
+]
