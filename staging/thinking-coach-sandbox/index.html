@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="./style.css">
+  <title>思考練習室｜象棋思考沙盒</title>
+</head>
+<body>
+  <header>
+    <div class="identity"><h1>思考練習室</h1><p>先想一想，再走一步。</p></div>
+    <label class="position-label">練習局面 <select id="position" disabled><option>A</option><option>B</option><option>C</option><option>D</option></select></label>
+  </header>
+  <p id="load-status" role="alert">正在準備棋盤…</p>
+  <main id="app" inert>
+    <ol class="stages" aria-label="思考步驟">
+      <li data-stage="observe">1 觀察</li><li data-stage="candidate">2 候選</li><li data-stage="defense">3 防守</li><li data-stage="variation">4 計算</li><li data-stage="reflect">5 反思</li>
+    </ol>
+    <div class="workspace">
+      <section class="board-area" aria-label="試走棋盤">
+        <p id="turn" class="turn"></p>
+        <div class="board-wrap">
+          <svg class="board-lines" viewBox="0 0 900 1000" aria-hidden="true"><g id="lines"></g><text x="250" y="515">楚河</text><text x="650" y="515">漢界</text></svg>
+          <div id="board" role="group" aria-label="象棋盤，十列九行交點；方向鍵移動，Enter 或空白鍵選棋與落子" aria-describedby="board-help"></div>
+        </div>
+        <div class="board-tools"><button id="undo">悔棋</button><button id="root">回到起點</button><button id="reset">重置練習</button></div>
+        <p id="board-help" class="muted">方向鍵移動，Enter 選棋，Esc 取消</p>
+        <p id="notice" role="status" aria-live="polite"></p>
+      </section>
+      <section class="coach" aria-label="思考提問">
+        <h2 id="stage-title">先觀察</h2>
+        <p id="question" class="question"></p>
+        <label for="thought">我的想法（可以先用說的）</label>
+        <textarea id="thought" rows="3" maxlength="300" placeholder="記下你的觀察，或先說給自己聽。"></textarea>
+        <p class="private-note">只留在這次練習，重新整理就會清除。</p>
+        <button id="start" class="primary">我想好，來試走</button>
+        <p id="uncertainty" class="muted"></p>
+      </section>
+      <section class="exploration" aria-label="我的探索">
+        <h2>我的候選</h2>
+        <p id="empty" class="muted">試走後，你的想法會留在這裡。</p>
+        <div id="branches" class="branches"></div>
+        <div class="explore-tools"><button id="another">試另一種想法</button><button id="reflect">整理思路</button></div>
+        <details id="routes"><summary>已走過的路線</summary><div id="visited"></div></details>
+        <button id="check" class="check">檢查這一步</button>
+        <section id="facts" hidden aria-label="本次檢查的事實" aria-live="polite"></section>
+      </section>
+    </div>
+  </main>
+  <footer>這是獨立練習，不會改動你的正式棋局。</footer>
+  <dialog id="reset-dialog" aria-labelledby="reset-title" aria-describedby="reset-description">
+    <h2 id="reset-title">重新開始這個局面？</h2><p id="reset-description">這次練習的候選、路線和筆記會清除。</p>
+    <form method="dialog"><button value="cancel" autofocus>保留練習</button><button id="confirm-reset" value="reset" class="primary">重置</button></form>
+  </dialog>
+  <script type="module" src="./app.mjs"></script>
+</body>
+</html>
