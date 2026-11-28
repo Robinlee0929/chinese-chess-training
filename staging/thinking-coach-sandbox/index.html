@@ -32,20 +32,39 @@
       <section class="coach" aria-label="思考提問">
         <h2 id="stage-title">先觀察</h2>
         <p id="question" class="question"></p>
-        <label for="thought">我的想法（可以先用說的）</label>
+        <label id="thought-label" for="thought">我的觀察：什麼受到威脅？</label>
         <textarea id="thought" rows="3" maxlength="300" placeholder="記下你的觀察，或先說給自己聽。"></textarea>
-        <p class="private-note">只留在這次練習，重新整理就會清除。</p>
+        <p class="private-note">只留在這次練習，重新整理就會清除。文字不會被理解、評分或用來判斷棋力。</p>
+        <button id="save-thought">記下這個說法</button>
+        <p id="revision-status" class="muted" role="status"></p>
         <button id="start" class="primary">我想好，來試走</button>
         <p id="uncertainty" class="muted"></p>
+        <details id="guidance-tools"><summary>三層提示與防守預測</summary>
+          <div class="hint-buttons"><button id="hint-one">第一層：觀察方向</button><button id="hint-two">第二層：怎麼計算</button><button id="hint-three">第三層：核對我的想法</button></div>
+          <p id="hint-question" class="guidance-question"></p><p id="text-boundary" class="muted"></p>
+          <fieldset><legend>我預測這一步會…</legend>
+            <label>將軍 <select id="expect-check"><option value="unsure">還不確定</option><option value="yes">會</option><option value="no">不會</option></select></label>
+            <label>吃子 <select id="expect-capture"><option value="unsure">還不確定</option><option value="yes">會</option><option value="no">不會</option></select></label>
+            <label>被立即回吃 <select id="expect-recapture"><option value="unsure">還不確定</option><option value="yes">會</option><option value="no">不會</option></select></label>
+          </fieldset>
+          <button id="predict" aria-pressed="false">在棋盤標記預測</button><p id="prediction-status" class="muted"></p>
+          <section id="prediction-facts" hidden aria-label="我提出的預測核對" aria-live="polite"></section>
+        </details>
       </section>
       <section class="exploration" aria-label="我的探索">
         <h2>我的候選</h2>
+        <details id="challenge"><summary>調整自己的挑戰</summary>
+          <label>候選數 <select id="target-candidates"><option>1</option><option selected>2</option><option>3</option></select></label>
+          <label>計算深度（半回合） <select id="target-depth"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option></select></label>
+          <p class="muted">一次由一方走一步，算一個半回合。目標可以調整，不必每次完成所有分支。</p>
+        </details><p id="challenge-progress" class="muted"></p>
         <p id="empty" class="muted">試走後，你的想法會留在這裡。</p>
         <div id="branches" class="branches"></div>
         <div class="explore-tools"><button id="another">試另一種想法</button><button id="reflect">整理思路</button></div>
         <details id="routes"><summary>已走過的路線</summary><div id="visited"></div></details>
         <button id="check" class="check">檢查這一步</button>
         <section id="facts" hidden aria-label="本次檢查的事實" aria-live="polite"></section>
+        <section id="reflection-records" hidden aria-label="我的觀察、理由、預測與反思紀錄"></section>
       </section>
     </div>
   </main>
